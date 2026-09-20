@@ -27,20 +27,20 @@ Prioridad: **regla aprendida (NIF) > palabras clave > heurística mejora/reparac
 
 Coincidencias en emisor + texto OCR, en este orden:
 
-| Pistas (minúsculas) | Cuenta | Confianza |
+| Pistas (minúsculas) | Rubro destino | Confianza |
 | --- | --- | --- |
-| iberdrola, endesa, naturgy, holaluz, curenerg, i-de redes | `CI.GAS.LUZ` | 0,90 |
-| aquavall, aquona, aqualia, aguas de, canal de isabel | `CI.GAS.AGUA` | 0,90 |
-| movistar, telefónica, orange, vodafone, digi, másmóvil, yoigo, pepephone, lowi | `CI.GAS.INTERNET` | 0,88 |
-| comunidad de propietarios, administrador de fincas | `CI.GAS.COMUNIDAD` | 0,92 |
-| mapfre, allianz, mutua madrileña, línea directa, zurich, reale, pelayo | `CI.GAS.SEGURO` | 0,85 |
-| ibi, tasa de basura, gerencia territorial | `CI.GAS.IBI` | 0,86 |
-| indemnización | `CI.ING.INDEMN` | 0,80 |
-| arrendamiento, renta de alquiler | `CI.ING.RENTA` | 0,80 |
-| ventana, pvc, climalit, carpinter | `CI.MEJ.PVC` | 0,72 |
-| tarima, parquet, solado, suelo laminado, porcelánico | `CI.MEJ.SOLADO` | 0,72 |
-| revestimiento, alicatado | `CI.MEJ.REVEST` | 0,70 |
-| leroy merlin, bricomart, bauhaus | `CI.GAS.HOGAR` | 0,60 |
+| iberdrola, endesa, naturgy, holaluz, curenerg, i-de redes | Luz | 0,90 |
+| aquavall, aquona, aqualia, aguas de, canal de isabel | Agua | 0,90 |
+| movistar, telefónica, orange, vodafone, digi, másmóvil, yoigo, pepephone, lowi | Internet | 0,88 |
+| comunidad de propietarios, administrador de fincas | Comunidad | 0,92 |
+| mapfre, allianz, mutua madrileña, línea directa, zurich, reale, pelayo | Seguro | 0,85 |
+| ibi, tasa de basura, gerencia territorial | IBI | 0,86 |
+| indemnización | Indemnización | 0,80 |
+| arrendamiento, renta de alquiler | Renta | 0,80 |
+| ventana, pvc, climalit, carpinter | Ventanas | 0,72 |
+| tarima, parquet, solado, suelo laminado, porcelánico | Suelo | 0,72 |
+| revestimiento, alicatado | Revestimientos | 0,70 |
+| leroy merlin, bricomart, bauhaus | Hogar | 0,60 |
 
 La confianza 0,72 de PVC deja el asiento **pendiente** (revisión humana) pero ya lo archiva en `mejora/pvc`.
 
@@ -54,9 +54,9 @@ En actividad económica, de momento solo se detecta «seguridad social» / «ret
 
 ## Aprendizaje
 
-`aeat-hub reclasificar <id> <cuenta>`:
+`aeat-hub reclasificar <id> <rubro>`:
 
-1. Asigna la cuenta, estado `confirmado`, origen `usuario`, flag **`validado`**.
+1. Asigna la cuenta (por nombre), estado `confirmado`, origen `usuario`, flag **`validado`**.
 2. Upsert de regla `(actividad_id, nif_emisor, patrón vacío) → cuenta`.
 3. Por defecto aplica la misma cuenta a otros asientos **pendiente** del mismo NIF (`origen=aprendida`). `--solo-este` lo evita.
 4. Mueve el fichero al nuevo rubro.

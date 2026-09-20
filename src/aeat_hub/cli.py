@@ -30,8 +30,9 @@ from aeat_hub.ocr.dual import run_dual
 from aeat_hub.paths import DataLayout, resolve_layout
 from aeat_hub.services import (
     alta_actividad,
+    alta_cuenta,
     get_actividad,
-    get_cuenta,
+    get_cuenta_por_nombre,
     initialize,
     require_layout,
 )
@@ -42,6 +43,8 @@ app = typer.Typer(
 )
 actividad_app = typer.Typer(no_args_is_help=True, help="Expedientes / razones sociales.")
 app.add_typer(actividad_app, name="actividad")
+cuenta_app = typer.Typer(no_args_is_help=True, help="Plan de cuentas / rubros.")
+app.add_typer(cuenta_app, name="cuenta")
 console = Console()
 
 
@@ -112,6 +115,25 @@ def actividad_listar(
         console.print(table)
 
 
+@cuenta_app.command("alta")
+def cuenta_alta(
+    nombre: str = typer.Option(..., "--nombre"),
+    casilla: str = typer.Option(..., "--casilla"),
+    regimen: str = typer.Option(REGIMEN_CI, "--regimen"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Crea un rubro propio. Hay que decir a qué casilla de la Renta suma."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    with session_scope(factory) as session:
+        try:
+            cuenta = alta_cuenta(session, nombre=nombre, casilla=casilla, regimen=regimen)
+        except RuntimeError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+        console.print(f"Creada {cuenta.nombre} · {cuenta.casilla} · {cuenta.tipo}")
+
+
 @app.command()
 def cuentas(
     regimen: Optional[str] = typer.Option(None, "--regimen"),
@@ -121,16 +143,17 @@ def cuentas(
     layout = _layout(data_dir)
     factory = _session_factory(layout)
     with factory() as session:
-        query = select(Cuenta).order_by(Cuenta.codigo)
+        query = select(Cuenta).order_by(Cuenta.nombre)
         if regimen:
             query = query.where(Cuenta.regimen == regimen)
         table = Table(title="Cuentas")
-        table.add_column("codigo")
-        table.add_column("tipo")
-        table.add_column("regimen")
         table.add_column("nombre")
+        table.add_column("tipo")
+        table.add_column("casilla")
+        table.add_column("origen")
         for row in session.scalars(query):
-            table.add_row(row.codigo, row.tipo, row.regimen, row.nombre)
+            origen = "sistema" if row.sistema else "usuario"
+            table.add_row(row.nombre, row.tipo, row.casilla, origen)
         console.print(table)
 
 
@@ -221,7 +244,7 @@ def duplicados(
 @app.command()
 def reclasificar(
     asiento_id: int = typer.Argument(..., help="Id del asiento"),
-    cuenta: str = typer.Argument(..., help="Código de cuenta, p.ej. CI.MEJ.PVC"),
+    rubro: str = typer.Argument(..., help="Nombre del rubro, p.ej. Hogar"),
     data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
     solo_este: bool = typer.Option(False, "--solo-este", help="No aplicar a pendientes del mismo NIF"),
 ) -> None:
@@ -232,10 +255,17 @@ def reclasificar(
         asiento = session.get(Asiento, asiento_id)
         if asiento is None:
             raise typer.BadParameter(f"No existe el asiento {asiento_id}")
-        dest = get_cuenta(session, cuenta)
+        actividad = session.get(Actividad, asiento.actividad_id)
+        if actividad is None:
+            raise typer.BadParameter(f"No existe la actividad del asiento {asiento_id}")
+        try:
+            dest = get_cuenta_por_nombre(session, rubro, regimen=actividad.regimen)
+        except RuntimeError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
         n = reclassify(session, asiento, dest, aplicar_similares=not solo_este, layout=layout)
         console.print(
-            f"Asiento {asiento.id} → {dest.codigo} ({dest.nombre}). "
+            f"Asiento {asiento.id} → {dest.nombre}. "
             f"Validado. Regla aprendida. Actualizados: {n}. Fichero reubicado en el archivo."
         )
 
@@ -252,9 +282,11 @@ def validar(
         asiento = session.get(Asiento, asiento_id)
         if asiento is None:
             raise typer.BadParameter(f"No existe el asiento {asiento_id}")
+        nombres = {c.codigo: c.nombre for c in session.scalars(select(Cuenta)).all()}
         validar_asiento(asiento)
+        rubro = nombres.get(asiento.cuenta_codigo) or "sin cuenta"
         console.print(
-            f"Asiento {asiento.id} validado. Rubro {asiento.cuenta_codigo or 'sin cuenta'}. "
+            f"Asiento {asiento.id} validado. Rubro {rubro}. "
             "reparse e ingest no tocan este apunte."
         )
 
@@ -529,15 +561,17 @@ def _print_asientos(data_dir: Optional[Path], actividad: str, estados: tuple[str
     factory = _session_factory(layout)
     with factory() as session:
         act = get_actividad(session, actividad)
+        nombres = {c.codigo: c.nombre for c in session.scalars(select(Cuenta)).all()}
         rows = session.scalars(
             select(Asiento)
             .where(Asiento.actividad_id == act.id, Asiento.estado.in_(estados))
             .order_by(Asiento.fecha, Asiento.id)
         ).all()
         table = Table(title=f"{act.codigo} · {', '.join(estados)}")
-        for col in ("id", "fecha", "emisor", "nif", "numero", "total", "cuenta", "estado"):
+        for col in ("id", "fecha", "emisor", "nif", "numero", "total", "rubro", "estado"):
             table.add_column(col)
         for row in rows:
+            rubro = nombres.get(row.cuenta_codigo, "") if row.cuenta_codigo else ""
             table.add_row(
                 str(row.id),
                 row.fecha.isoformat() if row.fecha else "",
@@ -545,7 +579,7 @@ def _print_asientos(data_dir: Optional[Path], actividad: str, estados: tuple[str
                 row.nif_emisor or "",
                 row.numero_factura or "",
                 str(row.total) if row.total is not None else "",
-                row.cuenta_codigo or "",
+                rubro,
                 row.estado,
             )
         if not rows:

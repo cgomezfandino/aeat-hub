@@ -38,9 +38,17 @@ uv run aeat-hub actividad alta \
 
 `--regimen` es `capital_inmobiliario` o `actividad_economica`. Si omites `--codigo`, se genera `CI-00N` / `AE-00N`.
 
-### `cuentas`
+### `cuenta alta` / `cuentas`
 
-Lista el plan de cuentas. `--regimen` opcional.
+```bash
+uv run aeat-hub cuenta alta --nombre Pintura --casilla reparacion
+uv run aeat-hub cuentas
+uv run aeat-hub cuentas --regimen capital_inmobiliario
+```
+
+`cuenta alta` crea un rubro propio. `--casilla` debe ser una clave válida de `CASILLAS_CI` (salvo `sin_clasificar`): p. ej. `reparacion`, `luz`, `mejoras`.
+
+`cuentas` lista el plan por **nombre**, con columnas `nombre`, `tipo`, `casilla` y `origen` (`sistema` o `usuario`). No muestra códigos internos `CI.*` / `AE.*`.
 
 ### `ingest`
 
@@ -81,11 +89,11 @@ Asientos marcados `duplicado` (niveles 2 y 3). El duplicado de fichero (SHA) ni 
 ### `reclasificar`
 
 ```bash
-uv run aeat-hub reclasificar 12 CI.MEJ.PVC
-uv run aeat-hub reclasificar 12 CI.GAS.HOGAR --solo-este
+uv run aeat-hub reclasificar 12 Hogar
+uv run aeat-hub reclasificar 12 Pintura --solo-este
 ```
 
-Cambia la cuenta, deja el asiento `confirmado` **y validado**, guarda regla por NIF emisor, aplica a otros `pendiente` del mismo NIF (salvo `--solo-este`) y **mueve el PDF** al rubro nuevo.
+Cambia la cuenta (por **nombre** de rubro), deja el asiento `confirmado` **y validado**, guarda regla por NIF emisor, aplica a otros `pendiente` del mismo NIF (salvo `--solo-este`) y **mueve el PDF** al rubro nuevo.
 
 ### `validar`
 
