@@ -46,9 +46,9 @@ uv run aeat-hub cuentas
 uv run aeat-hub cuentas --regimen capital_inmobiliario
 ```
 
-`cuenta alta` crea un rubro propio. `--casilla` debe ser una clave válida de `CASILLAS_CI` (salvo `sin_clasificar`): p. ej. `reparacion`, `luz`, `mejoras`.
+`cuenta alta` crea un rubro propio. `--casilla` admite estas claves de `CASILLAS_CI`: `ingresos`, `intereses`, `reparacion`, `ibi`, `comunidad`, `seguros`, `suministros`, `admin`, `otros`, `amortizacion` y `mejoras`.
 
-`cuentas` lista el plan por **nombre**, con columnas `nombre`, `tipo`, `casilla` y `origen` (`sistema` o `usuario`). No muestra códigos internos `CI.*` / `AE.*`.
+`cuentas` lista el plan por **nombre**, con columnas `nombre`, `tipo`, `casilla` y `origen` (`sistema` o `usuario`). No muestra identificadores internos.
 
 ### `ingest`
 

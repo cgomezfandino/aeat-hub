@@ -46,11 +46,11 @@ La confianza 0,72 de PVC deja el asiento **pendiente** (revisión humana) pero y
 
 ### Mejora vs reparación (si no hubo keyword de cuenta)
 
-- «Mano de obra» + pvc/ventana/tarima/solado/revest → `CI.MEJ.MO`.
+- «Mano de obra» + pvc/ventana/tarima/solado/revest → rubro «Mano de obra».
 - «Mano de obra» sola → pendiente, sin cuenta.
-- Reparación/avería/desatasco/fontanería/caldera, sin pistas de reforma → `CI.GAS.REPARACION`.
+- Reparación/avería/desatasco/fontanería/caldera, sin pistas de reforma → rubro «Reparación».
 
-En actividad económica, de momento solo se detecta «seguridad social» / «reta» → `AE.GAS.SS`.
+En actividad económica, de momento solo se detecta «seguridad social» / «reta» → rubro «Seguridad social del autónomo».
 
 ## Aprendizaje
 

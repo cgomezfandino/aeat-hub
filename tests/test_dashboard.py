@@ -73,6 +73,7 @@ def _seed_asientos(session, actividad):
             base=Decimal("25.99"),
             iva_cuota=Decimal("5.46"),
             total=Decimal("31.45"),
+            confianza_clasificacion=Decimal("0.60"),
             estado="pendiente",
         )
     )
@@ -169,4 +170,54 @@ def test_dashboard_pop_confianza_cita_casilla(session, layout):
     actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
     _seed_asientos(session, actividad)
     html = write_dashboard(session, layout, actividad, 2026).read_text(encoding="utf-8")
-    assert "Otros gastos" in html or "casilla" in html.lower()
+    assert "<dt>OCR</dt>" in html
+    assert "<dt>Clasificación</dt><dd>60 %</dd>" in html
+    assert "<dt>Rubro</dt><dd>Hogar</dd>" in html
+    assert "<dt>Casilla</dt><dd>Otros gastos</dd>" in html
+
+
+def test_dashboard_actividad_economica_agrupa_por_nombre_de_rubro(session):
+    titular_id = session.scalar(
+        select(Actividad.titular_id).where(Actividad.codigo == "CI-VA-001")
+    )
+    actividad = Actividad(
+        codigo="AE-TEST-001",
+        titular_id=titular_id,
+        nombre="Actividad de prueba",
+        regimen="actividad_economica",
+    )
+    session.add(actividad)
+    session.flush()
+    session.add_all(
+        [
+            Asiento(
+                actividad_id=actividad.id,
+                tipo="gasto",
+                cuenta_codigo="AE.GAS.SS",
+                fecha=date(2026, 5, 1),
+                ejercicio=2026,
+                emisor="Seguridad Social",
+                total=Decimal("320.00"),
+                estado="confirmado",
+            ),
+            Asiento(
+                actividad_id=actividad.id,
+                tipo="ingreso",
+                cuenta_codigo="AE.ING.VENTAS",
+                fecha=date(2026, 5, 2),
+                ejercicio=2026,
+                emisor="Cliente",
+                total=Decimal("900.00"),
+                estado="confirmado",
+            ),
+        ]
+    )
+    session.commit()
+
+    labels = {
+        item["label"]
+        for item in collect_dashboard(session, actividad, 2026)["por_naturaleza"]
+    }
+
+    assert labels == {"Seguridad social del autónomo", "Ingresos de explotación"}
+    assert "Sin clasificar" not in labels

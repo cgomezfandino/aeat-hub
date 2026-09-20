@@ -7,7 +7,7 @@ AEAT Hub no sustituye a un gestor ni presenta modelos. Codifica el criterio para
 | Código CLI | Régimen | Uso típico | IVA en el MVP |
 | --- | --- | --- | --- |
 | `capital_inmobiliario` | Rendimientos de capital inmobiliario (LIRPF arts. 22–24) | Alquiler de vivienda (Valladolid) | El alquiler de vivienda habitual suele estar **exento** de IVA. Se guarda el IVA de facturas de proveedores si aparece. |
-| `actividad_economica` | Actividad económica (estimación directa, etc.) | Autónomo / negocio | Cuentas stub `AE.*`. Libro IVA / modelo 303 **no** implementado aún. |
+| `actividad_economica` | Actividad económica (estimación directa, etc.) | Autónomo / negocio | Rubros iniciales de ingresos, gastos e inversión. Libro IVA / modelo 303 **no** implementado aún. |
 
 El mismo titular puede tener **varios expedientes**. El ingest siempre lleva `--actividad`.
 
@@ -71,13 +71,13 @@ Si el texto es solo «mano de obra» sin contexto de PVC/solado/revestimiento, e
 
 ## Plan de cuentas — actividad económica (stubs)
 
-| Código | Nombre |
+| Tipo | Nombre |
 | --- | --- |
-| `AE.ING.VENTAS` | Ingresos de explotación |
-| `AE.GAS.COMPRAS` | Compras y servicios |
-| `AE.GAS.SUMINISTROS` | Suministros de la actividad |
-| `AE.GAS.SS` | Seguridad social del autónomo |
-| `AE.INV.BIENES` | Bienes de inversión |
+| Ingreso | Ingresos de explotación |
+| Gasto | Compras y servicios |
+| Gasto | Suministros de la actividad |
+| Gasto | Seguridad social del autónomo |
+| Inversión | Bienes de inversión |
 
 Tipos de IVA previstos a futuro: 21 / 10 / 4 / 0 / exento. Hoy se extraen de la factura si el parser los ve; no hay liquidación 303.
 
@@ -87,17 +87,17 @@ Hacienda **no** recibe el Excel de facturas. En el modelo 100 se informan **tota
 
 | Concepto en la Renta | Cuentas del libro | ¿Resta del año? |
 | --- | --- | --- |
-| Ingresos íntegros | `CI.ING.RENTA`, `CI.ING.INDEMN` | — |
-| Intereses y financiación | `CI.GAS.INTERES` | Sí |
-| Conservación y reparación | `CI.GAS.REPARACION` | Sí |
-| IBI y tasas | `CI.GAS.IBI` | Sí |
-| Comunidad | `CI.GAS.COMUNIDAD` | Sí |
-| Seguros | `CI.GAS.SEGURO` | Sí |
-| Suministros (si los paga el arrendador) | `CI.GAS.LUZ`, `AGUA`, `INTERNET` | Sí |
-| Administración / defensa | `CI.GAS.ADMIN` | Sí |
-| Otros necesarios | `CI.GAS.HOGAR` | Sí (revisa que no sea mejora) |
-| Amortización | `CI.AMO.INMUEBLE` | Sí |
-| Mejoras | `CI.MEJ.*` | **No** (se capitalizan) |
+| Ingresos íntegros | Alquiler, Indemnización | — |
+| Intereses y financiación | Intereses | Sí |
+| Conservación y reparación | Reparación | Sí |
+| IBI y tasas | IBI | Sí |
+| Comunidad | Comunidad | Sí |
+| Seguros | Seguro | Sí |
+| Suministros (si los paga el arrendador) | Luz, Agua, Internet | Sí |
+| Administración / defensa | Administración | Sí |
+| Otros necesarios | Hogar | Sí (revisa que no sea mejora) |
+| Amortización | Amortización | Sí |
+| Mejoras | Ventanas, Suelo, Revestimientos, Mano de obra, Otras mejoras | **No** (se capitalizan) |
 
 Esto es un **criterio de trabajo**, no un envío a la AEAT ni un dictamen.
 

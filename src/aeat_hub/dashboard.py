@@ -11,7 +11,13 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from aeat_hub.fiscal.accounts import REGIMEN_CI, TIPO_GASTO, TIPO_INGRESO, TIPO_MEJORA
+from aeat_hub.fiscal.accounts import (
+    REGIMEN_AE,
+    REGIMEN_CI,
+    TIPO_GASTO,
+    TIPO_INGRESO,
+    TIPO_MEJORA,
+)
 from aeat_hub.fiscal.irpf import INDEX_CI, RUBRO_CHIPS, casilla_clave, summarize_irpf
 from aeat_hub.fiscal.money import format_euro, q2
 from aeat_hub.models import Actividad, Asiento, Cuenta, Inmueble, Titular
@@ -91,7 +97,9 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         "resultado": ingresos - gastos,
         "por_mes": por_mes,
         "por_mes_acc": _cumulative(por_mes),
-        "por_naturaleza": _by_nature(vivos, extra_casillas),
+        "por_naturaleza": _by_nature(
+            vivos, extra_casillas, nombres, actividad.regimen
+        ),
         "asientos": asientos,
         "pendientes": [item for item in asientos if item["estado"] == "pendiente"],
         "n_baja": sum(1 for item in asientos if item["baja"]),
@@ -342,20 +350,32 @@ def _by_month(rows: list[Asiento]) -> list[dict]:
     ]
 
 
-def _by_nature(rows: list[Asiento], extra_casillas: dict[str, str]) -> list[dict]:
+def _by_nature(
+    rows: list[Asiento],
+    extra_casillas: dict[str, str],
+    nombres: dict[str, str],
+    regimen: str,
+) -> list[dict]:
     buckets: dict[str, Decimal] = defaultdict(lambda: ZERO)
     tipos: dict[str, str] = {}
     for row in rows:
-        label = _nature_label(row.cuenta_codigo, extra_casillas)
+        label = _nature_label(row.cuenta_codigo, extra_casillas, nombres, regimen)
         buckets[label] += q2(row.total) or ZERO
         tipos.setdefault(label, row.tipo)
     ordered = sorted(buckets.items(), key=lambda item: item[1], reverse=True)
     return [{"label": label, "total": total, "tipo": tipos[label]} for label, total in ordered if total]
 
 
-def _nature_label(codigo: str | None, extra_casillas: dict[str, str]) -> str:
+def _nature_label(
+    codigo: str | None,
+    extra_casillas: dict[str, str],
+    nombres: dict[str, str],
+    regimen: str,
+) -> str:
     if not codigo:
         return "Sin clasificar"
+    if regimen == REGIMEN_AE:
+        return nombres.get(codigo, "Sin clasificar")
     clave = casilla_clave(codigo, extra_casillas)
     meta = INDEX_CI.get(clave)
     return meta.etiqueta if meta else "Sin clasificar"
@@ -493,7 +513,8 @@ def _quality_cell(item: dict, *, prefix: str) -> str:
         label = "Aceptable"
         hint = "Confianza ≥ 80 %. Revisa si algo no cuadra y valida para bloquearlo."
     ocr = _quality_pct_label(item["conf_ocr_pct"])
-    rubro = _quality_pct_label(item["conf_class_pct"])
+    clasificacion = _quality_pct_label(item["conf_class_pct"])
+    rubro = item["cuenta_nombre"]
     casilla = item["casilla_etiqueta"]
     pop_id = f"q-pop-{prefix}-{item['id']}"
     return (
@@ -507,6 +528,7 @@ def _quality_cell(item: dict, *, prefix: str) -> str:
         f'<div id="{pop_id}" popover="auto" class="q-pop" role="tooltip">'
         f"<strong>{escape(label)}</strong>"
         f'<dl><div><dt>OCR</dt><dd>{escape(ocr)}</dd></div>'
+        f"<div><dt>Clasificación</dt><dd>{escape(clasificacion)}</dd></div>"
         f"<div><dt>Rubro</dt><dd>{escape(rubro)}</dd></div>"
         f"<div><dt>Casilla</dt><dd>{escape(casilla)}</dd></div></dl>"
         f"<p>{escape(hint)}</p>"
