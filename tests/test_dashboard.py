@@ -96,9 +96,11 @@ def test_dashboard_kpis_excluyen_duplicados_y_mejoras(session, layout):
     assert data["irpf"]["mejoras"] == Decimal("1452.00")
     labels = {item["label"] for item in data["por_naturaleza"]}
     assert "Suministros" in labels
-    assert "Mejoras (inversión)" in labels
-    assert "Hogar / mantenimiento" in labels
-    assert "Rentas" in labels
+    assert "Mejoras" in labels
+    assert "Otros gastos" in labels
+    assert "Ingresos" in labels
+    assert "Hogar / mantenimiento" not in labels
+    assert "Rentas" not in labels
 
 
 def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
@@ -136,7 +138,8 @@ def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     assert "evo-hero" in html
     assert "data-copy=" in html
     assert "aeat-hub validar" in html
-    assert "reclasificar" in html and "Reparación" in html
+    assert "aeat-hub reclasificar" in html
+    assert "aeat-hub reclasificar" in html and "Hogar" in html
     assert 'class="ledger-table"' in html
     assert "Desliza horizontalmente" in html
     assert 'class="funnel"' in html
@@ -148,6 +151,10 @@ def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     assert "Más filtros: emisor" not in html
     assert 'class="th-input"' not in html
     assert "Hogar" in html
+    assert "rubro-code" not in html
+    assert "CI.GAS." not in html
+    assert "CI.MEJ." not in html
+    assert "CI.ING." not in html
     assert "Exportar Excel" in html
     assert "download=" in html
     assert "aeat-hub export --actividad" not in html
@@ -156,3 +163,10 @@ def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     assert "script src=" not in html
     assert "cdn." not in html
     assert html.count("<script") == 1
+
+
+def test_dashboard_pop_confianza_cita_casilla(session, layout):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    html = write_dashboard(session, layout, actividad, 2026).read_text(encoding="utf-8")
+    assert "Otros gastos" in html or "casilla" in html.lower()

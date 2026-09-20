@@ -12,29 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from aeat_hub.fiscal.accounts import REGIMEN_CI, TIPO_GASTO, TIPO_INGRESO, TIPO_MEJORA
-from aeat_hub.fiscal.irpf import RUBRO_CHIPS, casilla_clave, summarize_irpf
+from aeat_hub.fiscal.irpf import INDEX_CI, RUBRO_CHIPS, casilla_clave, summarize_irpf
 from aeat_hub.fiscal.money import format_euro, q2
 from aeat_hub.models import Actividad, Asiento, Cuenta, Inmueble, Titular
 from aeat_hub.paths import DataLayout
 
 MESES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
 ZERO = Decimal("0.00")
-
-NATURALEZA_CI: dict[str, str] = {
-    "CI.ING.RENTA": "Rentas",
-    "CI.ING.INDEMN": "Indemnizaciones",
-    "CI.GAS.LUZ": "Suministros",
-    "CI.GAS.AGUA": "Suministros",
-    "CI.GAS.INTERNET": "Suministros",
-    "CI.GAS.COMUNIDAD": "Comunidad",
-    "CI.GAS.SEGURO": "Seguros",
-    "CI.GAS.IBI": "IBI y tasas",
-    "CI.GAS.HOGAR": "Hogar / mantenimiento",
-    "CI.GAS.REPARACION": "Conservación y reparación",
-    "CI.GAS.INTERES": "Intereses",
-    "CI.GAS.ADMIN": "Administración",
-    "CI.AMO.INMUEBLE": "Amortización",
-}
 
 REGIMEN_LABEL = {
     "capital_inmobiliario": "Rendimientos de capital inmobiliario",
@@ -71,7 +55,9 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         .unique()
         .all()
     )
-    cuentas = {item.codigo: item.nombre for item in session.scalars(select(Cuenta))}
+    filas_cuenta = list(session.scalars(select(Cuenta)))
+    nombres = {item.codigo: item.nombre for item in filas_cuenta}
+    extra_casillas = {item.codigo: item.casilla for item in filas_cuenta if item.casilla}
     inmuebles = {
         item.id: item.alias
         for item in session.scalars(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
@@ -82,9 +68,11 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
     ingresos = _sum_tipo(vivos, TIPO_INGRESO)
     mejoras = _sum_tipo(vivos, TIPO_MEJORA)
     pendientes = [row for row in vivos if row.estado == "pendiente"]
-    asientos = [_asiento_view(row, cuentas, inmuebles) for row in rows]
+    asientos = [_asiento_view(row, nombres, extra_casillas, inmuebles) for row in rows]
     por_mes = _by_month(vivos)
-    irpf = summarize_irpf(vivos) if actividad.regimen == REGIMEN_CI else None
+    irpf = (
+        summarize_irpf(vivos, extra_casillas) if actividad.regimen == REGIMEN_CI else None
+    )
     return {
         "codigo": actividad.codigo,
         "nombre": actividad.nombre,
@@ -103,7 +91,7 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         "resultado": ingresos - gastos,
         "por_mes": por_mes,
         "por_mes_acc": _cumulative(por_mes),
-        "por_naturaleza": _by_nature(vivos, actividad.regimen, cuentas),
+        "por_naturaleza": _by_nature(vivos, extra_casillas),
         "asientos": asientos,
         "pendientes": [item for item in asientos if item["estado"] == "pendiente"],
         "n_baja": sum(1 for item in asientos if item["baja"]),
@@ -139,8 +127,17 @@ def render_dashboard(data: dict) -> str:
     )
 
 
-def _asiento_view(asiento: Asiento, cuentas: dict[str, str], inmuebles: dict[int, str]) -> dict:
+def _asiento_view(
+    asiento: Asiento,
+    nombres: dict[str, str],
+    extra_casillas: dict[str, str],
+    inmuebles: dict[int, str],
+) -> dict:
     codigo = asiento.cuenta_codigo or ""
+    cuenta_nombre = nombres.get(codigo, "Sin clasificar")
+    casilla = casilla_clave(codigo, extra_casillas)
+    casilla_meta = INDEX_CI.get(casilla)
+    casilla_etiqueta = casilla_meta.etiqueta if casilla_meta else "Sin clasificar"
     documento = asiento.documento
     doc_path = ""
     doc_name = ""
@@ -171,15 +168,16 @@ def _asiento_view(asiento: Asiento, cuentas: dict[str, str], inmuebles: dict[int
         "iva": asiento.iva_cuota,
         "total": total,
         "total_num": float(total) if total is not None else 0.0,
-        "cuenta": codigo,
-        "cuenta_nombre": cuentas.get(codigo, "Sin clasificar"),
+        "cuenta": cuenta_nombre if codigo else "",
+        "cuenta_nombre": cuenta_nombre,
         "tipo": asiento.tipo,
         "estado": asiento.estado,
         "estado_label": ESTADO_LABEL.get(asiento.estado, asiento.estado),
         "inmueble": inmuebles.get(asiento.inmueble_id or 0, ""),
         "doc_uri": doc_path,
         "doc_name": doc_name,
-        "casilla": casilla_clave(codigo),
+        "casilla": casilla,
+        "casilla_etiqueta": casilla_etiqueta,
         "conf_ocr": conf_ocr,
         "conf_class": conf_class,
         "conf_min_pct": _conf_pct(conf_min),
@@ -188,7 +186,7 @@ def _asiento_view(asiento: Asiento, cuentas: dict[str, str], inmuebles: dict[int
         "validado": bool(asiento.validado),
         "baja": baja,
         "cmd_confirmar": (
-            f"aeat-hub reclasificar {asiento.id} {codigo}" if codigo else ""
+            f'aeat-hub reclasificar {asiento.id} "{cuenta_nombre}"' if codigo else ""
         ),
         "cmd_validar": f"aeat-hub validar {asiento.id}",
     }
@@ -344,26 +342,23 @@ def _by_month(rows: list[Asiento]) -> list[dict]:
     ]
 
 
-def _by_nature(rows: list[Asiento], regimen: str, cuentas: dict[str, str]) -> list[dict]:
+def _by_nature(rows: list[Asiento], extra_casillas: dict[str, str]) -> list[dict]:
     buckets: dict[str, Decimal] = defaultdict(lambda: ZERO)
     tipos: dict[str, str] = {}
     for row in rows:
-        label = _nature_label(row.cuenta_codigo, regimen, cuentas)
+        label = _nature_label(row.cuenta_codigo, extra_casillas)
         buckets[label] += q2(row.total) or ZERO
         tipos.setdefault(label, row.tipo)
     ordered = sorted(buckets.items(), key=lambda item: item[1], reverse=True)
     return [{"label": label, "total": total, "tipo": tipos[label]} for label, total in ordered if total]
 
 
-def _nature_label(codigo: str | None, regimen: str, cuentas: dict[str, str]) -> str:
+def _nature_label(codigo: str | None, extra_casillas: dict[str, str]) -> str:
     if not codigo:
         return "Sin clasificar"
-    if regimen == REGIMEN_CI:
-        if codigo.startswith("CI.MEJ."):
-            return "Mejoras (inversión)"
-        if codigo in NATURALEZA_CI:
-            return NATURALEZA_CI[codigo]
-    return cuentas.get(codigo, codigo)
+    clave = casilla_clave(codigo, extra_casillas)
+    meta = INDEX_CI.get(clave)
+    return meta.etiqueta if meta else "Sin clasificar"
 
 
 def _masthead(data: dict) -> str:
@@ -499,6 +494,7 @@ def _quality_cell(item: dict, *, prefix: str) -> str:
         hint = "Confianza ≥ 80 %. Revisa si algo no cuadra y valida para bloquearlo."
     ocr = _quality_pct_label(item["conf_ocr_pct"])
     rubro = _quality_pct_label(item["conf_class_pct"])
+    casilla = item["casilla_etiqueta"]
     pop_id = f"q-pop-{prefix}-{item['id']}"
     return (
         f'<div class="q-chip-wrap">'
@@ -511,7 +507,8 @@ def _quality_cell(item: dict, *, prefix: str) -> str:
         f'<div id="{pop_id}" popover="auto" class="q-pop" role="tooltip">'
         f"<strong>{escape(label)}</strong>"
         f'<dl><div><dt>OCR</dt><dd>{escape(ocr)}</dd></div>'
-        f"<div><dt>Rubro</dt><dd>{escape(rubro)}</dd></div></dl>"
+        f"<div><dt>Rubro</dt><dd>{escape(rubro)}</dd></div>"
+        f"<div><dt>Casilla</dt><dd>{escape(casilla)}</dd></div></dl>"
         f"<p>{escape(hint)}</p>"
         f"</div></div>"
     )
@@ -522,10 +519,10 @@ def _review_actions(item: dict) -> str:
         f'<button type="button" class="cmd-btn cmd-btn-ok" data-copy="{escape(item["cmd_validar"])}" '
         'title="Rubro correcto; bloquea reparse">Validar</button>'
     ]
-    for codigo, label, title in RUBRO_CHIPS:
-        if codigo == item["cuenta"]:
+    for nombre, label, title in RUBRO_CHIPS:
+        if nombre == item["cuenta_nombre"]:
             continue
-        cmd = f"aeat-hub reclasificar {item['id']} {codigo}"
+        cmd = f'aeat-hub reclasificar {item["id"]} "{nombre}"'
         cmds.append(
             f'<button type="button" class="cmd-btn" data-copy="{escape(cmd)}" '
             f'title="{escape(title)}">{escape(label)}</button>'
@@ -539,8 +536,6 @@ def _review_row(item: dict) -> str:
         title = escape(item["doc_name"] or "Factura")
         doc_cell = f'<a class="doc-link" href="{escape(item["doc_uri"])}" title="{title}">PDF</a>'
     rubro = escape(item["cuenta_nombre"])
-    if item["cuenta"]:
-        rubro = f'<span class="rubro-code">{escape(item["cuenta"])}</span> {rubro}'
     row_class = "review-row review-baja" if item["baja"] else "review-row"
     return (
         f'<tr class="{row_class}" id="review-asiento-{item["id"]}">'
@@ -927,15 +922,14 @@ def _ledger_filter_choices(data: dict) -> dict[str, list[tuple[str, str]]]:
     nifs = sorted({item["nif"] for item in asientos if item["nif"] != "—"})
     numeros = sorted({item["numero"] for item in asientos if item["numero"] != "—"})
     rubros = sorted(
-        {(item["cuenta"], item["cuenta_nombre"]) for item in asientos if item["cuenta"]},
-        key=lambda pair: pair[0],
+        {item["cuenta_nombre"] for item in asientos if item["cuenta"]},
     )
     return {
         "fecha": list(fechas),
         "emisor": [(item, item) for item in emisores],
         "nif": [(item, item) for item in nifs],
         "factura": [(item, item) for item in numeros],
-        "rubro": [(code, name) for code, name in rubros],
+        "rubro": [(nombre, nombre) for nombre in rubros],
         "confianza": [
             ("baja", "Revisar"),
             ("ok", "Aceptable"),
@@ -1048,11 +1042,6 @@ def _row_html(item: dict) -> str:
         title = escape(item["doc_name"] or "Factura")
         doc_cell = f'<a class="doc-link" href="{escape(item["doc_uri"])}" title="{title}">Abrir</a>'
     rubro = escape(item["cuenta_nombre"])
-    if item["cuenta"]:
-        rubro = (
-            f'<span class="rubro-code">{escape(item["cuenta"])}</span> '
-            f'<span class="rubro-name">{rubro}</span>'
-        )
     emisor = escape(item["emisor"])
     if item["emisor"] != "—":
         emisor = f'<span class="cell-text" title="{emisor}">{emisor}</span>'
@@ -1759,8 +1748,6 @@ thead th {
   white-space: nowrap;
 }
 .cell-nowrap { white-space: nowrap; }
-.cell-rubro .rubro-code { margin-right: 2px; }
-.cell-rubro .rubro-name { color: var(--ink); }
 .cell-calidad { white-space: nowrap; min-width: 0; }
 .cell-estado, .cell-doc { text-align: center; white-space: nowrap; }
 thead th.num, tbody td.num { text-align: right; }
@@ -1791,12 +1778,6 @@ th {
 .pill.pendiente { color: var(--warn); border-color: #d4a574; background: #fff6eb; }
 .pill.confirmado { color: var(--ingreso); border-color: #9bc4b8; background: #eef7f3; }
 .pill.duplicado { color: var(--muted); background: #f3f0ea; }
-.rubro-code {
-  display: inline-block;
-  font: 11px ui-monospace, "SF Mono", Menlo, monospace;
-  color: var(--muted);
-  margin-right: 4px;
-}
 .doc-link { font-weight: 600; color: var(--neto); text-decoration: none; border-bottom: 1px solid transparent; }
 .doc-link:hover { border-bottom-color: var(--neto); }
 .empty { color: var(--muted); padding: 12px; }
