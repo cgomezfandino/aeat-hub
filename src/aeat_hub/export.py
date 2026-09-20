@@ -12,29 +12,27 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from aeat_hub.fiscal.irpf import summarize_irpf
+from aeat_hub.fiscal.accounts import REGIMEN_CI
 from aeat_hub.models import Actividad, Asiento, Inmueble
 from aeat_hub.paths import DataLayout
 
 SHEET_COLUMNS = [
-    "id",
-    "fecha",
-    "ejercicio",
-    "actividad",
-    "inmueble",
-    "tipo",
-    "cuenta",
-    "emisor",
-    "nif_emisor",
-    "numero",
-    "descripcion",
-    "base",
-    "iva_tipo",
-    "iva_cuota",
-    "total",
-    "estado",
-    "origen",
-    "duplicado_nivel",
-    "duplicado_de",
+    ("fecha", "Fecha compra"),
+    ("emisor", "Emisor"),
+    ("nif_emisor", "NIF emisor"),
+    ("numero", "Nº factura"),
+    ("descripcion", "Descripción"),
+    ("base", "Base"),
+    ("iva_tipo", "IVA %"),
+    ("iva_cuota", "Cuota IVA"),
+    ("total", "Total"),
+    ("cuenta", "Rubro / cuenta"),
+    ("tipo", "Tipo"),
+    ("estado", "Estado"),
+    ("inmueble", "Inmueble"),
+    ("actividad", "Expediente"),
+    ("id", "Id asiento"),
 ]
 
 
@@ -73,6 +71,8 @@ def export_xlsx(
     )
     _write_summary_rubro(wb.create_sheet("Resumen_rubro"), rows)
     _write_summary_inmueble(wb.create_sheet("Resumen_inmueble"), rows, inmuebles)
+    if actividad.regimen == REGIMEN_CI:
+        _write_casillas_irpf(wb.create_sheet("Casillas_IRPF"), rows, year)
 
     layout.exports.mkdir(parents=True, exist_ok=True)
     dest = layout.exports / f"libro_{actividad.codigo}_{year}.xlsx"
@@ -80,28 +80,24 @@ def export_xlsx(
     return dest
 
 
-def _as_row(asiento: Asiento, actividad: Actividad, inmuebles: dict[int, str]) -> list[object]:
-    return [
-        asiento.id,
-        asiento.fecha.isoformat() if asiento.fecha else "",
-        asiento.ejercicio,
-        actividad.codigo,
-        inmuebles.get(asiento.inmueble_id or 0, ""),
-        asiento.tipo,
-        asiento.cuenta_codigo or "",
-        asiento.emisor or "",
-        asiento.nif_emisor or "",
-        asiento.numero_factura or "",
-        asiento.descripcion,
-        _num(asiento.base),
-        _num(asiento.iva_tipo),
-        _num(asiento.iva_cuota),
-        _num(asiento.total),
-        asiento.estado,
-        asiento.origen_clasificacion,
-        asiento.duplicado_nivel,
-        asiento.duplicado_de_id,
-    ]
+def _as_row(asiento: Asiento, actividad: Actividad, inmuebles: dict[int, str]) -> dict[str, object]:
+    return {
+        "id": asiento.id,
+        "fecha": asiento.fecha.isoformat() if asiento.fecha else "",
+        "emisor": asiento.emisor or "",
+        "nif_emisor": asiento.nif_emisor or "",
+        "numero": asiento.numero_factura or "",
+        "descripcion": asiento.descripcion,
+        "base": _num(asiento.base),
+        "iva_tipo": _num(asiento.iva_tipo),
+        "iva_cuota": _num(asiento.iva_cuota),
+        "total": _num(asiento.total),
+        "cuenta": asiento.cuenta_codigo or "",
+        "tipo": asiento.tipo,
+        "estado": asiento.estado,
+        "inmueble": inmuebles.get(asiento.inmueble_id or 0, ""),
+        "actividad": actividad.codigo,
+    }
 
 
 def _write_sheet(
@@ -112,11 +108,12 @@ def _write_sheet(
     inmuebles: dict[int, str],
 ) -> None:
     ws.title = title
-    ws.append(SHEET_COLUMNS)
+    ws.append([label for _key, label in SHEET_COLUMNS])
     for cell in ws[1]:
         cell.font = Font(bold=True)
     for asiento in rows:
-        ws.append(_as_row(asiento, actividad, inmuebles))
+        payload = _as_row(asiento, actividad, inmuebles)
+        ws.append([payload[key] for key, _label in SHEET_COLUMNS])
     _autosize(ws)
 
 
@@ -154,6 +151,39 @@ def _write_summary_inmueble(ws, rows: list[Asiento], inmuebles: dict[int, str]) 
         buckets[(alias, asiento.tipo)] += asiento.total or Decimal("0")
     for (alias, tipo), total in sorted(buckets.items()):
         ws.append([alias, tipo, float(total)])
+    _autosize(ws)
+
+
+def _write_casillas_irpf(ws, rows: list[Asiento], year: int) -> None:
+    ws.title = "Casillas_IRPF"
+    summary = summarize_irpf(rows)
+    ws.append(["Borrador IRPF · rendimientos de capital inmobiliario", year])
+    ws.append(
+        [
+            "No presenta el modelo 100. Copia estos totales al anexo del inmueble en la Renta.",
+        ]
+    )
+    ws.append([])
+    ws.append(["Concepto", "Asientos", "Importe", "Resta del año", "Nota"])
+    for cell in ws[4]:
+        cell.font = Font(bold=True)
+    for item in summary["filas"]:
+        if item["n"] == 0 and item["clave"] not in {"ingresos", "mejoras"}:
+            continue
+        ws.append(
+            [
+                item["etiqueta"],
+                item["n"],
+                float(item["total"]),
+                "Sí" if item["resta_del_ano"] else "No",
+                item["notas"],
+            ]
+        )
+    ws.append([])
+    ws.append(["Ingresos íntegros", float(summary["ingresos"])])
+    ws.append(["Gastos deducibles (incl. amortización)", float(summary["gastos_deducibles"])])
+    ws.append(["Rendimiento neto", float(summary["rendimiento"])])
+    ws.append(["Mejoras (no restan del ejercicio)", float(summary["mejoras"])])
     _autosize(ws)
 
 

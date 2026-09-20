@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
-import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import select
@@ -14,11 +13,13 @@ from aeat_hub.classify import classify
 from aeat_hub.dedupe import DuplicateHit, find_duplicate, find_sha_duplicate
 from aeat_hub.extract.parser import parse_invoice
 from aeat_hub.extract.schema import InvoiceExtract
+from aeat_hub.filing import place_file, relocate_asiento
 from aeat_hub.media import file_phash, sha256_file
 from aeat_hub.models import Actividad, Asiento, Documento, Inmueble
 from aeat_hub.ocr.base import OCRProvider, OCRResult
 from aeat_hub.ocr.cascade import transcribe
 from aeat_hub.paths import DataLayout
+from aeat_hub.pipeline import etapa, log_detalle
 
 INGEST_SUFFIXES = {
     ".pdf",
@@ -39,7 +40,8 @@ class IngestItem:
     asiento_id: int | None
     estado: str
     detalle: str
-    warnings: list[str]
+    warnings: list[str] = field(default_factory=list)
+    etapa_error: str | None = None
 
 
 def list_inbox(layout: DataLayout) -> list[Path]:
@@ -61,59 +63,133 @@ def ingest_file(
     from_inbox: bool = True,
     rapid: OCRProvider | None = None,
 ) -> IngestItem:
+    name = path.name
     warnings: list[str] = []
-    sha = sha256_file(path)
-    existing = find_sha_duplicate(session, sha)
-    if existing:
-        stored = _archive(path, layout.rejected / "hash", sha, move=from_inbox)
-        return IngestItem(stored, None, "duplicado", f"mismo fichero SHA-256 que documento {existing.id}", warnings)
 
-    ocr: OCRResult = transcribe(path, prefer=ocr_prefer, warnings=warnings, rapid=rapid)
-    extract = parse_invoice(ocr.text, motor=ocr.engine)
-    phash = file_phash(path)
-    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    dup = find_duplicate(session, actividad_id=actividad.id, extract=extract, phash=phash)
-    stored = _archive(path, layout.processed, sha, move=from_inbox)
+    with etapa("recibir", name):
+        log_detalle("recibir", "%s (%s bytes)", name, path.stat().st_size)
 
-    documento = Documento(
-        sha256=sha,
-        phash=phash,
-        nombre_original=path.name,
-        ruta_almacenada=str(stored),
-        mime=mime,
-        motor_ocr=ocr.engine,
-        texto_crudo=ocr.text,
-        json_extraido=extract.model_dump_json(),
-        confianza=extract.confianza,
-    )
-    session.add(documento)
-    session.flush()
+    with etapa("hash", name):
+        sha = sha256_file(path)
+        log_detalle("hash", "sha256=%s", sha)
 
-    inmueble = session.scalar(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
-    classification = classify(session, actividad, extract, ocr.text)
-    asiento = Asiento(
-        actividad_id=actividad.id,
-        inmueble_id=inmueble.id if inmueble else None,
-        documento_id=documento.id,
-        tipo=classification.tipo,
-        cuenta_codigo=classification.cuenta_codigo,
-        fecha=extract.fecha,
-        ejercicio=extract.fecha.year if extract.fecha else None,
-        emisor=extract.emisor,
-        nif_emisor=extract.nif_emisor,
-        numero_factura=extract.numero,
-        descripcion=_descripcion(extract, path),
-        base=extract.base,
-        iva_tipo=extract.iva_tipo,
-        iva_cuota=extract.iva_cuota,
-        total=extract.total,
-        confianza_clasificacion=classification.confianza,
-        origen_clasificacion=classification.origen,
-        estado="pendiente",
-    )
-    _apply_duplicate_and_state(asiento, dup, classification.confianza)
-    session.add(asiento)
-    session.flush()
+    with etapa("duplicado-fichero", name):
+        existing = find_sha_duplicate(session, sha)
+        if existing:
+            dest = layout.rejected / "hash" / f"{sha[:12]}_{path.name}"
+            stored = place_file(path, dest, move=from_inbox)
+            log_detalle(
+                "duplicado-fichero",
+                "mismo SHA que documento id=%s → %s",
+                existing.id,
+                stored,
+            )
+            return IngestItem(
+                stored,
+                None,
+                "duplicado",
+                f"mismo fichero SHA-256 que documento {existing.id}",
+                warnings,
+            )
+        log_detalle("duplicado-fichero", "no hay duplicado de fichero")
+
+    with etapa("ocr", name):
+        ocr: OCRResult = transcribe(path, prefer=ocr_prefer, warnings=warnings, rapid=rapid)
+        log_detalle(
+            "ocr",
+            "motor=%s confianza=%.3f paginas=%s chars=%s avisos=%s",
+            ocr.engine,
+            ocr.confidence,
+            ocr.pages,
+            len(ocr.text),
+            warnings or "-",
+        )
+
+    with etapa("parsear", name):
+        extract = parse_invoice(ocr.text, motor=ocr.engine)
+        log_detalle(
+            "parsear",
+            "emisor=%s nif=%s numero=%s fecha=%s total=%s confianza=%.3f",
+            extract.emisor,
+            extract.nif_emisor,
+            extract.numero,
+            extract.fecha,
+            extract.total,
+            extract.confianza,
+        )
+
+    with etapa("duplicado-fiscal", name):
+        phash = file_phash(path)
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        dup = find_duplicate(session, actividad_id=actividad.id, extract=extract, phash=phash)
+        if dup:
+            log_detalle(
+                "duplicado-fiscal",
+                "nivel=%s motivo=%s asiento=%s",
+                dup.nivel,
+                dup.motivo,
+                dup.asiento_id,
+            )
+        else:
+            log_detalle("duplicado-fiscal", "no hay duplicado fiscal/sospechoso")
+
+    with etapa("clasificar", name):
+        classification = classify(session, actividad, extract, ocr.text)
+        log_detalle(
+            "clasificar",
+            "cuenta=%s tipo=%s origen=%s confianza=%s",
+            classification.cuenta_codigo,
+            classification.tipo,
+            classification.origen,
+            classification.confianza,
+        )
+
+    with etapa("guardar", name):
+        documento = Documento(
+            sha256=sha,
+            phash=phash,
+            nombre_original=path.name,
+            ruta_almacenada=str(path.resolve()),
+            mime=mime,
+            motor_ocr=ocr.engine,
+            texto_crudo=ocr.text,
+            json_extraido=extract.model_dump_json(),
+            confianza=extract.confianza,
+        )
+        session.add(documento)
+        session.flush()
+        inmueble = session.scalar(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
+        asiento = Asiento(
+            actividad_id=actividad.id,
+            inmueble_id=inmueble.id if inmueble else None,
+            documento_id=documento.id,
+            tipo=classification.tipo,
+            cuenta_codigo=classification.cuenta_codigo,
+            fecha=extract.fecha,
+            ejercicio=extract.fecha.year if extract.fecha else None,
+            emisor=extract.emisor,
+            nif_emisor=extract.nif_emisor,
+            numero_factura=extract.numero,
+            descripcion=_descripcion(extract, path),
+            base=extract.base,
+            iva_tipo=extract.iva_tipo,
+            iva_cuota=extract.iva_cuota,
+            total=extract.total,
+            confianza_clasificacion=classification.confianza,
+            origen_clasificacion=classification.origen,
+            estado="pendiente",
+        )
+        _apply_duplicate_and_state(asiento, dup, classification.confianza)
+        session.add(asiento)
+        session.flush()
+        log_detalle("guardar", "documento=%s asiento=%s estado=%s", documento.id, asiento.id, asiento.estado)
+
+    with etapa("archivar", name):
+        stored = relocate_asiento(session, layout, asiento, move=from_inbox) or Path(
+            documento.ruta_almacenada
+        )
+        log_detalle("archivar", "destino=%s", stored)
+
     detalle = classification.cuenta_codigo or "sin cuenta"
     if dup:
         detalle = f"duplicado nivel {dup.nivel} ({dup.motivo}) → asiento {dup.asiento_id}"
@@ -128,20 +204,49 @@ def ingest_inbox(
     ocr_prefer: str = "auto",
     rapid: OCRProvider | None = None,
 ) -> list[IngestItem]:
-    results = []
-    for path in list_inbox(layout):
-        results.append(
-            ingest_file(
-                session,
-                layout,
-                path,
-                actividad,
-                ocr_prefer=ocr_prefer,
-                from_inbox=True,
-                rapid=rapid,
+    results: list[IngestItem] = []
+    files = list_inbox(layout)
+    log_detalle("lote", "inbox=%s ficheros=%s", layout.inbox, [p.name for p in files])
+    for path in files:
+        try:
+            results.append(
+                ingest_file(
+                    session,
+                    layout,
+                    path,
+                    actividad,
+                    ocr_prefer=ocr_prefer,
+                    from_inbox=True,
+                    rapid=rapid,
+                )
             )
-        )
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            stored = _quarantine(layout, path)
+            results.append(
+                IngestItem(
+                    stored,
+                    None,
+                    "error",
+                    str(exc),
+                    etapa_error=_etapa_from_exc(exc),
+                )
+            )
+            log_detalle("lote", "sigue con el siguiente fichero tras error en %s", path.name)
     return results
+
+
+def _quarantine(layout: DataLayout, path: Path) -> Path:
+    dest = layout.rejected / "error" / path.name
+    if path.exists():
+        return place_file(path, dest, move=True)
+    return dest
+
+
+def _etapa_from_exc(exc: BaseException) -> str:
+    text = str(exc)
+    return text[:80] if text else exc.__class__.__name__
 
 
 def _apply_duplicate_and_state(asiento: Asiento, dup: DuplicateHit | None, confianza) -> None:
@@ -156,21 +261,48 @@ def _apply_duplicate_and_state(asiento: Asiento, dup: DuplicateHit | None, confi
         asiento.estado = "pendiente"
 
 
+def reparse_asientos(session: Session, actividad: Actividad) -> int:
+    """Vuelve a extraer emisor/fecha/importes desde el texto OCR ya guardado.
+
+    No toca asientos validados por el usuario: el libro humano gana al modelo.
+    """
+    updated = 0
+    rows = session.scalars(select(Asiento).where(Asiento.actividad_id == actividad.id)).all()
+    for asiento in rows:
+        if asiento.validado:
+            continue
+        if asiento.documento_id is None:
+            continue
+        documento = session.get(Documento, asiento.documento_id)
+        if documento is None or not (documento.texto_crudo or "").strip():
+            continue
+        extract = parse_invoice(documento.texto_crudo, motor=documento.motor_ocr)
+        asiento.emisor = extract.emisor
+        asiento.nif_emisor = extract.nif_emisor
+        asiento.fecha = extract.fecha
+        asiento.ejercicio = extract.fecha.year if extract.fecha else asiento.ejercicio
+        asiento.numero_factura = extract.numero
+        asiento.base = extract.base
+        asiento.iva_tipo = extract.iva_tipo
+        asiento.iva_cuota = extract.iva_cuota
+        asiento.total = extract.total
+        asiento.descripcion = _descripcion(extract, Path(documento.nombre_original))
+        documento.json_extraido = extract.model_dump_json()
+        documento.confianza = extract.confianza
+        if asiento.estado != "duplicado":
+            classification = classify(session, actividad, extract, documento.texto_crudo)
+            asiento.cuenta_codigo = classification.cuenta_codigo
+            asiento.tipo = classification.tipo
+            asiento.origen_clasificacion = classification.origen
+            asiento.confianza_clasificacion = classification.confianza
+            _apply_duplicate_and_state(asiento, None, classification.confianza)
+        updated += 1
+    return updated
+
+
 def _descripcion(extract: InvoiceExtract, path: Path) -> str:
     if extract.emisor and extract.numero:
         return f"{extract.emisor} · {extract.numero}"
     if extract.emisor:
         return extract.emisor
     return path.name
-
-
-def _archive(src: Path, dest_dir: Path, sha: str, *, move: bool) -> Path:
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{sha[:12]}_{src.name}"
-    if dest.exists():
-        dest = dest_dir / f"{sha}_{src.name}"
-    if move:
-        shutil.move(str(src), str(dest))
-    else:
-        shutil.copy2(src, dest)
-    return dest

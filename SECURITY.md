@@ -16,6 +16,7 @@ Los tests usan **documentos sintéticos** (NIF de juguete con dígito de control
 
 El directorio de datos (por defecto `/Volumes/SSDCX9/data/aeat-hub` o
 `AEAT_HUB_DATA_DIR`) está fuera del repo y cubierto por `.gitignore`.
+Detalle del árbol: [docs/datos-y-archivo.md](docs/datos-y-archivo.md).
 
 ## Informar de un problema
 

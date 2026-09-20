@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -28,6 +28,17 @@ def make_engine(layout: DataLayout) -> Engine:
 
 def create_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
+    _migrate(engine)
+
+
+def _migrate(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if "asientos" not in inspector.get_table_names():
+        return
+    columns = {item["name"] for item in inspector.get_columns("asientos")}
+    if "validado" not in columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE asientos ADD COLUMN validado BOOLEAN NOT NULL DEFAULT 0"))
 
 
 def session_factory(engine: Engine) -> sessionmaker[Session]:

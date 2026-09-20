@@ -13,7 +13,7 @@ CIF_LETTERS_ORG = set("ABCDEFGHJNPQRSUVW")
 
 _CLEAN = re.compile(r"[\s.\-]")
 NIF_TOKEN = re.compile(
-    r"\b([XYZ]\d{7}[A-Z]|\d{8}[A-Z]|[ABCDEFGHJNPQRSUVW]\d{7}[A-Z0-9])\b",
+    r"\b([XYZ]\d{7}[A-Z]|\d{8}[A-Z]|[ABCDEFGHJNPQRSUVW]-?\d{7}[A-Z0-9])\b",
     re.IGNORECASE,
 )
 
@@ -49,6 +49,18 @@ def find_nifs(text: str) -> list[str]:
             seen.add(nif)
             found.append(nif)
     return found
+
+
+def pick_emisor_receptor(nifs: list[str]) -> tuple[str | None, str | None]:
+    """En facturas ES el CIF de empresa suele ser el emisor y el DNI el cliente."""
+    org = [nif for nif in nifs if nif[:1] in CIF_LETTERS_ORG]
+    person = [nif for nif in nifs if nif[:1].isdigit() or nif[:1] in NIE_PREFIX]
+    if org:
+        receptor = person[0] if person else (org[1] if len(org) > 1 else None)
+        return org[0], receptor
+    if not nifs:
+        return None, None
+    return nifs[0], nifs[1] if len(nifs) > 1 else None
 
 
 def _valid_dni_nie(nif: str) -> bool:

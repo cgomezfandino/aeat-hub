@@ -48,8 +48,18 @@ def test_export_xlsx_crea_hojas(session, layout):
         "Reclasificar",
         "Resumen_rubro",
         "Resumen_inmueble",
+        "Casillas_IRPF",
     }
-    gastos = list(wb["Gastos"].iter_rows(min_row=2, values_only=True))
-    assert any(row[6] == "CI.GAS.LUZ" for row in gastos)
-    ingresos = list(wb["Ingresos"].iter_rows(min_row=2, values_only=True))
-    assert any(row[6] == "CI.ING.RENTA" for row in ingresos)
+    gastos = list(wb["Gastos"].iter_rows(min_row=1, max_row=2, values_only=True))
+    headers = list(gastos[0])
+    assert "Emisor" in headers
+    assert "Fecha compra" in headers
+    emisor_idx = headers.index("Emisor")
+    cuenta_idx = headers.index("Rubro / cuenta")
+    assert gastos[1][emisor_idx] == "IBERDROLA DEMO"
+    assert gastos[1][cuenta_idx] == "CI.GAS.LUZ"
+    ingresos_rows = list(wb["Ingresos"].iter_rows(min_row=1, values_only=True))
+    cuenta_idx = list(ingresos_rows[0]).index("Rubro / cuenta")
+    assert any(row[cuenta_idx] == "CI.ING.RENTA" for row in ingresos_rows[1:])
+    irpf_rows = list(wb["Casillas_IRPF"].iter_rows(values_only=True))
+    assert any(row and row[0] == "Rendimiento neto" for row in irpf_rows)

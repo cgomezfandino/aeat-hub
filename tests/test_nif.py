@@ -17,3 +17,7 @@ def test_nif_invalido_y_normalizacion():
 def test_find_nifs_en_texto():
     text = "Emisor B12345674 Cliente 12345678Z basura 1234"
     assert find_nifs(text) == ["B12345674", "12345678Z"]
+
+
+def test_cif_con_guion():
+    assert find_nifs("CIF B-12345674 destinatario 12345678Z") == ["B12345674", "12345678Z"]

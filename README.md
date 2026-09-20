@@ -6,13 +6,16 @@ duplicarlas y poder defender cada asiento.
 
 Esto **no es software oficial de la AEAT**. Revisa los asientos antes de declarar.
 
+**Documentación completa:** [docs/README.md](docs/README.md) (arquitectura, fiscalidad, CLI, OCR, archivo en disco, código y hoja de ruta).
+
 ## Qué hace (MVP)
 
 - Varios expedientes por titular: `capital_inmobiliario` (alquiler) y `actividad_economica`.
-- Inbox de PDF y fotos (móvil). Extrae NIF, fecha, número, bases e IVA.
+- Inbox de PDF y fotos (móvil). Tras clasificar, el fichero queda en `archivo/<expediente>/<año>/<mes>/<gasto|ingreso|mejora>/<rubro>/`.
+- Extrae NIF, fecha, número, bases e IVA.
 - Deduplica a tres niveles: mismo fichero, misma factura fiscal, sospechosos (importe±3 días o foto casi igual).
 - Clasifica por proveedor/palabras clave. Si reclasificas, **aprende** (regla por NIF emisor).
-- SQLite como fuente de verdad. Excel como exportación reproducible.
+- SQLite como fuente de verdad. Dashboard HTML como vista del ejercicio; Excel opcional.
 - 100 % local. Las facturas reales **no van a git**.
 
 El primer expediente semilla es un **alquiler en Valladolid** (luz, agua, internet,
@@ -44,7 +47,19 @@ Por defecto:
 
 ```
 /Volumes/SSDCX9/data/aeat-hub/
-  inbox/ processed/ rejected/ db/ledger.sqlite exports/
+  inbox/                 # suelta aquí PDF y fotos
+  archivo/               # queda ordenado tras el ingest
+    CI-VA-001/
+      2026/
+        03/
+          gasto/luz/
+          gasto/agua/
+          ingreso/renta/
+          mejora/pvc/
+          pendiente/sin-cuenta/
+  rejected/hash/         # mismo fichero (SHA-256)
+  db/ledger.sqlite
+  exports/
 ```
 
 Cámbialo con `--data-dir` o `AEAT_HUB_DATA_DIR`. Ver `.env.example` y [SECURITY.md](SECURITY.md).
@@ -55,8 +70,10 @@ uv run aeat-hub init --titular "Tu nombre" --nif 12345678Z
 # deja PDF/JPG en $AEAT_HUB_DATA_DIR/inbox
 uv run aeat-hub ingest --actividad CI-VA-001
 uv run aeat-hub pendientes --actividad CI-VA-001
-uv run aeat-hub reclasificar 1 CI.MEJ.PVC
+uv run aeat-hub reclasificar 1 CI.MEJ.PVC   # mueve el fichero al rubro nuevo
+uv run aeat-hub ordenar --actividad CI-VA-001
 uv run aeat-hub duplicados --actividad CI-VA-001
+uv run aeat-hub dashboard --actividad CI-VA-001 --year 2026
 uv run aeat-hub export --actividad CI-VA-001 --year 2026 --xlsx
 ```
 
@@ -64,26 +81,27 @@ uv run aeat-hub export --actividad CI-VA-001 --year 2026 --xlsx
 
 ## OCR
 
-Cascada por defecto, pensada para un **M1 Pro 16 GB sin NVIDIA**:
+Cascada por defecto (`--ocr auto`):
 
 1. Texto nativo del PDF (Iberdrola, comunidad, seguros…).
-2. [RapidOCR](https://github.com/RapidAI/RapidOCR) (ONNX) para fotos y escaneos.
+2. Fotos/escaneos: **Apple Vision en macOS**, **RapidOCR (ONNX) en Windows/Linux** (y en Mac si Vision no está).
 
-[Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR) de Baidu es un transcriptor
-excelente en GPU NVIDIA (PDF largos, un solo pase), pero **no extrae JSON de factura
-española** y el camino oficial es CUDA. En Apple Silicon 16 GB es experimental
-(GGUF / llama.cpp). Queda como proveedor opcional:
+DeepSeek-OCR (Ollama) y Unlimited-OCR son opcionales (`--ocr deepseek` / `--ocr unlimited`).
+No son el default: Vision/RapidOCR no piden 7 GB extra.
 
 ```bash
 uv run aeat-hub ocr-status
-# si tienes un servidor OpenAI-compatible con el modelo:
-export AEAT_HUB_UNLIMITED_OCR_URL=http://127.0.0.1:8080/v1/chat/completions
-uv run aeat-hub ingest --actividad CI-VA-001 --ocr unlimited
+ollama pull deepseek-ocr   # opcional
+uv run aeat-hub ingest --actividad CI-VA-001 --ocr deepseek
 ```
 
-Si Unlimited-OCR no carga, el CLI avisa y sigue con RapidOCR.
+Bake-off local (oro y resultados en el data-dir, nunca en git):
 
-PaddleOCR-VL (más pesado) se activa con `AEAT_HUB_PADDLEOCR_VL=1` y `--ocr paddle`.
+```bash
+uv run aeat-hub eval
+```
+
+Metodología: [docs/evals.md](docs/evals.md).
 
 ## Modelo fiscal (resumen)
 
@@ -101,8 +119,8 @@ Una actividad económica (autónomo) es otro expediente, con IVA. El CLI exige
 uv run pytest
 ```
 
-Los tests usan facturas sintéticas. No hace falta GPU ni descargar Unlimited-OCR.
+Los tests usan facturas sintéticas. No hace falta GPU ni descargar Unlimited-OCR. Guía: [docs/desarrollo.md](docs/desarrollo.md).
 
 ## Licencia
 
-MIT. Ver [LICENSE](LICENSE).
+MIT. Ver [LICENSE](LICENSE). Seguridad de datos: [SECURITY.md](SECURITY.md).

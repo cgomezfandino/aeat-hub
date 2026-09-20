@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -49,9 +50,15 @@ def find_duplicate(
     fiscal = _fiscal_match(session, actividad_id, extract, exclude_asiento_id)
     if fiscal:
         return fiscal
+    by_number = _numero_fecha_total_match(session, actividad_id, extract, exclude_asiento_id)
+    if by_number:
+        return by_number
     suspicious = _suspicious_match(session, actividad_id, extract, exclude_asiento_id)
     if suspicious:
         return suspicious
+    by_emisor = _emisor_fecha_total_match(session, actividad_id, extract, exclude_asiento_id)
+    if by_emisor:
+        return by_emisor
     if phash:
         hashed = _phash_match(session, phash, exclude_asiento_id)
         if hashed:
@@ -101,6 +108,70 @@ def _suspicious_match(
     ).all()
     for row in rows:
         if exclude_asiento_id and row.id == exclude_asiento_id:
+            continue
+        if row.fecha and start <= row.fecha <= end:
+            return DuplicateHit(3, row.id, row.documento_id, "mismo NIF+importe±3 días")
+    return None
+
+
+def _numero_key(numero: str | None, fecha, total: Decimal | None) -> str | None:
+    if not numero or fecha is None or total is None:
+        return None
+    num_n = "".join(ch for ch in numero.upper() if ch.isalnum())
+    if len(num_n) < 4:
+        return None
+    cents = int(total * 100)
+    return f"{num_n}|{fecha.isoformat()}|{cents}"
+
+
+def _numero_fecha_total_match(
+    session: Session,
+    actividad_id: int,
+    extract: InvoiceExtract,
+    exclude_asiento_id: int | None,
+) -> DuplicateHit | None:
+    key = _numero_key(extract.numero, extract.fecha, extract.total)
+    if not key:
+        return None
+    rows = session.scalars(
+        select(Asiento).where(Asiento.actividad_id == actividad_id, Asiento.estado != "rechazado")
+    ).all()
+    for row in rows:
+        if exclude_asiento_id and row.id == exclude_asiento_id:
+            continue
+        other = _numero_key(row.numero_factura, row.fecha, row.total)
+        if other and other == key:
+            return DuplicateHit(2, row.id, row.documento_id, "número+fecha+total")
+    return None
+
+
+def _norm_emisor(value: str | None) -> str:
+    text = re.sub(r"\s+", " ", (value or "").upper()).strip()
+    return text[:48]
+
+
+def _emisor_fecha_total_match(
+    session: Session,
+    actividad_id: int,
+    extract: InvoiceExtract,
+    exclude_asiento_id: int | None,
+) -> DuplicateHit | None:
+    emisor = _norm_emisor(extract.emisor)
+    if len(emisor) < 6 or extract.total is None or extract.fecha is None:
+        return None
+    start = extract.fecha - timedelta(days=3)
+    end = extract.fecha + timedelta(days=3)
+    rows = session.scalars(
+        select(Asiento).where(
+            Asiento.actividad_id == actividad_id,
+            Asiento.total == extract.total,
+            Asiento.fecha.is_not(None),
+        )
+    ).all()
+    for row in rows:
+        if exclude_asiento_id and row.id == exclude_asiento_id:
+            continue
+        if _norm_emisor(row.emisor) != emisor:
             continue
         if row.fecha and start <= row.fecha <= end:
             return DuplicateHit(3, row.id, row.documento_id, "mismo emisor+importe±3 días")

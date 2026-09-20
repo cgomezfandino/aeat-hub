@@ -34,6 +34,7 @@ def require_layout(layout: DataLayout) -> None:
         raise RuntimeError(
             f"No hay libro en {layout.root}. Ejecuta: aeat-hub init --data-dir {layout.root}"
         )
+    create_schema(make_engine(layout))
 
 
 def get_actividad(session: Session, codigo: str) -> Actividad:

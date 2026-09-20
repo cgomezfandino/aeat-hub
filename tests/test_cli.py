@@ -25,6 +25,26 @@ def test_cli_init_ingest_pendientes_export(layout, tmp_path):
     assert empty.exit_code == 0
     assert "Inbox vacío" in empty.output
 
+    dash = runner.invoke(
+        app,
+        [
+            "dashboard",
+            "--data-dir",
+            str(layout.root),
+            "--actividad",
+            CODIGO_DEMO_CI,
+            "--year",
+            "2026",
+            "--no-open",
+        ],
+    )
+    assert dash.exit_code == 0, dash.output
+    dest = layout.exports / "dashboard_CI-VA-001_2026.html"
+    assert dest.is_file()
+    html = dest.read_text(encoding="utf-8")
+    assert "Alquiler Valladolid" in html
+    assert "libro auxiliar" in html.lower()
+
 
 def test_cli_actividad_alta_ae(layout):
     runner.invoke(app, ["init", "--data-dir", str(layout.root)])

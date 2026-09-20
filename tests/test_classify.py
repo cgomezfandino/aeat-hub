@@ -54,6 +54,7 @@ def test_reclasificar_aprende_por_nif(session):
     assert n == 1
     assert asiento.cuenta_codigo == "CI.GAS.HOGAR"
     assert asiento.estado == "confirmado"
+    assert asiento.validado
     rule = session.scalar(select(ReglaAprendida))
     assert rule.nif_emisor == "B12345674"
     assert rule.cuenta_codigo == "CI.GAS.HOGAR"
@@ -61,3 +62,32 @@ def test_reclasificar_aprende_por_nif(session):
     learned = classify(session, actividad, extract, FACTURA_LUZ)
     assert learned.cuenta_codigo == "CI.GAS.HOGAR"
     assert learned.origen == "aprendida"
+
+
+def test_validar_asiento_bloquea_sin_cambiar_rubro(session):
+    from datetime import date
+
+    from aeat_hub.classify import validar_asiento
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    asiento = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        cuenta_codigo="CI.GAS.HOGAR",
+        fecha=date(2026, 9, 18),
+        ejercicio=2026,
+        emisor="LEROY",
+        nif_emisor="B84818442",
+        numero_factura="X",
+        total=Decimal("13.86"),
+        estado="pendiente",
+        confianza_clasificacion=Decimal("0.600"),
+        origen_clasificacion="regla",
+    )
+    session.add(asiento)
+    session.flush()
+    validar_asiento(asiento)
+    assert asiento.validado
+    assert asiento.estado == "confirmado"
+    assert asiento.cuenta_codigo == "CI.GAS.HOGAR"
+    assert asiento.confianza_clasificacion == Decimal("1.000")
