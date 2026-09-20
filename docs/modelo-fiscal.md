@@ -27,38 +27,38 @@ La referencia catastral no se rellena en la semilla a propósito (dato personal)
 
 ### Ingresos
 
-| Código | Nombre | Carpeta en archivo |
+| Nombre | Casilla Renta | Carpeta en archivo |
 | --- | --- | --- |
-| `CI.ING.RENTA` | Rentas de alquiler | `ingreso/renta` |
-| `CI.ING.INDEMN` | Indemnizaciones (resolución, daños repercutidos) | `ingreso/indemn` |
+| Alquiler | `ingresos` | `ingreso/renta` |
+| Indemnización | `ingresos` | `ingreso/indemn` |
 
 ### Gastos del ejercicio (art. 23 LIRPF: conservación, no mejora)
 
 Solo son deducibles los suministros **si los paga el arrendador** (no el inquilino).
 
-| Código | Nombre | Carpeta |
+| Nombre | Casilla Renta | Carpeta |
 | --- | --- | --- |
-| `CI.GAS.LUZ` | Suministro eléctrico | `gasto/luz` |
-| `CI.GAS.AGUA` | Agua | `gasto/agua` |
-| `CI.GAS.INTERNET` | Internet / telecomunicaciones | `gasto/internet` |
-| `CI.GAS.COMUNIDAD` | Comunidad de propietarios | `gasto/comunidad` |
-| `CI.GAS.SEGURO` | Seguros del inmueble / impago | `gasto/seguro` |
-| `CI.GAS.IBI` | IBI y tasas municipales | `gasto/ibi` |
-| `CI.GAS.HOGAR` | Consumibles y pequeño mantenimiento | `gasto/hogar` |
-| `CI.GAS.REPARACION` | Conservación y reparación (no revalorizar) | `gasto/reparacion` |
-| `CI.GAS.INTERES` | Intereses de financiación | `gasto/interes` |
-| `CI.GAS.ADMIN` | Administración, publicidad, defensa jurídica | `gasto/administracion` |
+| Luz | `suministros` | `gasto/luz` |
+| Agua | `suministros` | `gasto/agua` |
+| Internet | `suministros` | `gasto/internet` |
+| Comunidad | `comunidad` | `gasto/comunidad` |
+| Seguro | `seguros` | `gasto/seguro` |
+| IBI | `ibi` | `gasto/ibi` |
+| Hogar | `otros` | `gasto/hogar` |
+| Reparación | `reparacion` | `gasto/reparacion` |
+| Intereses | `intereses` | `gasto/interes` |
+| Administración | `admin` | `gasto/administracion` |
 
 ### Inversión (se capitaliza; no es gasto del año)
 
-| Código | Nombre | Carpeta |
+| Nombre | Casilla Renta | Carpeta |
 | --- | --- | --- |
-| `CI.MEJ.PVC` | Carpintería / ventanas PVC | `mejora/pvc` |
-| `CI.MEJ.SOLADO` | Solado / tarima / pavimento | `mejora/solado` |
-| `CI.MEJ.REVEST` | Revestimientos | `mejora/revest` |
-| `CI.MEJ.MO` | Mano de obra asociada a la mejora | `mejora/mano-de-obra` |
-| `CI.MEJ.OTROS` | Otras inversiones en el inmueble | `mejora/otras-mejoras` |
-| `CI.AMO.INMUEBLE` | Amortización del inmueble (p. ej. 3 % construcción) | `amortizacion/amortizacion` |
+| Ventanas | `mejoras` | `mejora/pvc` |
+| Suelo | `mejoras` | `mejora/solado` |
+| Revestimientos | `mejoras` | `mejora/revest` |
+| Mano de obra | `mejoras` | `mejora/mano-de-obra` |
+| Otras mejoras | `mejoras` | `mejora/otras-mejoras` |
+| Amortización | `amortizacion` | `amortizacion/amortizacion` |
 
 El cálculo automático de amortización **no** está en el MVP: la cuenta existe para cuando se asiente a mano o en una fase posterior.
 

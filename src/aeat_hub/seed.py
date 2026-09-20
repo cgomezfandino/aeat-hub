@@ -12,19 +12,26 @@ from aeat_hub.models import Actividad, Cuenta, Inmueble, Titular
 
 
 def seed_cuentas(session: Session) -> None:
-    existing = {row.codigo for row in session.scalars(select(Cuenta)).all()}
     for item in ACCOUNT_DEFS:
-        if item.codigo in existing:
-            continue
-        session.add(
-            Cuenta(
-                codigo=item.codigo,
-                nombre=item.nombre,
-                tipo=item.tipo,
-                regimen=item.regimen,
-                notas=item.notas,
+        row = session.get(Cuenta, item.codigo)
+        if row is None:
+            session.add(
+                Cuenta(
+                    codigo=item.codigo,
+                    nombre=item.nombre,
+                    tipo=item.tipo,
+                    regimen=item.regimen,
+                    notas=item.notas,
+                    casilla=item.casilla,
+                    sistema=True,
+                )
             )
-        )
+        elif row.sistema:
+            row.nombre = item.nombre
+            row.notas = item.notas
+            row.tipo = item.tipo
+            row.casilla = item.casilla
+            row.regimen = item.regimen
     session.flush()
 
 

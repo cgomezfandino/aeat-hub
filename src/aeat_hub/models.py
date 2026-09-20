@@ -70,6 +70,8 @@ class Cuenta(Base):
     tipo: Mapped[str] = mapped_column(String(20))
     regimen: Mapped[str] = mapped_column(String(40))
     notas: Mapped[str] = mapped_column(Text, default="")
+    casilla: Mapped[str] = mapped_column(String(40), default="")
+    sistema: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class ProyectoMejora(Base):

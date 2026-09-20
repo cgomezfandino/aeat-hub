@@ -33,12 +33,23 @@ def create_schema(engine: Engine) -> None:
 
 def _migrate(engine: Engine) -> None:
     inspector = inspect(engine)
-    if "asientos" not in inspector.get_table_names():
-        return
-    columns = {item["name"] for item in inspector.get_columns("asientos")}
-    if "validado" not in columns:
+    table_names = inspector.get_table_names()
+    if "asientos" in table_names:
+        columns = {item["name"] for item in inspector.get_columns("asientos")}
+        if "validado" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE asientos ADD COLUMN validado BOOLEAN NOT NULL DEFAULT 0"))
+    if "cuentas" in table_names:
+        columns = {item["name"] for item in inspector.get_columns("cuentas")}
         with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE asientos ADD COLUMN validado BOOLEAN NOT NULL DEFAULT 0"))
+            if "casilla" not in columns:
+                conn.execute(
+                    text("ALTER TABLE cuentas ADD COLUMN casilla VARCHAR(40) NOT NULL DEFAULT ''")
+                )
+            if "sistema" not in columns:
+                conn.execute(
+                    text("ALTER TABLE cuentas ADD COLUMN sistema BOOLEAN NOT NULL DEFAULT 1")
+                )
 
 
 def session_factory(engine: Engine) -> sessionmaker[Session]:
