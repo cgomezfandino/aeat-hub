@@ -136,7 +136,7 @@ def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     assert "evo-hero" in html
     assert "data-copy=" in html
     assert "aeat-hub validar" in html
-    assert "CI.GAS.REPARACION" in html
+    assert "reclasificar" in html and "Reparación" in html
     assert 'class="ledger-table"' in html
     assert "Desliza horizontalmente" in html
     assert 'class="funnel"' in html
@@ -147,7 +147,7 @@ def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     assert 'data-fecha=' in html
     assert "Más filtros: emisor" not in html
     assert 'class="th-input"' not in html
-    assert "CI.GAS.HOGAR" in html
+    assert "Hogar" in html
     assert "Exportar Excel" in html
     assert "download=" in html
     assert "aeat-hub export --actividad" not in html
