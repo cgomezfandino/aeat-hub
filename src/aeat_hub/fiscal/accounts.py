@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 
 REGIMEN_CI = "capital_inmobiliario"
@@ -53,3 +54,35 @@ CODIGO_DEMO_CI = "CI-VA-001"
 
 def cuentas_por_regimen(regimen: str) -> tuple[AccountDef, ...]:
     return tuple(item for item in ACCOUNT_DEFS if item.regimen == regimen)
+
+
+def slug_cuenta(nombre: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", nombre)
+    ascii_name = decomposed.encode("ascii", "ignore").decode("ascii")
+    return "".join(ch for ch in ascii_name.upper() if ch.isalnum())
+
+
+def prefijo_codigo(tipo: str, regimen: str) -> str:
+    if regimen == REGIMEN_AE:
+        return {"ingreso": "AE.ING", "gasto": "AE.GAS", "mejora": "AE.INV"}.get(tipo, "AE.GAS")
+    return {
+        "ingreso": "CI.ING",
+        "gasto": "CI.GAS",
+        "mejora": "CI.MEJ",
+        "amortizacion": "CI.AMO",
+    }[tipo]
+
+
+def codigo_interno(nombre: str, tipo: str, regimen: str, ocupados: set[str]) -> str:
+    prefix = prefijo_codigo(tipo, regimen)
+    slug = slug_cuenta(nombre) or "RUBRO"
+    base = f"{prefix}.{slug}"[:32]
+    if base not in ocupados:
+        return base
+    for n in range(2, 1000):
+        suffix = str(n)
+        stem = base[: 32 - len(suffix)]
+        candidate = f"{stem}{suffix}"
+        if candidate not in ocupados:
+            return candidate
+    raise RuntimeError("No hay identificador interno libre para ese rubro.")
