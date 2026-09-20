@@ -6,6 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    Boolean,
     Date,
     DateTime,
     ForeignKey,
@@ -69,6 +70,8 @@ class Cuenta(Base):
     tipo: Mapped[str] = mapped_column(String(20))
     regimen: Mapped[str] = mapped_column(String(40))
     notas: Mapped[str] = mapped_column(Text, default="")
+    casilla: Mapped[str] = mapped_column(String(40), default="")
+    sistema: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class ProyectoMejora(Base):
@@ -123,6 +126,7 @@ class Asiento(Base):
     estado: Mapped[str] = mapped_column(String(20), default="pendiente", index=True)
     confianza_clasificacion: Mapped[Decimal] = mapped_column(Numeric(4, 3), default=Decimal("0"))
     origen_clasificacion: Mapped[str] = mapped_column(String(20), default="pendiente")
+    validado: Mapped[bool] = mapped_column(Boolean, default=False)
     duplicado_de_id: Mapped[int | None] = mapped_column(ForeignKey("asientos.id"), nullable=True)
     duplicado_nivel: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 
 REGIMEN_CI = "capital_inmobiliario"
@@ -19,65 +20,28 @@ class AccountDef:
     tipo: str
     regimen: str
     notas: str = ""
+    casilla: str = ""
 
 
 ACCOUNT_DEFS: tuple[AccountDef, ...] = (
-    AccountDef("CI.ING.RENTA", "Rentas de alquiler", TIPO_INGRESO, REGIMEN_CI),
-    AccountDef(
-        "CI.ING.INDEMN",
-        "Indemnizaciones (resolución, daños repercutidos)",
-        TIPO_INGRESO,
-        REGIMEN_CI,
-    ),
-    AccountDef(
-        "CI.GAS.LUZ",
-        "Suministro eléctrico (si lo paga el arrendador)",
-        TIPO_GASTO,
-        REGIMEN_CI,
-    ),
-    AccountDef("CI.GAS.AGUA", "Suministro de agua (si lo paga el arrendador)", TIPO_GASTO, REGIMEN_CI),
-    AccountDef(
-        "CI.GAS.INTERNET",
-        "Internet / telecomunicaciones (si lo paga el arrendador)",
-        TIPO_GASTO,
-        REGIMEN_CI,
-    ),
-    AccountDef("CI.GAS.COMUNIDAD", "Comunidad de propietarios", TIPO_GASTO, REGIMEN_CI),
-    AccountDef("CI.GAS.SEGURO", "Seguros del inmueble / impago", TIPO_GASTO, REGIMEN_CI),
-    AccountDef("CI.GAS.IBI", "IBI y tasas municipales", TIPO_GASTO, REGIMEN_CI),
-    AccountDef(
-        "CI.GAS.HOGAR",
-        "Consumibles y pequeño mantenimiento del hogar",
-        TIPO_GASTO,
-        REGIMEN_CI,
-    ),
-    AccountDef(
-        "CI.GAS.REPARACION",
-        "Conservación y reparación (no mejora)",
-        TIPO_GASTO,
-        REGIMEN_CI,
-        "Art. 23 LIRPF: mantener, no revalorizar.",
-    ),
-    AccountDef("CI.GAS.INTERES", "Intereses de financiación", TIPO_GASTO, REGIMEN_CI),
-    AccountDef("CI.GAS.ADMIN", "Administración, publicidad, defensa jurídica", TIPO_GASTO, REGIMEN_CI),
-    AccountDef(
-        "CI.MEJ.PVC",
-        "Mejora: carpintería / ventanas PVC",
-        TIPO_MEJORA,
-        REGIMEN_CI,
-        "Se capitaliza y se amortiza. No es gasto del ejercicio.",
-    ),
-    AccountDef("CI.MEJ.SOLADO", "Mejora: solado / tarima / pavimento", TIPO_MEJORA, REGIMEN_CI),
-    AccountDef("CI.MEJ.REVEST", "Mejora: revestimientos", TIPO_MEJORA, REGIMEN_CI),
-    AccountDef("CI.MEJ.MO", "Mejora: mano de obra asociada", TIPO_MEJORA, REGIMEN_CI),
-    AccountDef("CI.MEJ.OTROS", "Mejora: otras inversiones en el inmueble", TIPO_MEJORA, REGIMEN_CI),
-    AccountDef(
-        "CI.AMO.INMUEBLE",
-        "Amortización del inmueble",
-        TIPO_AMORT,
-        REGIMEN_CI,
-        "Normalmente 3 % sobre la construcción.",
-    ),
+    AccountDef("CI.ING.RENTA", "Alquiler", TIPO_INGRESO, REGIMEN_CI, casilla="ingresos"),
+    AccountDef("CI.ING.INDEMN", "Indemnización", TIPO_INGRESO, REGIMEN_CI, casilla="ingresos"),
+    AccountDef("CI.GAS.LUZ", "Luz", TIPO_GASTO, REGIMEN_CI, "Si lo paga el arrendador.", "suministros"),
+    AccountDef("CI.GAS.AGUA", "Agua", TIPO_GASTO, REGIMEN_CI, "Si lo paga el arrendador.", "suministros"),
+    AccountDef("CI.GAS.INTERNET", "Internet", TIPO_GASTO, REGIMEN_CI, "Si lo paga el arrendador.", "suministros"),
+    AccountDef("CI.GAS.COMUNIDAD", "Comunidad", TIPO_GASTO, REGIMEN_CI, casilla="comunidad"),
+    AccountDef("CI.GAS.SEGURO", "Seguro", TIPO_GASTO, REGIMEN_CI, casilla="seguros"),
+    AccountDef("CI.GAS.IBI", "IBI", TIPO_GASTO, REGIMEN_CI, casilla="ibi"),
+    AccountDef("CI.GAS.HOGAR", "Hogar", TIPO_GASTO, REGIMEN_CI, "Pequeño mantenimiento. Revisa si es mejora.", "otros"),
+    AccountDef("CI.GAS.REPARACION", "Reparación", TIPO_GASTO, REGIMEN_CI, "Art. 23 LIRPF: mantener, no revalorizar.", "reparacion"),
+    AccountDef("CI.GAS.INTERES", "Intereses", TIPO_GASTO, REGIMEN_CI, casilla="intereses"),
+    AccountDef("CI.GAS.ADMIN", "Administración", TIPO_GASTO, REGIMEN_CI, casilla="admin"),
+    AccountDef("CI.MEJ.PVC", "Ventanas", TIPO_MEJORA, REGIMEN_CI, "Se capitaliza. No es gasto del ejercicio.", "mejoras"),
+    AccountDef("CI.MEJ.SOLADO", "Suelo", TIPO_MEJORA, REGIMEN_CI, "Se capitaliza. No es gasto del ejercicio.", "mejoras"),
+    AccountDef("CI.MEJ.REVEST", "Revestimientos", TIPO_MEJORA, REGIMEN_CI, "Se capitaliza. No es gasto del ejercicio.", "mejoras"),
+    AccountDef("CI.MEJ.MO", "Mano de obra", TIPO_MEJORA, REGIMEN_CI, "Se capitaliza. No es gasto del ejercicio.", "mejoras"),
+    AccountDef("CI.MEJ.OTROS", "Otras mejoras", TIPO_MEJORA, REGIMEN_CI, "Se capitaliza. No es gasto del ejercicio.", "mejoras"),
+    AccountDef("CI.AMO.INMUEBLE", "Amortización", TIPO_AMORT, REGIMEN_CI, "Normalmente 3 % sobre la construcción.", "amortizacion"),
     AccountDef("AE.ING.VENTAS", "Ingresos de explotación", TIPO_INGRESO, REGIMEN_AE),
     AccountDef("AE.GAS.COMPRAS", "Compras y servicios", TIPO_GASTO, REGIMEN_AE),
     AccountDef("AE.GAS.SUMINISTROS", "Suministros de la actividad", TIPO_GASTO, REGIMEN_AE),
@@ -90,3 +54,35 @@ CODIGO_DEMO_CI = "CI-VA-001"
 
 def cuentas_por_regimen(regimen: str) -> tuple[AccountDef, ...]:
     return tuple(item for item in ACCOUNT_DEFS if item.regimen == regimen)
+
+
+def slug_cuenta(nombre: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", nombre)
+    ascii_name = decomposed.encode("ascii", "ignore").decode("ascii")
+    return "".join(ch for ch in ascii_name.upper() if ch.isalnum())
+
+
+def prefijo_codigo(tipo: str, regimen: str) -> str:
+    if regimen == REGIMEN_AE:
+        return {"ingreso": "AE.ING", "gasto": "AE.GAS", "mejora": "AE.INV"}.get(tipo, "AE.GAS")
+    return {
+        "ingreso": "CI.ING",
+        "gasto": "CI.GAS",
+        "mejora": "CI.MEJ",
+        "amortizacion": "CI.AMO",
+    }[tipo]
+
+
+def codigo_interno(nombre: str, tipo: str, regimen: str, ocupados: set[str]) -> str:
+    prefix = prefijo_codigo(tipo, regimen)
+    slug = slug_cuenta(nombre) or "RUBRO"
+    base = f"{prefix}.{slug}"[:32]
+    if base not in ocupados:
+        return base
+    for n in range(2, 1000):
+        suffix = str(n)
+        stem = base[: 32 - len(suffix)]
+        candidate = f"{stem}{suffix}"
+        if candidate not in ocupados:
+            return candidate
+    raise RuntimeError("No hay identificador interno libre para ese rubro.")

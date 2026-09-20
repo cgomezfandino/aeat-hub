@@ -47,8 +47,7 @@ def test_ingest_mismo_fichero_es_duplicado_hash(session, layout):
     ingest_file(session, layout, pdf, actividad, rapid=FakeRapid())
     session.commit()
     copy = write_pdf(layout.inbox / "luz-copia.pdf", FACTURA_LUZ)
-    # mismo contenido PDF no garantiza mismo SHA (metadatos). Forzamos copiando bytes.
-    original = next(layout.processed.iterdir())
+    original = Path(session.scalar(select(Documento.ruta_almacenada)))
     copy.write_bytes(original.read_bytes())
     item = ingest_file(session, layout, copy, actividad, rapid=FakeRapid())
     assert item.estado == "duplicado"
@@ -60,3 +59,34 @@ def test_cascade_auto_usa_nativo_en_pdf_con_texto(tmp_path: Path):
     result = transcribe(pdf, prefer="auto", rapid=FakeRapid())
     assert result.engine == "pdf-native"
     assert "F2026-000123" in result.text
+
+
+def test_reparse_no_pisa_asiento_validado(session, layout):
+    from aeat_hub.classify import validar_asiento
+    from aeat_hub.ingest import reparse_asientos
+
+    pdf = write_pdf(layout.inbox / "luz.pdf", FACTURA_LUZ)
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    item = ingest_file(session, layout, pdf, actividad, rapid=FakeRapid())
+    session.commit()
+    asiento = session.get(Asiento, item.asiento_id)
+    asiento.emisor = "NO TOCAR"
+    asiento.total = None
+    validar_asiento(asiento)
+    session.commit()
+    n = reparse_asientos(session, actividad)
+    session.commit()
+    asiento = session.get(Asiento, item.asiento_id)
+    assert n == 0
+    assert asiento.emisor == "NO TOCAR"
+    assert asiento.validado
+
+
+def test_auto_con_rapid_inyectado_no_salta_a_vision(tmp_path: Path):
+    from PIL import Image
+
+    image = tmp_path / "blank.png"
+    Image.new("RGB", (16, 16), "white").save(image)
+    result = transcribe(image, prefer="auto", rapid=FakeRapid())
+    assert result.engine == "rapidocr"
+    assert result.text == "foto ocr"

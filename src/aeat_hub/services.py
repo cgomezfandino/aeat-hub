@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aeat_hub.db import create_schema, make_engine, session_factory
-from aeat_hub.fiscal.accounts import REGIMEN_AE, REGIMEN_CI
+from aeat_hub.fiscal.accounts import REGIMEN_AE, REGIMEN_CI, codigo_interno
+from aeat_hub.fiscal.irpf import INDEX_CI, tipo_desde_casilla
 from aeat_hub.models import Actividad, Cuenta, Titular
 from aeat_hub.paths import DataLayout
 from aeat_hub.seed import seed_cuentas, seed_valladolid
@@ -34,6 +35,12 @@ def require_layout(layout: DataLayout) -> None:
         raise RuntimeError(
             f"No hay libro en {layout.root}. Ejecuta: aeat-hub init --data-dir {layout.root}"
         )
+    engine = make_engine(layout)
+    create_schema(engine)
+    factory = session_factory(engine)
+    with factory() as session:
+        seed_cuentas(session)
+        session.commit()
 
 
 def get_actividad(session: Session, codigo: str) -> Actividad:
@@ -77,4 +84,50 @@ def get_cuenta(session: Session, codigo: str) -> Cuenta:
     cuenta = session.get(Cuenta, codigo)
     if cuenta is None:
         raise RuntimeError(f"Cuenta desconocida: {codigo}")
+    return cuenta
+
+
+def get_cuenta_por_nombre(session: Session, nombre: str, *, regimen: str) -> Cuenta:
+    needle = nombre.strip().casefold()
+    matches = [
+        row
+        for row in session.scalars(select(Cuenta).where(Cuenta.regimen == regimen))
+        if row.nombre.casefold() == needle
+    ]
+    if not matches:
+        raise RuntimeError(f"Rubro desconocido: {nombre}")
+    if len(matches) > 1:
+        raise RuntimeError(f"Hay varios rubros llamados {nombre}")
+    return matches[0]
+
+
+def alta_cuenta(
+    session: Session,
+    *,
+    nombre: str,
+    casilla: str,
+    regimen: str = REGIMEN_CI,
+) -> Cuenta:
+    if regimen != REGIMEN_CI:
+        raise RuntimeError("En esta versión solo se dan de alta rubros de capital inmobiliario.")
+    if casilla not in INDEX_CI or casilla == "sin_clasificar":
+        raise RuntimeError(f"Casilla desconocida: {casilla}")
+    nombre = nombre.strip()
+    if not nombre:
+        raise RuntimeError("El nombre del rubro no puede estar vacío.")
+    existentes = list(session.scalars(select(Cuenta).where(Cuenta.regimen == regimen)))
+    if any(row.nombre.casefold() == nombre.casefold() for row in existentes):
+        raise RuntimeError(f"Ya existe el rubro {nombre}")
+    tipo = tipo_desde_casilla(casilla)
+    ocupados = {row.codigo for row in session.scalars(select(Cuenta))}
+    cuenta = Cuenta(
+        codigo=codigo_interno(nombre, tipo, regimen, ocupados),
+        nombre=nombre,
+        tipo=tipo,
+        regimen=regimen,
+        casilla=casilla,
+        sistema=False,
+    )
+    session.add(cuenta)
+    session.flush()
     return cuenta

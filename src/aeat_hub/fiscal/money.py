@@ -24,6 +24,21 @@ def q2(value: Decimal | int | str | float | None) -> Decimal | None:
     return value.quantize(TWOPLACES, rounding=ROUND_HALF_UP)
 
 
+def format_euro(value: Decimal | int | str | float | None, *, empty: str = "—") -> str:
+    quantized = q2(value)
+    if quantized is None:
+        return empty
+    sign = "-" if quantized < 0 else ""
+    quantized = abs(quantized)
+    ints, frac = f"{quantized:.2f}".split(".")
+    groups: list[str] = []
+    while ints:
+        groups.append(ints[-3:])
+        ints = ints[:-3]
+    grouped = ".".join(reversed(groups))
+    return f"{sign}{grouped},{frac} €"
+
+
 def parse_amount(raw: str | None) -> Decimal | None:
     if raw is None:
         return None

@@ -48,8 +48,25 @@ def test_export_xlsx_crea_hojas(session, layout):
         "Reclasificar",
         "Resumen_rubro",
         "Resumen_inmueble",
+        "Casillas_IRPF",
     }
-    gastos = list(wb["Gastos"].iter_rows(min_row=2, values_only=True))
-    assert any(row[6] == "CI.GAS.LUZ" for row in gastos)
-    ingresos = list(wb["Ingresos"].iter_rows(min_row=2, values_only=True))
-    assert any(row[6] == "CI.ING.RENTA" for row in ingresos)
+    gastos = list(wb["Gastos"].iter_rows(min_row=1, max_row=2, values_only=True))
+    headers = list(gastos[0])
+    assert "Emisor" in headers
+    assert "Fecha compra" in headers
+    emisor_idx = headers.index("Emisor")
+    assert "Rubro" in headers
+    assert "Rubro / cuenta" not in headers
+    rubro_idx = headers.index("Rubro")
+    assert gastos[1][emisor_idx] == "IBERDROLA DEMO"
+    assert gastos[1][rubro_idx] == "Luz"
+    ingresos_rows = list(wb["Ingresos"].iter_rows(min_row=1, values_only=True))
+    rubro_idx = list(ingresos_rows[0]).index("Rubro")
+    assert any(row[rubro_idx] == "Alquiler" for row in ingresos_rows[1:])
+    for row in wb["Gastos"].iter_rows(min_row=2, values_only=True):
+        assert not any(isinstance(cell, str) and cell.startswith("CI.") for cell in row)
+    resumen = list(wb["Resumen_rubro"].iter_rows(min_row=1, values_only=True))
+    assert resumen[0][0] == "rubro"
+    assert any(row[0] == "Luz" for row in resumen[1:])
+    irpf_rows = list(wb["Casillas_IRPF"].iter_rows(values_only=True))
+    assert any(row and row[0] == "Rendimiento neto" for row in irpf_rows)

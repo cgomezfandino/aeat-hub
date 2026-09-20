@@ -11,29 +11,44 @@ ENV_DATA_DIR = "AEAT_HUB_DATA_DIR"
 
 
 class DataLayout:
-    """Carpetas inbox/processed/db/exports bajo un raíz configurable."""
+    """Carpetas inbox/archivo/db/exports bajo un raíz configurable."""
 
     def __init__(self, root: Path) -> None:
         self.root = root.expanduser().resolve()
         self.inbox = self.root / "inbox"
+        self.archivo = self.root / "archivo"
         self.processed = self.root / "processed"
         self.rejected = self.root / "rejected"
         self.db_dir = self.root / "db"
         self.db_path = self.db_dir / "ledger.sqlite"
         self.exports = self.root / "exports"
         self.models = self.root / "models"
+        self.logs = self.root / "logs"
+        self.evals = self.root / "evals"
         self.config_path = self.root / "config.json"
 
     def ensure(self) -> None:
         for path in (
             self.inbox,
+            self.archivo,
             self.processed,
             self.rejected,
             self.db_dir,
             self.exports,
             self.models,
+            self.logs,
+            self.evals,
         ):
             path.mkdir(parents=True, exist_ok=True)
+        readme = self.inbox / "DEJAR_AQUI.txt"
+        if not readme.exists():
+            readme.write_text(
+                "Deja aquí PDF, JPG, PNG, WEBP o HEIC.\n"
+                "Luego: aeat-hub ingest --actividad CI-VA-001\n"
+                "El sistema los ordena en ../archivo/<expediente>/<año>/<mes>/"
+                "<gasto|ingreso|mejora>/<rubro>/\n",
+                encoding="utf-8",
+            )
 
     def is_initialized(self) -> bool:
         return self.db_path.is_file()

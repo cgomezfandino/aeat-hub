@@ -63,3 +63,57 @@ def test_duplicado_sospechoso_nivel_3(session):
     hit = find_duplicate(session, actividad_id=actividad.id, extract=extract, phash=None)
     assert hit is not None
     assert hit.nivel == 3
+
+
+def test_duplicado_por_numero_fecha_total_sin_nif(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    session.add(
+        Asiento(
+            actividad_id=actividad.id,
+            tipo="gasto",
+            fecha=date(2026, 9, 5),
+            ejercicio=2026,
+            emisor="LEROY MERLIN ARROYO",
+            numero_factura="064-0009-R194007",
+            total=Decimal("31.45"),
+            estado="confirmado",
+            validado=True,
+        )
+    )
+    session.flush()
+    extract = InvoiceExtract(
+        emisor="LEROY MERLIN ARROYO",
+        numero="064-0009-R194007",
+        fecha=date(2026, 9, 5),
+        total=Decimal("31.45"),
+    )
+    hit = find_duplicate(session, actividad_id=actividad.id, extract=extract, phash=None)
+    assert hit is not None
+    assert hit.nivel == 2
+    assert "número" in hit.motivo
+
+
+def test_duplicado_por_emisor_importe_ventana(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    session.add(
+        Asiento(
+            actividad_id=actividad.id,
+            tipo="gasto",
+            fecha=date(2026, 9, 18),
+            ejercicio=2026,
+            emisor="LEROY MERLIN ARROYO",
+            numero_factura="A",
+            total=Decimal("13.86"),
+            estado="confirmado",
+        )
+    )
+    session.flush()
+    extract = InvoiceExtract(
+        emisor="Leroy Merlin Arroyo",
+        numero="B-OTRA",
+        fecha=date(2026, 9, 19),
+        total=Decimal("13.86"),
+    )
+    hit = find_duplicate(session, actividad_id=actividad.id, extract=extract, phash=None)
+    assert hit is not None
+    assert hit.nivel == 3

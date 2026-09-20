@@ -12,6 +12,7 @@ from aeat_hub.extract.schema import InvoiceExtract
 from aeat_hub.fiscal.accounts import REGIMEN_AE, REGIMEN_CI, TIPO_MEJORA
 from aeat_hub.fiscal.nif import normalize_nif
 from aeat_hub.models import Actividad, Asiento, Cuenta, ReglaAprendida
+from aeat_hub.paths import DataLayout
 
 KEYWORD_ACCOUNTS: tuple[tuple[tuple[str, ...], str, float], ...] = (
     (("iberdrola", "endesa", "naturgy", "holaluz", "curenerg", "i-de redes"), "CI.GAS.LUZ", 0.9),
@@ -75,8 +76,10 @@ def reclassify(
     cuenta: Cuenta,
     *,
     aplicar_similares: bool = True,
+    layout: DataLayout | None = None,
 ) -> int:
     _apply_cuenta(asiento, cuenta, origen="usuario", confianza=Decimal("1.000"))
+    asiento.validado = True
     nif = normalize_nif(asiento.nif_emisor) if asiento.nif_emisor else ""
     patron = ""
     existing = session.scalar(
@@ -100,6 +103,7 @@ def reclassify(
             )
         )
     updated = 1
+    touched = [asiento]
     if aplicar_similares and nif:
         similares = session.scalars(
             select(Asiento).where(
@@ -111,8 +115,23 @@ def reclassify(
         ).all()
         for other in similares:
             _apply_cuenta(other, cuenta, origen="aprendida", confianza=Decimal("0.900"))
+            touched.append(other)
             updated += 1
+    if layout is not None:
+        from aeat_hub.filing import relocate_asiento
+
+        for row in touched:
+            relocate_asiento(session, layout, row, move=True)
     return updated
+
+
+def validar_asiento(asiento: Asiento) -> None:
+    """Marca el asiento como revisado por el usuario. No cambia el rubro ni relanza OCR."""
+    asiento.validado = True
+    asiento.origen_clasificacion = "usuario"
+    asiento.confianza_clasificacion = Decimal("1.000")
+    if asiento.estado != "duplicado":
+        asiento.estado = "confirmado"
 
 
 def _apply_cuenta(asiento: Asiento, cuenta: Cuenta, *, origen: str, confianza: Decimal) -> None:
