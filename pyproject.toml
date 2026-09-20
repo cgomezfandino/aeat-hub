@@ -1,0 +1,43 @@
+[project]
+name = "aeat-hub"
+version = "0.1.0"
+description = "Libros locales de ingresos y gastos para autónomos y arrendadores en España"
+readme = "README.md"
+authors = [
+    { name = "Carlos Gomez", email = "cgomezfandino@gmail.com" }
+]
+license = { text = "MIT" }
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "pymupdf>=1.24",
+    "openpyxl>=3.1",
+    "pillow>=10.0",
+    "python-dateutil>=2.9",
+    "rapidocr>=2.0",
+    "onnxruntime>=1.18",
+]
+
+[project.optional-dependencies]
+heic = ["pillow-heif>=0.18"]
+
+[project.scripts]
+aeat-hub = "aeat_hub.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["src"]

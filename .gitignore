@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[oc]
+*.so
+build/
+dist/
+wheels/
+*.egg-info
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.python-version.local
+
+# Secrets y entorno local
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+certificados/
+credentials.json
+service-account*.json
+
+# Datos fiscales reales (nunca en git)
+data/
+inbox/
+processed/
+rejected/
+exports/
+*.sqlite
+*.sqlite3
+*.db
+*.xlsx
+*.xls
+*.csv
+
+# Modelos OCR / pesos
+models/
+*.gguf
+*.onnx
+.cache/
+hf_cache/
+.huggingface/
+
+# Facturas y fotos
+*.pdf
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.tif
+*.tiff
+*.heic
+*.heif
+!tests/fixtures/**
+
+# Sistema
+.DS_Store
+.idea/
+.vscode/
+*.log
