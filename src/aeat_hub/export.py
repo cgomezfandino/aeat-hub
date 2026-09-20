@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from aeat_hub.fiscal.irpf import summarize_irpf
 from aeat_hub.fiscal.accounts import REGIMEN_CI
-from aeat_hub.models import Actividad, Asiento, Inmueble
+from aeat_hub.models import Actividad, Asiento, Cuenta, Inmueble
 from aeat_hub.paths import DataLayout
 
 SHEET_COLUMNS = [
@@ -27,7 +27,7 @@ SHEET_COLUMNS = [
     ("iva_tipo", "IVA %"),
     ("iva_cuota", "Cuota IVA"),
     ("total", "Total"),
-    ("cuenta", "Rubro / cuenta"),
+    ("rubro", "Rubro"),
     ("tipo", "Tipo"),
     ("estado", "Estado"),
     ("inmueble", "Inmueble"),
@@ -47,20 +47,38 @@ def export_xlsx(
         .where(Asiento.actividad_id == actividad.id, Asiento.ejercicio == year)
         .order_by(Asiento.fecha, Asiento.id)
     ).all()
+    filas_cuenta = session.scalars(select(Cuenta)).all()
+    nombres = {item.codigo: item.nombre for item in filas_cuenta}
+    extra_casillas = {item.codigo: item.casilla for item in filas_cuenta if item.casilla}
     inmuebles = {
         item.id: item.alias
         for item in session.scalars(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
     }
     wb = Workbook()
-    _write_sheet(wb.active, "Gastos", [r for r in rows if r.tipo == "gasto"], actividad, inmuebles)
-    _write_sheet(wb.create_sheet("Ingresos"), "Ingresos", [r for r in rows if r.tipo == "ingreso"], actividad, inmuebles)
-    _write_sheet(wb.create_sheet("Mejoras"), "Mejoras", [r for r in rows if r.tipo == "mejora"], actividad, inmuebles)
+    _write_sheet(wb.active, "Gastos", [r for r in rows if r.tipo == "gasto"], actividad, inmuebles, nombres)
+    _write_sheet(
+        wb.create_sheet("Ingresos"),
+        "Ingresos",
+        [r for r in rows if r.tipo == "ingreso"],
+        actividad,
+        inmuebles,
+        nombres,
+    )
+    _write_sheet(
+        wb.create_sheet("Mejoras"),
+        "Mejoras",
+        [r for r in rows if r.tipo == "mejora"],
+        actividad,
+        inmuebles,
+        nombres,
+    )
     _write_sheet(
         wb.create_sheet("Duplicados"),
         "Duplicados",
         [r for r in rows if r.estado == "duplicado"],
         actividad,
         inmuebles,
+        nombres,
     )
     _write_sheet(
         wb.create_sheet("Reclasificar"),
@@ -68,11 +86,12 @@ def export_xlsx(
         [r for r in rows if r.estado == "pendiente"],
         actividad,
         inmuebles,
+        nombres,
     )
-    _write_summary_rubro(wb.create_sheet("Resumen_rubro"), rows)
+    _write_summary_rubro(wb.create_sheet("Resumen_rubro"), rows, nombres)
     _write_summary_inmueble(wb.create_sheet("Resumen_inmueble"), rows, inmuebles)
     if actividad.regimen == REGIMEN_CI:
-        _write_casillas_irpf(wb.create_sheet("Casillas_IRPF"), rows, year)
+        _write_casillas_irpf(wb.create_sheet("Casillas_IRPF"), rows, year, extra_casillas)
 
     layout.exports.mkdir(parents=True, exist_ok=True)
     dest = layout.exports / f"libro_{actividad.codigo}_{year}.xlsx"
@@ -80,7 +99,12 @@ def export_xlsx(
     return dest
 
 
-def _as_row(asiento: Asiento, actividad: Actividad, inmuebles: dict[int, str]) -> dict[str, object]:
+def _as_row(
+    asiento: Asiento,
+    actividad: Actividad,
+    inmuebles: dict[int, str],
+    nombres: dict[str, str],
+) -> dict[str, object]:
     return {
         "id": asiento.id,
         "fecha": asiento.fecha.isoformat() if asiento.fecha else "",
@@ -92,7 +116,7 @@ def _as_row(asiento: Asiento, actividad: Actividad, inmuebles: dict[int, str]) -
         "iva_tipo": _num(asiento.iva_tipo),
         "iva_cuota": _num(asiento.iva_cuota),
         "total": _num(asiento.total),
-        "cuenta": asiento.cuenta_codigo or "",
+        "rubro": nombres.get(asiento.cuenta_codigo, "") if asiento.cuenta_codigo else "",
         "tipo": asiento.tipo,
         "estado": asiento.estado,
         "inmueble": inmuebles.get(asiento.inmueble_id or 0, ""),
@@ -106,20 +130,21 @@ def _write_sheet(
     rows: list[Asiento],
     actividad: Actividad,
     inmuebles: dict[int, str],
+    nombres: dict[str, str],
 ) -> None:
     ws.title = title
     ws.append([label for _key, label in SHEET_COLUMNS])
     for cell in ws[1]:
         cell.font = Font(bold=True)
     for asiento in rows:
-        payload = _as_row(asiento, actividad, inmuebles)
+        payload = _as_row(asiento, actividad, inmuebles, nombres)
         ws.append([payload[key] for key, _label in SHEET_COLUMNS])
     _autosize(ws)
 
 
-def _write_summary_rubro(ws, rows: list[Asiento]) -> None:
+def _write_summary_rubro(ws, rows: list[Asiento], nombres: dict[str, str]) -> None:
     ws.title = "Resumen_rubro"
-    ws.append(["cuenta", "tipo", "n_asientos", "base", "iva", "total"])
+    ws.append(["rubro", "tipo", "n_asientos", "base", "iva", "total"])
     for cell in ws[1]:
         cell.font = Font(bold=True)
     buckets: dict[tuple[str, str], dict[str, Decimal | int]] = defaultdict(
@@ -128,13 +153,14 @@ def _write_summary_rubro(ws, rows: list[Asiento]) -> None:
     for asiento in rows:
         if asiento.estado == "duplicado":
             continue
-        key = (asiento.cuenta_codigo or "(sin cuenta)", asiento.tipo)
+        rubro = nombres.get(asiento.cuenta_codigo, "(sin rubro)") if asiento.cuenta_codigo else "(sin rubro)"
+        key = (rubro, asiento.tipo)
         buckets[key]["n"] += 1
         buckets[key]["base"] += asiento.base or Decimal("0")
         buckets[key]["iva"] += asiento.iva_cuota or Decimal("0")
         buckets[key]["total"] += asiento.total or Decimal("0")
-    for (cuenta, tipo), agg in sorted(buckets.items()):
-        ws.append([cuenta, tipo, agg["n"], float(agg["base"]), float(agg["iva"]), float(agg["total"])])
+    for (rubro, tipo), agg in sorted(buckets.items()):
+        ws.append([rubro, tipo, agg["n"], float(agg["base"]), float(agg["iva"]), float(agg["total"])])
     _autosize(ws)
 
 
@@ -154,9 +180,14 @@ def _write_summary_inmueble(ws, rows: list[Asiento], inmuebles: dict[int, str]) 
     _autosize(ws)
 
 
-def _write_casillas_irpf(ws, rows: list[Asiento], year: int) -> None:
+def _write_casillas_irpf(
+    ws,
+    rows: list[Asiento],
+    year: int,
+    extra_casillas: dict[str, str],
+) -> None:
     ws.title = "Casillas_IRPF"
-    summary = summarize_irpf(rows)
+    summary = summarize_irpf(rows, extra_casillas)
     ws.append(["Borrador IRPF · rendimientos de capital inmobiliario", year])
     ws.append(
         [
