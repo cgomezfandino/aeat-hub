@@ -5,7 +5,7 @@ AEAT Hub es un **backend local** (CLI Python) para llevar libros auxiliares de i
 ## Principios
 
 1. **Todo en local.** Facturas, NIF y SQLite no salen de la máquina.
-2. **SQLite es el maestro.** El dashboard HTML (y el Excel, si lo pides) son fotos, no el libro de trabajo.
+2. **SQLite es el maestro.** El dashboard HTML (y el Excel, si lo pides) son fotos, no el libro de trabajo: el navegador no valida ni reclasifica.
 3. **Un expediente, un régimen.** El CLI exige `--actividad` para no mezclar alquiler y autónomo.
 4. **Si duda, no inventa.** Reparación vs mejora y documentos sin cuenta quedan `pendiente`.
 5. **El fichero sigue a la clasificación.** Tras el ingest (y tras reclasificar) el PDF/foto se mueve a `archivo/año/mes/tipo/rubro`.

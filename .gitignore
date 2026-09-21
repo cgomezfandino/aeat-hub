@@ -63,3 +63,6 @@ hf_cache/
 .idea/
 .vscode/
 *.log
+
+# Copias locales de git worktree (nunca al repo)
+.worktrees/

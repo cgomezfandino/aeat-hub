@@ -81,6 +81,18 @@ Si el texto es solo «mano de obra» sin contexto de PVC/solado/revestimiento, e
 
 Tipos de IVA previstos a futuro: 21 / 10 / 4 / 0 / exento. Hoy se extraen de la factura si el parser los ve; no hay liquidación 303.
 
+Cada negocio propio (p. ej. una aplicación web) es **otro expediente**
+`actividad_economica`, no el de Valladolid. Hasta que exista el libro IVA,
+ese expediente solo sirve para no mezclar facturas; no genera un 303.
+
+## Cortes (año y trimestre)
+
+- **Alquiler (capital inmobiliario):** lo que va a Hacienda es **anual**
+  (Renta). `dashboard` y `export` cortan por `--year`. Un trimestre es una
+  vista sobre ese año, no un modelo distinto.
+- **Actividad económica:** el 303 es **trimestral** (o mensual). Ese corte
+  aún no está. No uses el Excel de `CI-VA-001` como si fuera un 303.
+
 ## Borrador para la Renta (capital inmobiliario)
 
 Hacienda **no** recibe el Excel de facturas. En el modelo 100 se informan **totales** del inmueble. El dashboard y la hoja `Casillas_IRPF` agrupan el libro así:

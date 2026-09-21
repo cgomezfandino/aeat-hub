@@ -1,7 +1,7 @@
 # Rubros de gestor (nombres cortos + alta con casilla)
 
 Fecha: 2026-09-20
-Estado: propuesto
+Estado: hecho (PR #1, merge `ee1a69d`)
 
 ## Objetivo
 

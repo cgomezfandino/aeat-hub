@@ -15,7 +15,7 @@ Esto **no es software oficial de la AEAT**. Revisa los asientos antes de declara
 - Extrae NIF, fecha, número, bases e IVA.
 - Deduplica a tres niveles: mismo fichero, misma factura fiscal, sospechosos (importe±3 días o foto casi igual).
 - Clasifica por proveedor/palabras clave. Si reclasificas, **aprende** (regla por NIF emisor).
-- SQLite como fuente de verdad. Dashboard HTML como vista del ejercicio; Excel opcional.
+- SQLite como fuente de verdad. El dashboard HTML y el Excel son **fotos** del ejercicio: se ven, se filtran y se exportan; **no escriben** la base. Validar o cambiar rubro es cosa del CLI (`validar`, `reclasificar`).
 - 100 % local. Las facturas reales **no van a git**.
 
 El primer expediente semilla es un **alquiler en Valladolid** (luz, agua, internet,
@@ -70,11 +70,11 @@ uv run aeat-hub init --titular "Tu nombre" --nif 12345678Z
 # deja PDF/JPG en $AEAT_HUB_DATA_DIR/inbox
 uv run aeat-hub ingest --actividad CI-VA-001
 uv run aeat-hub pendientes --actividad CI-VA-001
-uv run aeat-hub reclasificar 1 CI.MEJ.PVC   # mueve el fichero al rubro nuevo
-uv run aeat-hub ordenar --actividad CI-VA-001
-uv run aeat-hub duplicados --actividad CI-VA-001
+uv run aeat-hub reclasificar 1 Ventanas   # nombre de rubro; mueve el fichero
+uv run aeat-hub validar 2                 # el modelo acertó; cierra el asiento
 uv run aeat-hub dashboard --actividad CI-VA-001 --year 2026
-uv run aeat-hub export --actividad CI-VA-001 --year 2026 --xlsx
+# El HTML abre el libro del año (pestañas Revisar / Libro / Resumen) y regenera el Excel.
+# Tras validar o reclasificar, vuelve a generar el dashboard para ver la foto nueva.
 ```
 
 `12345678Z` es un NIF de ejemplo (dígito de control válido). Usa el tuyo solo en el data-dir.

@@ -63,7 +63,7 @@ Definidas en `aeat_hub.filing`:
 | Pendiente sin cuenta | según fecha | | `pendiente` | `sin-cuenta` |
 | Duplicado fiscal/sospechoso | según fecha | | `duplicado` | slug si hay cuenta |
 
-Slugs: última parte del código en minúsculas (`CI.GAS.LUZ` → `luz`), con excepciones (`CI.MEJ.MO` → `mano-de-obra`, etc.).
+Slugs de carpeta: a partir del nombre o del id interno (`Luz` → `luz`), con excepciones (`Mano de obra` → `mano-de-obra`). El usuario no escribe esos ids; son detalle de archivo.
 
 Una factura **pendiente con cuenta propuesta** (p. ej. PVC a confianza 0,72) **sí** se archiva bajo `mejora/pvc`, para que Finder ya esté ordenado. Sigue saliendo en `aeat-hub pendientes`.
 

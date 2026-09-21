@@ -13,7 +13,8 @@
 | [Clasificación y duplicados](clasificacion-y-duplicados.md) | Reglas, aprendizaje, umbrales y los tres niveles de duplicado |
 | [Referencia de código](referencia-codigo.md) | Módulos Python y esquema SQLite |
 | [Desarrollo](desarrollo.md) | Tests, convenciones y cómo extender |
-| [Hoja de ruta](hoja-de-ruta.md) | Qué está fuera del MVP |
+| [Hoja de ruta](hoja-de-ruta.md) | Qué hay, qué no, cortes año/trimestre y siguiente bloque |
+| [Rubros de gestor (spec)](superpowers/specs/2026-09-20-rubros-gestor-design.md) | Nombres cortos, casilla de la Renta, alta por CLI |
 | [Seguridad](../SECURITY.md) | Qué no subir nunca a git |
 
 Esto **no es software oficial de la AEAT**. El usuario revisa los asientos antes de declarar.

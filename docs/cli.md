@@ -113,7 +113,7 @@ uv run aeat-hub ordenar --actividad CI-VA-001
 
 ### `dashboard`
 
-Vista habitual del libro. Lee SQLite y escribe un HTML autocontenido (sin red, sin CDN). Abre el navegador salvo `--no-open`.
+Vista habitual del libro. Lee SQLite y escribe un HTML autocontenido (sin red, sin CDN). El HTML **no** vuelve a escribir la base: tras `validar` o `reclasificar`, regenera el dashboard. Abre el navegador salvo `--no-open`.
 
 ```bash
 uv run aeat-hub dashboard --actividad CI-VA-001 --year 2026
