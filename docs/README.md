@@ -12,7 +12,7 @@
 | [EVALS](evals.md) | Bake-off de motores, métricas y set de oro (fuera de git) |
 | [Clasificación y duplicados](clasificacion-y-duplicados.md) | Reglas, aprendizaje, umbrales y los tres niveles de duplicado |
 | [Referencia de código](referencia-codigo.md) | Módulos Python y esquema SQLite |
-| [Desarrollo](desarrollo.md) | Tests, convenciones y cómo extender |
+| [Desarrollo](desarrollo.md) | Tests, convenciones, ramas (`develop` / `main`) |
 | [Hoja de ruta](hoja-de-ruta.md) | Qué hay, qué no, cortes año/trimestre y siguiente bloque |
 | [Rubros de gestor (spec)](superpowers/specs/2026-09-20-rubros-gestor-design.md) | Nombres cortos, casilla de la Renta, alta por CLI |
 | [Seguridad](../SECURITY.md) | Qué no subir nunca a git |

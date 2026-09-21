@@ -42,8 +42,33 @@ uv run aeat-hub init --data-dir /tmp/aeat-hub-dev
 
 El libro personal está en `/Volumes/SSDCX9/data/aeat-hub`.
 
+## Ramas y entornos
+
+Dos ramas largas, comparables en todo momento:
+
+| Rama | Entorno | Qué entra |
+| --- | --- | --- |
+| `develop` | Integración (trabajo diario) | Features fusionadas por PR |
+| `main` | Producción (libro publicado) | Solo PR desde `develop` cuando el lote está estable |
+
+Flujo:
+
+1. Parte de `develop` actualizado: `git checkout develop && git pull`.
+2. Crea una rama corta: `git checkout -b feature/nombre-claro`.
+3. Abre un **PR a `develop`**. El CI (`pytest`) debe pasar.
+4. Cuando `develop` esté listo para publicar: **PR `develop` → `main`**. Eso es el corte productivo.
+
+No commits directos a `main`. No PRs de una feature a `main`. Comparar entornos:
+
+```bash
+git fetch origin
+git log --oneline origin/main..origin/develop   # lo que aún no es producción
+```
+
+En GitHub: `https://github.com/cgomezfandino/aeat-hub/compare/main...develop`
+
 ## Publicar
 
-Repo: [https://github.com/cgomezfandino/aeat-hub](https://github.com/cgomezfandino/aeat-hub) (público, MIT).
+Repo: [https://github.com/cgomezfandino/aeat-hub](https://github.com/cgomezfandino/aeat-hub) (público, MIT). Rama por defecto: `develop`.
 
 Antes de un commit: `uv run pytest` y `git status` sin PDFs ni `ledger.sqlite`.

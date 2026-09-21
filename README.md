@@ -119,7 +119,7 @@ Una actividad económica (autónomo) es otro expediente, con IVA. El CLI exige
 uv run pytest
 ```
 
-Los tests usan facturas sintéticas. No hace falta GPU ni descargar Unlimited-OCR. Guía: [docs/desarrollo.md](docs/desarrollo.md).
+Los tests usan facturas sintéticas. No hace falta GPU ni descargar Unlimited-OCR. Guía: [docs/desarrollo.md](docs/desarrollo.md) (incluye el flujo `feature` → `develop` → `main`).
 
 ## Licencia
 
