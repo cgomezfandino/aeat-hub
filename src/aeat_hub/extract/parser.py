@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from dateutil.parser import parse as parse_date
 
+from aeat_hub.extract.ids import normalize_numero
 from aeat_hub.extract.schema import InvoiceExtract
 from aeat_hub.fiscal.money import last_amount, q2
 from aeat_hub.fiscal.nif import find_nifs, is_valid_nif, normalize_nif, pick_emisor_receptor
@@ -23,6 +24,14 @@ FACTURA_ID_RE = re.compile(
     re.IGNORECASE,
 )
 LER_NUM_RE = re.compile(r"\b(\d{3}-\d{4}-R?\d{5,8})\b", re.IGNORECASE)
+TICKET_NFS_RE = re.compile(
+    r"\b(\d{3}-\d{6}-\d{3}-\d{4}-NFS)\s*[:.\-]?\s*(\d{5,8})\b",
+    re.IGNORECASE,
+)
+PAG_TICKET_RE = re.compile(
+    r"\bP[aá]g(?:ina)?\.?\s*(\d{1,3})\s*/\s*(\d{1,3})\b",
+    re.IGNORECASE,
+)
 DATE_RE = re.compile(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b")
 IVA_RATE_RE = re.compile(r"\biva\s*(?:al\s*)?(\d{1,2}(?:[.,]\d{1,2})?)\s*%", re.IGNORECASE)
 TOTAL_TTI_RE = re.compile(r"total\s*(?:tti|tii|111)\b", re.IGNORECASE)
@@ -31,7 +40,7 @@ TOTAL_IVA_RE = re.compile(r"total\s*iva\b", re.IGNORECASE)
 
 NUMERO_BASURA = {"NIF", "CIF", "IVA", "EUR", "DE", "LA", "EL", "NUMERO", "NÚMERO"}
 COMPANY_HINT = re.compile(
-    r"(s\.?\s?a\.?u?|s\.?\s?l\.?|sociedad|comunidad|merlin|iberdrola|endesa|naturgy)",
+    r"(s\.?\s?a\.?u?|s\.?\s?l\.?|sociedad|comunidad|merlin|iberdrola|endesa|naturgy|obrama|bricoman)",
     re.IGNORECASE,
 )
 SKIP_EMISOR = re.compile(
@@ -45,6 +54,7 @@ def parse_invoice(text: str, *, motor: str = "") -> InvoiceExtract:
     nifs = find_nifs(text or "")
     nif_emisor, nif_receptor = pick_emisor_receptor(nifs)
     numero = _find_numero(text or "")
+    pagina_ticket, paginas_ticket = _find_paginacion_ticket(text or "")
     fecha = _find_fecha(text or "", lines)
     base, iva_cuota, total, iva_tipo = _find_importes(lines, text or "")
     emisor = _find_emisor(lines, nif_emisor)
@@ -55,6 +65,9 @@ def parse_invoice(text: str, *, motor: str = "") -> InvoiceExtract:
         nif_receptor=nif_receptor,
         fecha=fecha,
         numero=numero,
+        numero_norm=normalize_numero(numero),
+        pagina_ticket=pagina_ticket,
+        paginas_ticket=paginas_ticket,
         base=base,
         iva_tipo=iva_tipo,
         iva_cuota=iva_cuota,
@@ -66,6 +79,9 @@ def parse_invoice(text: str, *, motor: str = "") -> InvoiceExtract:
 
 
 def _find_numero(text: str) -> str | None:
+    nfs = TICKET_NFS_RE.search(text)
+    if nfs:
+        return f"{nfs.group(1).upper()}:{nfs.group(2)}"
     for match in FACTURA_NUM_RE.finditer(text):
         token = match.group(1).strip().rstrip(".")
         if token.upper() in NUMERO_BASURA:
@@ -78,6 +94,17 @@ def _find_numero(text: str) -> str | None:
     if loose:
         return loose.group(1).upper()
     return None
+
+
+def _find_paginacion_ticket(text: str) -> tuple[int | None, int | None]:
+    match = PAG_TICKET_RE.search(text)
+    if not match:
+        return None, None
+    pagina = int(match.group(1))
+    total = int(match.group(2))
+    if pagina < 1 or total < 1 or pagina > total:
+        return None, None
+    return pagina, total
 
 
 def _parse_date_token(token: str) -> date | None:

@@ -89,3 +89,44 @@ Total TII (EUR)
     assert extract.numero == "064-0009-R194007"
     assert extract.total == Decimal("13.86")
     assert "LEROY" in (extract.emisor or "").upper()
+
+
+def test_parse_ticket_obrama_nfs_y_paginacion():
+    texto = """
+OBRAMAT
+BRICOMAN S.L.U
+NIF: B12345674
+Ticket de caja
+010-000043-004-4843-NFS: 055610 15/08/2026 13:48 - Venta -
+Pag. 1 / 2
+Adobe Scan 1 / 3
+Total SI (EUR)
+94,21
+Total IVA
+19,78
+Total TTI (EUR)
+113,99
+"""
+    extract = parse_invoice(texto)
+    assert extract.numero == "010-000043-004-4843-NFS:055610"
+    assert extract.numero_norm == "0100000430044843NFS055610"
+    assert extract.pagina_ticket == 1
+    assert extract.paginas_ticket == 2
+    assert extract.fecha.isoformat() == "2026-08-15"
+    assert extract.total == Decimal("113.99")
+    assert extract.base == Decimal("94.21")
+
+
+def test_sello_adobe_no_es_pagina_de_ticket():
+    texto = """
+IBERDROLA CLIENTES DEMO S.A.
+NIF: B12345674
+Factura nº: F2026-000123
+Fecha: 10/03/2026
+1 / 3
+Total factura: 48,40 €
+"""
+    extract = parse_invoice(texto)
+    assert extract.numero == "F2026-000123"
+    assert extract.pagina_ticket is None
+    assert extract.paginas_ticket is None

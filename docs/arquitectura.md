@@ -13,7 +13,7 @@ AEAT Hub es un **backend local** (CLI Python) para llevar libros auxiliares de i
 ## Piezas
 
 ```
-inbox  →  OCR  →  parser factura ES  →  duplicados  →  clasificador  →  SQLite
+inbox  →  OCR  →  parser factura ES  →  ER (emisor+nº)  →  clasificador  →  SQLite
                                                                       ↓
                                                                archivo en disco
                                                                       ↓
@@ -30,7 +30,8 @@ inbox  →  OCR  →  parser factura ES  →  duplicados  →  clasificador  →
 | Semilla | `aeat_hub.seed` | Cuentas + expediente Valladolid |
 | OCR | `aeat_hub.ocr` | Cascada nativo → RapidOCR → opcionales |
 | Parser | `aeat_hub.extract` | NIF, fecha, número, bases, IVA, total |
-| Duplicados | `aeat_hub.dedupe` | SHA-256, clave fiscal, sospechoso/phash |
+| ER | `aeat_hub.er` | Raw + factura canónica + relaciones |
+| Duplicados | `aeat_hub.dedupe` | SHA-256 y sospechosos si no hay ID |
 | Clasificación | `aeat_hub.classify` | Palabras clave + reglas aprendidas |
 | Archivo | `aeat_hub.filing` | Árbol año/mes/tipo/rubro |
 | Ingest | `aeat_hub.ingest` | Orquesta el lote del inbox |
@@ -46,15 +47,18 @@ flowchart TD
   dup1{Ya existe el fichero?}
   ocr[OCR: nativo o RapidOCR]
   parse[Parser factura ES]
-  dup2{Duplicado fiscal o sospechoso?}
+  er{Mismo emisor y número?}
   class[Clasificar cuenta]
-  sqlite[Insertar documento + asiento]
+  sqlite[Raw + factura + asiento]
   file[Mover a archivo/año/mes/tipo/rubro]
   reject[rejected/hash]
+  attach[Evidencia extra, mismo asiento]
 
   drop --> hash --> dup1
   dup1 -->|sí nivel 1| reject
-  dup1 -->|no| ocr --> parse --> dup2 --> class --> sqlite --> file
+  dup1 -->|no| ocr --> parse --> er
+  er -->|sí, total coherente| attach --> file
+  er -->|no| class --> sqlite --> file
 ```
 
 ## Dominio
@@ -62,8 +66,9 @@ flowchart TD
 - **Titular:** persona física o jurídica (NIF).
 - **Actividad / expediente:** `capital_inmobiliario` o `actividad_economica`. Aquí se separa la “razón social / actividad” de cara a Hacienda.
 - **Inmueble:** solo capital inmobiliario (p. ej. vivienda en Valladolid).
-- **Documento:** el fichero (hash, OCR, JSON extraído, ruta en disco).
-- **Asiento:** el apunte contable/fiscal (cuenta, importes, estado).
+- **Documento:** el fichero raw (hash, OCR, ruta en disco).
+- **Factura:** entidad canónica (emisor + número). Varios documentos pueden ser evidencia de una.
+- **Asiento:** el apunte contable/fiscal (un asiento por factura).
 - **Proyecto de mejora:** agrupará PVC + materiales + mano de obra (tabla lista; el CLI de proyectos aún no está).
 - **Regla aprendida:** `(actividad, NIF emisor) → cuenta` tras un `reclasificar`.
 

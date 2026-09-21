@@ -36,9 +36,12 @@ def _migrate(engine: Engine) -> None:
     table_names = inspector.get_table_names()
     if "asientos" in table_names:
         columns = {item["name"] for item in inspector.get_columns("asientos")}
-        if "validado" not in columns:
-            with engine.begin() as conn:
+        with engine.begin() as conn:
+            if "validado" not in columns:
                 conn.execute(text("ALTER TABLE asientos ADD COLUMN validado BOOLEAN NOT NULL DEFAULT 0"))
+            if "factura_id" not in columns:
+                conn.execute(text("ALTER TABLE asientos ADD COLUMN factura_id INTEGER"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_asientos_factura_id ON asientos (factura_id)"))
     if "cuentas" in table_names:
         columns = {item["name"] for item in inspector.get_columns("cuentas")}
         with engine.begin() as conn:
@@ -50,6 +53,22 @@ def _migrate(engine: Engine) -> None:
                 conn.execute(
                     text("ALTER TABLE cuentas ADD COLUMN sistema BOOLEAN NOT NULL DEFAULT 1")
                 )
+    if "documentos" in table_names:
+        columns = {item["name"] for item in inspector.get_columns("documentos")}
+        if "paginas" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE documentos ADD COLUMN paginas INTEGER NOT NULL DEFAULT 1"))
+    _backfill_er(engine)
+
+
+def _backfill_er(engine: Engine) -> None:
+    from sqlalchemy.orm import Session
+
+    from aeat_hub.er import backfill_asientos
+
+    with Session(engine) as session:
+        if backfill_asientos(session):
+            session.commit()
 
 
 def session_factory(engine: Engine) -> sessionmaker[Session]:

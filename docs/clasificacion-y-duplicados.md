@@ -76,3 +76,16 @@ Las facturas futuras de ese NIF en esa actividad se clasifican solas. Los asient
 El phash se calcula **antes** de insertar el documento, para no compararse consigo mismo.
 
 Los tres niveles se listan (2 y 3 en `aeat-hub duplicados`) y salen en el dashboard (filtro de tabla) y en la hoja Excel `Duplicados`. No se silencian.
+
+## Entity resolution (factura canónica)
+
+El duplicado de asiento es la red de seguridad **cuando no hay número**. Si el parser ve un ID (nº de factura, Leroy `064-…`, ticket Obramat `010-…-NFS:`), el ingest agrupa por **emisor/NIF + número**:
+
+1. Cada fichero se guarda en `documentos` (raw) y deja una fila en `extracciones`.
+2. Varios raw del mismo ID = **una** fila en `facturas` y **un** asiento. Relación `evidencia` o `continuacion` (`Pag. 2/2`).
+3. Mismo ID y total distinto (> 0,02 €) = dos facturas, `estado_er=conflicto`.
+4. Un PDF de varias páginas sigue siendo un solo raw.
+
+El libro y el Excel cuentan asientos, no ficheros. El dashboard muestra un chip `N docs` si hay más de una evidencia.
+
+Corregir a mano un número mal leído es el siguiente PR (`aeat-hub factura numero` / UI).

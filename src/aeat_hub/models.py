@@ -10,6 +10,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -97,8 +98,71 @@ class Documento(Base):
     texto_crudo: Mapped[str] = mapped_column(Text, default="")
     json_extraido: Mapped[str] = mapped_column(Text, default="{}")
     confianza: Mapped[Decimal] = mapped_column(Numeric(4, 3), default=Decimal("0"))
+    paginas: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     asientos: Mapped[list[Asiento]] = relationship(back_populates="documento")
+    extracciones: Mapped[list[Extraccion]] = relationship(back_populates="documento")
+
+
+class Extraccion(Base):
+    __tablename__ = "extracciones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    documento_id: Mapped[int] = mapped_column(ForeignKey("documentos.id"), index=True)
+    numero_raw: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    numero_norm: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    emisor: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    emisor_norm: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    nif_emisor: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    fecha: Mapped[date | None] = mapped_column(Date, nullable=True)
+    base: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    iva_tipo: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    iva_cuota: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    pagina_ticket: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    paginas_ticket: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    json_completo: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    documento: Mapped[Documento] = relationship(back_populates="extracciones")
+
+
+class Factura(Base):
+    __tablename__ = "facturas"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actividad_id: Mapped[int] = mapped_column(ForeignKey("actividades.id"), index=True)
+    nif_emisor: Mapped[str | None] = mapped_column(String(12), nullable=True, index=True)
+    emisor: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    emisor_norm: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    numero_norm: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    numero_visible: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    fecha: Mapped[date | None] = mapped_column(Date, nullable=True)
+    base: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    iva_tipo: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    iva_cuota: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    estado_er: Mapped[str] = mapped_column(String(20), default="propuesta", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    asientos: Mapped[list[Asiento]] = relationship(back_populates="factura")
+
+
+class Relacion(Base):
+    __tablename__ = "relaciones"
+    __table_args__ = (
+        Index("ix_rel_destino", "destino_tipo", "destino_id"),
+        Index("ix_rel_origen", "origen_tipo", "origen_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    origen_tipo: Mapped[str] = mapped_column(String(20))
+    origen_id: Mapped[int] = mapped_column(Integer)
+    destino_tipo: Mapped[str] = mapped_column(String(20))
+    destino_id: Mapped[int] = mapped_column(Integer)
+    tipo: Mapped[str] = mapped_column(String(32), index=True)
+    confianza: Mapped[Decimal] = mapped_column(Numeric(4, 3), default=Decimal("1"))
+    fuente: Mapped[str] = mapped_column(String(20), default="modelo")
+    motivo: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class Asiento(Base):
@@ -108,6 +172,7 @@ class Asiento(Base):
     actividad_id: Mapped[int] = mapped_column(ForeignKey("actividades.id"), index=True)
     inmueble_id: Mapped[int | None] = mapped_column(ForeignKey("inmuebles.id"), nullable=True)
     documento_id: Mapped[int | None] = mapped_column(ForeignKey("documentos.id"), nullable=True)
+    factura_id: Mapped[int | None] = mapped_column(ForeignKey("facturas.id"), nullable=True, index=True)
     proyecto_mejora_id: Mapped[int | None] = mapped_column(
         ForeignKey("proyectos_mejora.id"), nullable=True
     )
@@ -133,6 +198,7 @@ class Asiento(Base):
 
     actividad: Mapped[Actividad] = relationship(back_populates="asientos")
     documento: Mapped[Documento | None] = relationship(back_populates="asientos")
+    factura: Mapped[Factura | None] = relationship(back_populates="asientos")
     cuenta: Mapped[Cuenta | None] = relationship()
 
 

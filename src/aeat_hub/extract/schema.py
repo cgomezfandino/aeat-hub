@@ -21,6 +21,9 @@ class InvoiceExtract(BaseModel):
     nif_receptor: str | None = None
     fecha: date | None = None
     numero: str | None = None
+    numero_norm: str | None = None
+    pagina_ticket: int | None = None
+    paginas_ticket: int | None = None
     base: Decimal | None = None
     iva_tipo: Decimal | None = None
     iva_cuota: Decimal | None = None

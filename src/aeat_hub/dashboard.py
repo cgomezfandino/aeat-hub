@@ -11,6 +11,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from aeat_hub.er import counts_por_factura, estados_er_por_factura
 from aeat_hub.fiscal.accounts import (
     REGIMEN_AE,
     REGIMEN_CI,
@@ -70,11 +71,24 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
     }
     titular = session.get(Titular, actividad.titular_id)
     vivos = [row for row in rows if row.estado != "duplicado"]
+    factura_ids = [row.factura_id for row in rows if row.factura_id]
+    n_docs_map = counts_por_factura(session, factura_ids)
+    er_map = estados_er_por_factura(session, factura_ids)
     gastos = _sum_tipo(vivos, TIPO_GASTO)
     ingresos = _sum_tipo(vivos, TIPO_INGRESO)
     mejoras = _sum_tipo(vivos, TIPO_MEJORA)
     pendientes = [row for row in vivos if row.estado == "pendiente"]
-    asientos = [_asiento_view(row, nombres, extra_casillas, inmuebles) for row in rows]
+    asientos = [
+        _asiento_view(
+            row,
+            nombres,
+            extra_casillas,
+            inmuebles,
+            n_docs=_n_docs(row, n_docs_map),
+            er_estado=er_map.get(row.factura_id or 0, ""),
+        )
+        for row in rows
+    ]
     por_mes = _by_month(vivos)
     irpf = (
         summarize_irpf(vivos, extra_casillas) if actividad.regimen == REGIMEN_CI else None
@@ -135,11 +149,38 @@ def render_dashboard(data: dict) -> str:
     )
 
 
+def _docs_chip(item: dict) -> str:
+    bits: list[str] = []
+    n_docs = int(item.get("n_docs") or 0)
+    if n_docs > 1:
+        bits.append(
+            f'<span class="docs-chip" title="Ficheros raw de esta factura">{n_docs} docs</span>'
+        )
+    if item.get("er_estado") == "conflicto":
+        bits.append(
+            '<span class="docs-chip warn" title="Mismo número, importes distintos">conflicto</span>'
+        )
+    if not bits:
+        return ""
+    return " " + "".join(bits)
+
+
+def _n_docs(asiento: Asiento, n_docs_map: dict[int, int]) -> int:
+    if asiento.factura_id:
+        counted = n_docs_map.get(asiento.factura_id, 0)
+        if counted:
+            return counted
+    return 1 if asiento.documento_id else 0
+
+
 def _asiento_view(
     asiento: Asiento,
     nombres: dict[str, str],
     extra_casillas: dict[str, str],
     inmuebles: dict[int, str],
+    *,
+    n_docs: int = 0,
+    er_estado: str = "",
 ) -> dict:
     codigo = asiento.cuenta_codigo or ""
     cuenta_nombre = nombres.get(codigo, "Sin clasificar")
@@ -197,6 +238,8 @@ def _asiento_view(
             f'aeat-hub reclasificar {asiento.id} "{cuenta_nombre}"' if codigo else ""
         ),
         "cmd_validar": f"aeat-hub validar {asiento.id}",
+        "n_docs": n_docs,
+        "er_estado": er_estado,
     }
 
 
@@ -564,7 +607,8 @@ def _review_row(item: dict) -> str:
         f"<td>"
         f"<strong>{escape(item['emisor'])}</strong>"
         f'<span class="sub">{escape(item["fecha_label"])} · '
-        f"{escape(format_euro(item['total']))} · {escape(item['numero'])}</span></td>"
+        f"{escape(format_euro(item['total']))} · {escape(item['numero'])}"
+        f"{_docs_chip(item)}</span></td>"
         f"<td>{rubro}</td>"
         f"<td>{_quality_cell(item, prefix='review')}</td>"
         f'<td class="cell-doc">{doc_cell}</td>'
@@ -1088,7 +1132,7 @@ def _row_html(item: dict) -> str:
         f'<td class="num cell-nowrap" data-label="Total">{escape(format_euro(item["total"]))}</td>'
         f'<td class="cell-rubro" data-label="Rubro">{rubro}</td>'
         f'<td class="mono cell-nowrap" data-label="NIF">{escape(item["nif"])}</td>'
-        f'<td class="mono cell-clip" data-label="Factura">{escape(item["numero"])}</td>'
+        f'<td class="mono cell-clip" data-label="Factura">{escape(item["numero"])}{_docs_chip(item)}</td>'
         f'<td class="num cell-nowrap" data-label="Base">{escape(format_euro(item["base"]))}</td>'
         f'<td class="num cell-nowrap" data-label="IVA">{escape(format_euro(item["iva"]))}</td>'
         f'<td class="cell-doc" data-label="Doc">{doc_cell}</td>'
@@ -1800,6 +1844,19 @@ th {
 .pill.pendiente { color: var(--warn); border-color: #d4a574; background: #fff6eb; }
 .pill.confirmado { color: var(--ingreso); border-color: #9bc4b8; background: #eef7f3; }
 .pill.duplicado { color: var(--muted); background: #f3f0ea; }
+.docs-chip {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-family: inherit;
+  letter-spacing: .02em;
+  background: #f3f0ea;
+  color: var(--muted);
+  vertical-align: 1px;
+}
+.docs-chip.warn { background: #fff6eb; color: var(--warn); }
 .doc-link { font-weight: 600; color: var(--neto); text-decoration: none; border-bottom: 1px solid transparent; }
 .doc-link:hover { border-bottom-color: var(--neto); }
 .empty { color: var(--muted); padding: 12px; }

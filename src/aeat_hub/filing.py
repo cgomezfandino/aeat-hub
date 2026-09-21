@@ -115,6 +115,17 @@ def relocate_asiento(
     documento = asiento.documento or session.get(Documento, asiento.documento_id)
     if documento is None:
         return None
+    return relocate_documento(session, layout, asiento, documento, move=move)
+
+
+def relocate_documento(
+    session: Session,
+    layout: DataLayout,
+    asiento: Asiento,
+    documento: Documento,
+    *,
+    move: bool = True,
+) -> Path | None:
     actividad = asiento.actividad or session.get(Actividad, asiento.actividad_id)
     if actividad is None:
         return None
@@ -152,6 +163,8 @@ def _prune_root(path: Path, layout: DataLayout) -> Path:
 
 
 def ordenar_asientos(session: Session, layout: DataLayout, actividad: Actividad) -> int:
+    from aeat_hub.er import documentos_de_factura
+
     rows = session.scalars(
         select(Asiento).where(
             Asiento.actividad_id == actividad.id,
@@ -159,11 +172,19 @@ def ordenar_asientos(session: Session, layout: DataLayout, actividad: Actividad)
         )
     ).all()
     moved = 0
+    seen: set[int] = set()
     for asiento in rows:
-        before = asiento.documento.ruta_almacenada if asiento.documento else None
-        dest = relocate_asiento(session, layout, asiento)
-        if dest is not None and before and Path(before).resolve() != dest.resolve():
-            moved += 1
-        elif dest is not None and before is None:
-            moved += 1
+        docs = [asiento.documento] if asiento.documento is not None else []
+        if asiento.factura_id:
+            docs = documentos_de_factura(session, asiento.factura_id) or docs
+        for documento in docs:
+            if documento is None or documento.id in seen:
+                continue
+            seen.add(documento.id)
+            before = documento.ruta_almacenada
+            dest = relocate_documento(session, layout, asiento, documento)
+            if dest is not None and before and Path(before).resolve() != dest.resolve():
+                moved += 1
+            elif dest is not None and before is None:
+                moved += 1
     return moved

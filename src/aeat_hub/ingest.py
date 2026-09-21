@@ -11,9 +11,10 @@ from sqlalchemy.orm import Session
 
 from aeat_hub.classify import classify
 from aeat_hub.dedupe import DuplicateHit, find_duplicate, find_sha_duplicate
+from aeat_hub.er import cluster_documento, save_extraccion
 from aeat_hub.extract.parser import parse_invoice
 from aeat_hub.extract.schema import InvoiceExtract
-from aeat_hub.filing import place_file, relocate_asiento
+from aeat_hub.filing import place_file, relocate_asiento, relocate_documento
 from aeat_hub.media import file_phash, sha256_file
 from aeat_hub.models import Actividad, Asiento, Documento, Inmueble
 from aeat_hub.ocr.base import OCRProvider, OCRResult
@@ -155,14 +156,42 @@ def ingest_file(
             texto_crudo=ocr.text,
             json_extraido=extract.model_dump_json(),
             confianza=extract.confianza,
+            paginas=max(ocr.pages, 1),
         )
         session.add(documento)
         session.flush()
+        save_extraccion(session, documento, extract)
+        factura, asiento_existente, rel_tipo, conflicto = cluster_documento(
+            session,
+            actividad_id=actividad.id,
+            documento=documento,
+            extract=extract,
+        )
         inmueble = session.scalar(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
+        if asiento_existente is not None:
+            stored = relocate_documento(
+                session, layout, asiento_existente, documento, move=from_inbox
+            ) or Path(documento.ruta_almacenada)
+            log_detalle(
+                "guardar",
+                "evidencia documento=%s factura=%s asiento=%s rel=%s",
+                documento.id,
+                factura.id,
+                asiento_existente.id,
+                rel_tipo,
+            )
+            return IngestItem(
+                stored,
+                asiento_existente.id,
+                asiento_existente.estado,
+                f"{rel_tipo} factura {factura.id} → asiento {asiento_existente.id}",
+                warnings,
+            )
         asiento = Asiento(
             actividad_id=actividad.id,
             inmueble_id=inmueble.id if inmueble else None,
             documento_id=documento.id,
+            factura_id=factura.id,
             tipo=classification.tipo,
             cuenta_codigo=classification.cuenta_codigo,
             fecha=extract.fecha,
@@ -179,10 +208,15 @@ def ingest_file(
             origen_clasificacion=classification.origen,
             estado="pendiente",
         )
-        _apply_duplicate_and_state(asiento, dup, classification.confianza)
+        if conflicto:
+            asiento.estado = "pendiente"
+        elif extract.numero_norm or extract.numero:
+            _apply_duplicate_and_state(asiento, None, classification.confianza)
+        else:
+            _apply_duplicate_and_state(asiento, dup, classification.confianza)
         session.add(asiento)
         session.flush()
-        log_detalle("guardar", "documento=%s asiento=%s estado=%s", documento.id, asiento.id, asiento.estado)
+        log_detalle("guardar", "documento=%s asiento=%s factura=%s estado=%s", documento.id, asiento.id, factura.id, asiento.estado)
 
     with etapa("archivar", name):
         stored = relocate_asiento(session, layout, asiento, move=from_inbox) or Path(
@@ -191,7 +225,9 @@ def ingest_file(
         log_detalle("archivar", "destino=%s", stored)
 
     detalle = classification.cuenta_codigo or "sin cuenta"
-    if dup:
+    if conflicto:
+        detalle = f"conflicto factura {factura.id} (mismo número, total distinto)"
+    elif dup and not (extract.numero_norm or extract.numero):
         detalle = f"duplicado nivel {dup.nivel} ({dup.motivo}) → asiento {dup.asiento_id}"
     return IngestItem(stored, asiento.id, asiento.estado, detalle, warnings)
 

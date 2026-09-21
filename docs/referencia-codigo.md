@@ -31,6 +31,8 @@ Paquete: `src/aeat_hub/`. Python ≥ 3.12. Entrada CLI: `aeat_hub.cli:app`.
 | `ocr/tesseract.py` | Tesseract CLI (opcional) |
 | `ocr/base.py` | `OCRResult`, `ProviderUnavailable` |
 | `evals/` | Bake-off: oro, métricas, runner |
+| `extract/ids.py` | `numero_norm` / `emisor_norm` |
+| `er.py` | Clustering factura canónica y relaciones |
 | `media.py` | SHA-256 y average hash |
 | `dedupe.py` | Tres niveles |
 | `classify.py` | Reglas + `reclassify` |
@@ -48,13 +50,16 @@ Paquete: `src/aeat_hub/`. Python ≥ 3.12. Entrada CLI: `aeat_hub.cli:app`.
 | `inmuebles` | `id` | FK actividad |
 | `cuentas` | `codigo` PK | tipo + régimen |
 | `proyectos_mejora` | `id` | Preparado; sin CLI aún |
-| `documentos` | `id` | `sha256` único, `phash`, `ruta_almacenada`, texto y JSON |
-| `asientos` | `id` | FK actividad/inmueble/documento/cuenta |
+| `documentos` | `id` | Raw: `sha256` único, OCR, ruta, `paginas` |
+| `extracciones` | `id` | Lo que el parser vio en un ingest (no se pisa) |
+| `facturas` | `id` | Entidad canónica (NIF/emisor + `numero_norm`) |
+| `relaciones` | `id` | ER: `evidencia`, `continuacion`, `conflicto`, … |
+| `asientos` | `id` | FK actividad/inmueble/documento/`factura`/cuenta |
 | `reglas_aprendidas` | `id` | Único `(actividad, nif_emisor, patron)` |
 
 ### Campos relevantes de `asientos`
 
-`tipo`, `cuenta_codigo`, `fecha`, `ejercicio`, `emisor`, `nif_emisor`, `numero_factura`, `descripcion`, `base`, `iva_tipo`, `iva_cuota`, `total`, `estado`, `confianza_clasificacion`, `origen_clasificacion`, `duplicado_de_id`, `duplicado_nivel`.
+`tipo`, `cuenta_codigo`, `fecha`, `ejercicio`, `emisor`, `nif_emisor`, `numero_factura`, `descripcion`, `base`, `iva_tipo`, `iva_cuota`, `total`, `estado`, `confianza_clasificacion`, `origen_clasificacion`, `duplicado_de_id`, `duplicado_nivel`, `factura_id`.
 
 ## Tests (`tests/`)
 
@@ -75,6 +80,7 @@ Facturas sintéticas en `tests/samples.py` (CIF de juguete `B12345674`, DNI `123
 | `test_cli.py` | `init`, listar, alta AE |
 | `test_ocr_optional.py` | Fallback si Unlimited no está |
 | `test_dual.py` | Consenso de campos y Excel dual |
+| `test_er.py` | Clustering emisor+ID, continuación, conflicto, backfill |
 
 ```bash
 uv run pytest

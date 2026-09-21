@@ -59,13 +59,14 @@ No mezclar gastos del piso con ads, dominio o Stripe de una web.
 
 1. Ingerir el lote real de septiembre del alquiler (luz, agua, internet,
    comunidad, seguros, hogar, rentas) y ajustar palabras clave.
-2. Revisión que **grabe** en SQLite (servidor local mínimo: validar y
+2. Corregir a mano un número de factura mal leído y re-agrupar (CLI; luego el HTML).
+3. Revisión que **grabe** en SQLite (servidor local mínimo: validar y
    cambiar rubro desde el HTML, sin copiar el CLI).
-3. Cortes T1–T4 como filtro de dashboard/Excel sobre el libro anual.
-4. Libro de actividad económica para las dos webs + borrador 303 (totales,
+4. Cortes T1–T4 como filtro de dashboard/Excel sobre el libro anual.
+5. Libro de actividad económica para las dos webs + borrador 303 (totales,
    sin envío).
-5. Amortización y proyectos de mejora.
-6. Ampliar el set de oro de `aeat-hub eval` (hoy: 2 tickets Leroy + sintético).
+6. Amortización y proyectos de mejora.
+7. Ampliar el set de oro de `aeat-hub eval` (hoy: 2 tickets Leroy + sintético).
 
 ## Aviso
 
