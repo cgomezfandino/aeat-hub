@@ -132,3 +132,47 @@ def test_cli_cuenta_alta_y_reclasificar_por_nombre(layout):
     assert rec.exit_code == 0, rec.output
     assert "Pintura" in rec.output
     assert "CI.GAS." not in rec.output
+
+
+def test_cli_factura_numero(layout):
+    from sqlalchemy import select
+
+    from aeat_hub.db import make_engine, session_factory
+    from aeat_hub.ingest import ingest_file
+    from aeat_hub.models import Actividad, Asiento
+    from aeat_hub.ocr.base import OCRResult
+    from aeat_hub.services import initialize
+    from tests.samples import FACTURA_LUZ, write_pdf
+
+    class FakeRapid:
+        name = "rapidocr"
+
+        def available(self):
+            return True, "fake"
+
+        def transcribe(self, path):
+            return OCRResult(text="foto", engine="rapidocr", confidence=0.7)
+
+    initialize(layout)
+    engine = make_engine(layout)
+    factory = session_factory(engine)
+    with factory() as db:
+        actividad = db.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+        pdf = write_pdf(
+            layout.inbox / "luz.pdf",
+            FACTURA_LUZ.replace("F2026-000123", "F-MAL"),
+        )
+        item = ingest_file(db, layout, pdf, actividad, rapid=FakeRapid())
+        db.commit()
+        asiento_id = item.asiento_id
+
+    result = runner.invoke(
+        app,
+        ["factura", "numero", str(asiento_id), "F2026-000123", "--data-dir", str(layout.root)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "F2026-000123" in result.output
+
+    with factory() as db:
+        asiento = db.get(Asiento, asiento_id)
+        assert asiento.numero_factura == "F2026-000123"

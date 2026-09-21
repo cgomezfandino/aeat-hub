@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -227,6 +228,14 @@ def _enriquecer_asiento(asiento: Asiento, extract: InvoiceExtract) -> None:
 
 
 def _asiento_de_factura(session: Session, factura: Factura) -> Asiento | None:
+    vivo = session.scalar(
+        select(Asiento).where(
+            Asiento.factura_id == factura.id,
+            Asiento.estado != "duplicado",
+        ).limit(1)
+    )
+    if vivo is not None:
+        return vivo
     return session.scalar(select(Asiento).where(Asiento.factura_id == factura.id).limit(1))
 
 
@@ -357,3 +366,143 @@ def backfill_asientos(session: Session) -> int:
             )
         updated += 1
     return updated
+
+
+@dataclass
+class CorreccionNumero:
+    asiento: Asiento
+    numero: str
+    unido_a: Asiento | None = None
+    conflicto_con: Asiento | None = None
+
+
+def _extract_desde_asiento(asiento: Asiento, numero: str) -> InvoiceExtract:
+    return InvoiceExtract(
+        emisor=asiento.emisor,
+        nif_emisor=asiento.nif_emisor,
+        fecha=asiento.fecha,
+        numero=numero,
+        numero_norm=normalize_numero(numero),
+        base=asiento.base,
+        iva_tipo=asiento.iva_tipo,
+        iva_cuota=asiento.iva_cuota,
+        total=asiento.total,
+    )
+
+
+def _mover_evidencias(session: Session, desde_factura_id: int, hacia_factura_id: int) -> None:
+    if desde_factura_id == hacia_factura_id:
+        return
+    filas = session.scalars(
+        select(Relacion).where(
+            Relacion.destino_tipo == KIND_FACTURA,
+            Relacion.destino_id == desde_factura_id,
+            Relacion.origen_tipo == KIND_DOCUMENTO,
+            Relacion.tipo.in_((REL_EVIDENCIA, REL_CONTINUACION)),
+        )
+    ).all()
+    for fila in filas:
+        fila.destino_id = hacia_factura_id
+
+
+def _fusionar_en(
+    session: Session,
+    *,
+    origen_asiento: Asiento,
+    origen_factura: Factura,
+    destino_asiento: Asiento,
+    destino_factura: Factura,
+) -> None:
+    extract = _extract_desde_asiento(origen_asiento, destino_factura.numero_visible or origen_asiento.numero_factura or "")
+    _enriquecer(destino_factura, extract)
+    _mover_evidencias(session, origen_factura.id, destino_factura.id)
+    origen_asiento.estado = "duplicado"
+    origen_asiento.duplicado_de_id = destino_asiento.id
+    origen_asiento.duplicado_nivel = 2
+    origen_asiento.factura_id = destino_factura.id
+    origen_asiento.numero_factura = destino_factura.numero_visible
+    destino_factura.estado_er = ER_PROPUESTA
+
+
+def corregir_numero(session: Session, asiento: Asiento, numero: str) -> CorreccionNumero:
+    """El usuario fija el número visible y se vuelve a agrupar."""
+    visible = (numero or "").strip()
+    norm = normalize_numero(visible)
+    if not norm:
+        raise ValueError("Indica un número de factura (no puede estar vacío).")
+
+    if asiento.factura_id is None:
+        backfill_asientos(session)
+
+    factura = asiento.factura
+    if factura is None:
+        extract = _extract_desde_asiento(asiento, visible)
+        factura = _factura_desde_extract(asiento.actividad_id, extract)
+        session.add(factura)
+        session.flush()
+        asiento.factura_id = factura.id
+        if asiento.documento is not None:
+            attach_documento(
+                session,
+                documento=asiento.documento,
+                extract=extract,
+                factura=factura,
+                rel_tipo=REL_EVIDENCIA,
+                motivo="corrección humana",
+            )
+
+    asiento.numero_factura = visible
+    factura.numero_visible = visible
+    factura.numero_norm = norm
+    extract = _extract_desde_asiento(asiento, visible)
+    if asiento.documento is not None:
+        save_extraccion(session, asiento.documento, extract)
+
+    otros = [item for item in _candidatos(session, asiento.actividad_id, extract) if item.id != factura.id]
+    if not otros:
+        if factura.estado_er == ER_CONFLICTO:
+            factura.estado_er = ER_PROPUESTA
+        return CorreccionNumero(asiento=asiento, numero=visible)
+
+    compatibles = [item for item in otros if totals_compatible(item.total, asiento.total)]
+    if compatibles:
+        rival = compatibles[0]
+        destino = _asiento_de_factura(session, rival)
+        if destino is None or destino.id == asiento.id:
+            return CorreccionNumero(asiento=asiento, numero=visible)
+        _fusionar_en(
+            session,
+            origen_asiento=asiento,
+            origen_factura=factura,
+            destino_asiento=destino,
+            destino_factura=rival,
+        )
+        add_relacion(
+            session,
+            origen_tipo=KIND_FACTURA,
+            origen_id=factura.id,
+            destino_tipo=KIND_FACTURA,
+            destino_id=rival.id,
+            tipo="misma_factura",
+            motivo="corrección humana del número",
+            fuente="usuario",
+        )
+        return CorreccionNumero(asiento=asiento, numero=visible, unido_a=destino)
+
+    rival = otros[0]
+    factura.estado_er = ER_CONFLICTO
+    rival.estado_er = ER_CONFLICTO
+    add_relacion(
+        session,
+        origen_tipo=KIND_FACTURA,
+        origen_id=factura.id,
+        destino_tipo=KIND_FACTURA,
+        destino_id=rival.id,
+        tipo=REL_CONFLICTO,
+        motivo="corrección humana: mismo número, total distinto",
+        fuente="usuario",
+    )
+    rival_asiento = _asiento_de_factura(session, rival)
+    if asiento.estado != "duplicado" and not asiento.validado:
+        asiento.estado = "pendiente"
+    return CorreccionNumero(asiento=asiento, numero=visible, conflicto_con=rival_asiento)

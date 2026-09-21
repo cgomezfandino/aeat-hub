@@ -144,3 +144,48 @@ def test_dashboard_chip_n_docs(session, layout):
     html = write_dashboard(session, layout, actividad, 2026).read_text(encoding="utf-8")
     assert "2 docs" in html
     assert "docs-chip" in html
+
+
+def test_corregir_numero_y_unir_mismo_id(session, layout):
+    from aeat_hub.er import corregir_numero, count_evidencias
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    a = write_pdf(layout.inbox / "luz-ok.pdf", FACTURA_LUZ)
+    b = write_pdf(
+        layout.inbox / "luz-mal.pdf",
+        FACTURA_LUZ.replace("F2026-000123", "F2026-000999") + "\nOCR malo\n",
+    )
+    first = ingest_file(session, layout, a, actividad, rapid=FakeRapid())
+    second = ingest_file(session, layout, b, actividad, rapid=FakeRapid())
+    session.commit()
+    assert first.asiento_id != second.asiento_id
+    asiento_mal = session.get(Asiento, second.asiento_id)
+    resultado = corregir_numero(session, asiento_mal, "F2026-000123")
+    session.commit()
+    vivos = session.scalars(select(Asiento).where(Asiento.estado != "duplicado")).all()
+    assert len(vivos) == 1
+    assert vivos[0].id == first.asiento_id
+    assert vivos[0].numero_factura == "F2026-000123"
+    assert resultado.unido_a is not None
+    assert resultado.unido_a.id == first.asiento_id
+    duplicado = session.get(Asiento, second.asiento_id)
+    assert duplicado.estado == "duplicado"
+    assert duplicado.duplicado_de_id == first.asiento_id
+    assert count_evidencias(session, vivos[0].factura_id) == 2
+
+
+def test_corregir_numero_conflicto_si_el_total_no_cuadra(session, layout):
+    from aeat_hub.er import corregir_numero
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    a = write_pdf(layout.inbox / "obr-a.pdf", OBRAMAT.replace("010-000043-004-4843-NFS: 055610", "010-000043-004-4843-NFS: 055611"))
+    b = write_pdf(layout.inbox / "obr-b.pdf", OBRAMAT_OTRO_TOTAL)
+    first = ingest_file(session, layout, a, actividad, rapid=FakeRapid())
+    second = ingest_file(session, layout, b, actividad, rapid=FakeRapid())
+    session.commit()
+    asiento_b = session.get(Asiento, second.asiento_id)
+    resultado = corregir_numero(session, asiento_b, "010-000043-004-4843-NFS:055611")
+    session.commit()
+    assert resultado.conflicto_con is not None
+    assert resultado.conflicto_con.id == first.asiento_id
+    assert session.scalar(select(func.count()).select_from(Asiento).where(Asiento.estado != "duplicado")) == 2

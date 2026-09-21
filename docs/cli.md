@@ -103,6 +103,17 @@ uv run aeat-hub validar 12
 
 Check humano: el rubro no cambia. `reparse` y un nuevo OCR **no pisan** ese asiento. Sirve cuando el modelo acertó y solo quieres cerrarlo.
 
+### `factura numero`
+
+Corrige el número que leyó el OCR y vuelve a agrupar (mismo emisor + ID = un asiento). Si el total no cuadra, deja las dos facturas en `conflicto`.
+
+```bash
+uv run aeat-hub factura numero 12 F2026-000123
+uv run aeat-hub factura numero 12 010-000043-004-4843-NFS:055610
+```
+
+El HTML no escribe SQLite: tras corregir, regenera el dashboard.
+
 ### `ordenar`
 
 Reubica en disco documentos ya ingeridos (p. ej. si estaban en `processed/` de una versión anterior).

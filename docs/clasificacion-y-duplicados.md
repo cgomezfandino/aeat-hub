@@ -88,4 +88,4 @@ El duplicado de asiento es la red de seguridad **cuando no hay número**. Si el 
 
 El libro y el Excel cuentan asientos, no ficheros. El dashboard muestra un chip `N docs` si hay más de una evidencia.
 
-Corregir a mano un número mal leído es el siguiente PR (`aeat-hub factura numero` / UI).
+Corregir a mano un número mal leído: `aeat-hub factura numero <asiento> <número>`. El HTML sigue sin escribir.

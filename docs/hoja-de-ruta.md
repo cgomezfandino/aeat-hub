@@ -59,7 +59,7 @@ No mezclar gastos del piso con ads, dominio o Stripe de una web.
 
 1. Ingerir el lote real de septiembre del alquiler (luz, agua, internet,
    comunidad, seguros, hogar, rentas) y ajustar palabras clave.
-2. Corregir a mano un número de factura mal leído y re-agrupar (CLI; luego el HTML).
+2. Corregir a mano un número de factura mal leído: `aeat-hub factura numero` (hecho en CLI). La edición en el HTML sigue pendiente.
 3. Revisión que **grabe** en SQLite (servidor local mínimo: validar y
    cambiar rubro desde el HTML, sin copiar el CLI).
 4. Cortes T1–T4 como filtro de dashboard/Excel sobre el libro anual.

@@ -40,4 +40,6 @@ IDs: `número de factura`, Leroy `064-0009-…`, ticket Obramat `010-…-NFS: �
 
 ## Corrección humana
 
-El modelo deja `numero_raw` y `numero_norm` en la extracción. Un comando o la UI para cambiar el canónico y re-clusterizar es el siguiente PR.
+`aeat-hub factura numero <asiento> <número>` pisa el canónico, deja una extracción nueva (el raw no se borra) y vuelve a agrupar. Si ya existía otra factura con ese ID y el total cuadra, el asiento corregido pasa a `duplicado` del que ya estaba bien. Si el total no cuadra, `conflicto`.
+
+La edición desde el navegador sigue fuera de alcance.

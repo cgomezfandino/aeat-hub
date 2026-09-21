@@ -17,6 +17,7 @@ from aeat_hub.db import make_engine, session_factory, session_scope
 from aeat_hub.evals.gold import load_gold
 from aeat_hub.evals.runner import ENGINE_ORDER, list_engine_status, run_eval
 from aeat_hub.evals.suite import gold_path, load_suite
+from aeat_hub.er import CorreccionNumero, corregir_numero
 from aeat_hub.dashboard import write_dashboard
 from aeat_hub.export import export_xlsx
 from aeat_hub.export_dual import write_dual_xlsx
@@ -45,6 +46,8 @@ actividad_app = typer.Typer(no_args_is_help=True, help="Expedientes / razones so
 app.add_typer(actividad_app, name="actividad")
 cuenta_app = typer.Typer(no_args_is_help=True, help="Plan de cuentas / rubros.")
 app.add_typer(cuenta_app, name="cuenta")
+factura_app = typer.Typer(no_args_is_help=True, help="Factura canónica (número y agrupación).")
+app.add_typer(factura_app, name="factura")
 console = Console()
 
 
@@ -289,6 +292,43 @@ def validar(
             f"Asiento {asiento.id} validado. Rubro {rubro}. "
             "reparse e ingest no tocan este apunte."
         )
+
+
+@factura_app.command("numero")
+def factura_numero(
+    asiento_id: int = typer.Argument(..., help="Id del asiento"),
+    numero: str = typer.Argument(..., help="Número visible, p.ej. F2026-000123"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Corrige el número de factura y vuelve a agrupar por emisor + ID."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    with session_scope(factory) as session:
+        asiento = session.get(Asiento, asiento_id)
+        if asiento is None:
+            raise typer.BadParameter(f"No existe el asiento {asiento_id}")
+        try:
+            resultado = corregir_numero(session, asiento, numero)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+        _print_correccion(resultado)
+
+
+def _print_correccion(resultado: CorreccionNumero) -> None:
+    if resultado.unido_a is not None:
+        console.print(
+            f"Asiento {resultado.asiento.id} unido al asiento {resultado.unido_a.id}. "
+            f"Número {resultado.numero}."
+        )
+        return
+    if resultado.conflicto_con is not None:
+        console.print(
+            f"Asiento {resultado.asiento.id} → {resultado.numero}. "
+            f"Conflicto con asiento {resultado.conflicto_con.id} (mismo número, total distinto)."
+        )
+        return
+    console.print(f"Asiento {resultado.asiento.id} → número {resultado.numero}.")
 
 
 @app.command()
