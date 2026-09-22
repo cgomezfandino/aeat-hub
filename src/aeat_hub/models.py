@@ -200,6 +200,20 @@ class Asiento(Base):
     documento: Mapped[Documento | None] = relationship(back_populates="asientos")
     factura: Mapped[Factura | None] = relationship(back_populates="asientos")
     cuenta: Mapped[Cuenta | None] = relationship()
+    cambios: Mapped[list[Cambio]] = relationship(back_populates="asiento")
+
+
+class Cambio(Base):
+    __tablename__ = "cambios"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asiento_id: Mapped[int] = mapped_column(ForeignKey("asientos.id"), index=True)
+    campo: Mapped[str] = mapped_column(String(40))
+    antes: Mapped[str] = mapped_column(Text, default="")
+    despues: Mapped[str] = mapped_column(Text, default="")
+    fuente: Mapped[str] = mapped_column(String(40), default="dashboard")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    asiento: Mapped[Asiento] = relationship(back_populates="cambios")
 
 
 class ReglaAprendida(Base):

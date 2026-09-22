@@ -1,11 +1,11 @@
 # Arquitectura
 
-AEAT Hub es un **backend local** (CLI Python) para llevar libros auxiliares de ingresos y gastos. No hay servidor, ni cuenta en la nube, ni presentación telemática de modelos.
+AEAT Hub es un **backend local** (CLI Python) para llevar libros auxiliares de ingresos y gastos. No hay cuenta en la nube ni presentación telemática de modelos. El dashboard se sirve en `127.0.0.1` para abrir documentos y corregir asientos; no escucha fuera de la máquina.
 
 ## Principios
 
 1. **Todo en local.** Facturas, NIF y SQLite no salen de la máquina.
-2. **SQLite es el maestro.** El dashboard HTML (y el Excel, si lo pides) son fotos, no el libro de trabajo: el navegador no valida ni reclasifica.
+2. **SQLite es el maestro.** El dashboard HTML (y el Excel, si lo pides) son vistas: las correcciones del navegador pasan por `127.0.0.1` y se escriben en SQLite.
 3. **Un expediente, un régimen.** El CLI exige `--actividad` para no mezclar alquiler y autónomo.
 4. **Si duda, no inventa.** Reparación vs mejora y documentos sin cuenta quedan `pendiente`.
 5. **El fichero sigue a la clasificación.** Tras el ingest (y tras reclasificar) el PDF/foto se mueve a `archivo/año/mes/tipo/rubro`.
@@ -35,7 +35,8 @@ inbox  →  OCR  →  parser factura ES  →  ER (emisor+nº)  →  clasificador
 | Clasificación | `aeat_hub.classify` | Palabras clave + reglas aprendidas |
 | Archivo | `aeat_hub.filing` | Árbol año/mes/tipo/rubro |
 | Ingest | `aeat_hub.ingest` | Orquesta el lote del inbox |
-| Dashboard | `aeat_hub.dashboard` | HTML local del ejercicio (sin servidor) |
+| Dashboard | `aeat_hub.dashboard` | HTML local del ejercicio |
+| Servidor local | `aeat_hub.hub_http` | `127.0.0.1`: HTML, ficha `/asiento/<id>`, `/doc/<id>`, correcciones |
 | Excel | `aeat_hub.export` | XLSX opcional por ejercicio |
 
 ## Flujo de un documento

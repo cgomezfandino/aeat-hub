@@ -17,6 +17,9 @@ class FakeRapid:
         return True, "fake"
 
     def transcribe(self, path: Path) -> OCRResult:
+        if path.suffix.lower() == ".pdf":
+            native = PdfNativeProvider().transcribe(path)
+            return OCRResult(text=native.text, engine="rapidocr", confidence=0.9)
         return OCRResult(text="foto ocr", engine="rapidocr", confidence=0.7)
 
 
@@ -54,10 +57,11 @@ def test_ingest_mismo_fichero_es_duplicado_hash(session, layout):
     assert item.asiento_id is None
 
 
-def test_cascade_auto_usa_nativo_en_pdf_con_texto(tmp_path: Path):
+def test_cascade_auto_no_usa_texto_incrustado(tmp_path: Path):
     pdf = write_pdf(tmp_path / "luz.pdf", FACTURA_LUZ)
     result = transcribe(pdf, prefer="auto", rapid=FakeRapid())
-    assert result.engine == "pdf-native"
+    assert result.engine == "rapidocr"
+    assert result.engine != "pdf-native"
     assert "F2026-000123" in result.text
 
 

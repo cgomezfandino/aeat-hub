@@ -38,6 +38,19 @@ uv run aeat-hub actividad alta \
 
 `--regimen` es `capital_inmobiliario` o `actividad_economica`. Si omites `--codigo`, se genera `CI-00N` / `AE-00N`.
 
+### `actividad titulo`
+
+Personaliza la cabecera del libro (expediente, titular, inmueble). El código `CI-VA-001` y el régimen fiscal no cambian. También puedes hacerlo con el lápiz de la cabecera del dashboard.
+
+```bash
+uv run aeat-hub actividad titulo --actividad CI-VA-001 \
+  --nombre "Alquiler piso Centro" \
+  --titular "Tu nombre" \
+  --inmueble "Piso VA"
+```
+
+Luego regenera el HTML: `aeat-hub dashboard --actividad CI-VA-001 --year 2026`.
+
 ### `cuenta alta` / `cuentas`
 
 ```bash
@@ -61,8 +74,8 @@ uv run aeat-hub ingest --actividad CI-VA-001
 
 | `--ocr` | Comportamiento |
 | --- | --- |
-| `auto` (default) | PDF con texto usable → nativo; si no, RapidOCR |
-| `native` | Solo capa de texto del PDF |
+| `auto` (default) | Siempre OCR de imagen: Apple Vision en Mac, RapidOCR si Vision no puede. No usa el texto que incrusta Adobe Scan ni otro programa |
+| `native` | Solo la capa de texto del PDF. No es el flujo habitual |
 | `rapid` | Fuerza RapidOCR |
 | `unlimited` | Intenta Unlimited-OCR; si falla, cascada local |
 | `paddle` | Intenta PaddleOCR-VL; si falla, cascada local |
@@ -103,6 +116,14 @@ uv run aeat-hub validar 12
 
 Check humano: el rubro no cambia. `reparse` y un nuevo OCR **no pisan** ese asiento. Sirve cuando el modelo acertó y solo quieres cerrarlo.
 
+### `reabrir`
+
+```bash
+uv run aeat-hub reabrir 12
+```
+
+Devuelve el asiento a `pendiente` si validar fue un error. El dashboard hace lo mismo: pulsa el botón verde **Validado** (pasa a rojo **Por validar**) o desmarca el check en el lápiz.
+
 ### `factura numero`
 
 Corrige el número que leyó el OCR y vuelve a agrupar (mismo emisor + ID = un asiento). Si el total no cuadra, deja las dos facturas en `conflicto`.
@@ -111,8 +132,6 @@ Corrige el número que leyó el OCR y vuelve a agrupar (mismo emisor + ID = un a
 uv run aeat-hub factura numero 12 F2026-000123
 uv run aeat-hub factura numero 12 010-000043-004-4843-NFS:055610
 ```
-
-El HTML no escribe SQLite: tras corregir, regenera el dashboard.
 
 ### `ordenar`
 
@@ -124,14 +143,14 @@ uv run aeat-hub ordenar --actividad CI-VA-001
 
 ### `dashboard`
 
-Vista habitual del libro. Lee SQLite y escribe un HTML autocontenido (sin red, sin CDN). El HTML **no** vuelve a escribir la base: tras `validar` o `reclasificar`, regenera el dashboard. Abre el navegador salvo `--no-open`.
+Vista habitual del libro. Escribe un HTML autocontenido (sin CDN) y, por defecto, **lo sirve en `http://127.0.0.1:8765`** para abrir la ficha de cada factura, el PDF, corregir NIF/importes y validar. SQLite es el maestro. `--no-serve` solo genera el fichero. `--no-open` no lanza el navegador.
 
 ```bash
 uv run aeat-hub dashboard --actividad CI-VA-001 --year 2026
-uv run aeat-hub dashboard --actividad CI-VA-001 --year 2026 --reparse --no-open
+uv run aeat-hub dashboard --actividad CI-VA-001 --year 2026 --reparse --no-open --no-serve
 ```
 
-Salida: `exports/dashboard_CI-VA-001_2026.html` y regenera el Excel del ejercicio. Tres pestañas en la cabecera: **Revisar calidad**, **Libro** (embudo en cada columna: buscar, seleccionar todo y casillas) y **Resumen**. El pie tiene un botón **Exportar Excel**.
+Salida: `exports/dashboard_CI-VA-001_2026.html` y regenera el Excel del ejercicio. Dos pestañas: **Libro** (tabla única; pulsa la fila o el total para abrir la ficha de la factura, con volver atrás y las líneas extraídas; nº de factura al inicio y **Estado** fijo a la derecha — verde Validado / rojo Por validar; **Columnas** enseña u oculta campos; embudo por columna — el KPI *Por revisar* filtra los pendientes; fecha como rango; lápiz para corregir NIF/base/IVA/total; el lápiz de la cabecera personaliza expediente/titular/inmueble; Abrir documento) e **Insights** (operativo: evolución y alertas que filtran el libro; abajo, borrador de la Renta). **Exportar visible** descarga un CSV de las filas que pasan el filtro. El xlsx completo sigue disponible al lado.
 
 `--reparse` actualiza emisor/fecha/importes desde el OCR ya guardado **salvo asientos validados**. Luego genera el HTML.
 

@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from aeat_hub.er import counts_por_factura, estados_er_por_factura
+from aeat_hub.edits import articulos_label, lineas_de_asiento, parse_money_field
 from aeat_hub.fiscal.accounts import (
     REGIMEN_AE,
     REGIMEN_CI,
@@ -19,9 +20,9 @@ from aeat_hub.fiscal.accounts import (
     TIPO_INGRESO,
     TIPO_MEJORA,
 )
-from aeat_hub.fiscal.irpf import INDEX_CI, RUBRO_CHIPS, casilla_clave, summarize_irpf
+from aeat_hub.fiscal.irpf import INDEX_CI, casilla_clave, summarize_irpf
 from aeat_hub.fiscal.money import format_euro, q2
-from aeat_hub.models import Actividad, Asiento, Cuenta, Inmueble, Titular
+from aeat_hub.models import Actividad, Asiento, Cambio, Cuenta, Inmueble, Titular
 from aeat_hub.paths import DataLayout
 
 MESES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
@@ -37,6 +38,10 @@ ESTADO_LABEL = {
     "confirmado": "Confirmado",
     "duplicado": "Duplicado",
 }
+
+CONTACT_NAME = "Carlos Gomez"
+CONTACT_MAIL = "cgomezfandino@gmail.com"
+REPO_URL = "https://github.com/cgomezfandino/aeat-hub"
 
 
 def write_dashboard(session: Session, layout: DataLayout, actividad: Actividad, year: int) -> Path:
@@ -57,7 +62,7 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
             select(Asiento)
             .where(Asiento.actividad_id == actividad.id, Asiento.ejercicio == year)
             .options(joinedload(Asiento.documento))
-            .order_by(Asiento.fecha, Asiento.id)
+            .order_by(Asiento.id)
         )
         .unique()
         .all()
@@ -125,28 +130,854 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         "insights": _insights(asientos, ingresos, gastos, mejoras, actividad.codigo),
         "irpf": irpf,
         "xlsx_name": "",
+        "rubros": sorted(
+            {item.nombre for item in filas_cuenta if item.regimen == actividad.regimen}
+        ),
     }
 
 
 def render_dashboard(data: dict) -> str:
-    default = "revisar" if data["n_baja"] or data["n_pendientes"] else "libro"
     return (
         "<!DOCTYPE html>\n"
         '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
         f"<title>Libro {escape(data['codigo'])} · {data['year']}</title>\n"
         f"<style>{_CSS}</style>\n</head>\n"
-        f'<body data-default-panel="{default}">\n'
+        f"<body data-default-panel=\"libro\" data-actividad=\"{escape(data['codigo'])}\" "
+        f"data-year=\"{data['year']}\">\n"
         f"{_masthead(data)}\n"
         '<main class="wrap panels">\n'
-        f"{_panel_revisar(data)}\n"
         f"{_panel_libro(data)}\n"
-        f"{_panel_resumen(data)}\n"
+        f"{_panel_insights(data)}\n"
         f"{_footer(data)}\n"
         "</main>\n"
+        f"{_site_footer()}\n"
+        f"{_edit_dialog(data)}\n"
+        f"{_mast_dialog()}\n"
         f"<script>{_JS}</script>\n"
         "</body>\n</html>\n"
     )
+
+
+def collect_asiento_ficha(session: Session, asiento: Asiento, *, dashboard_name: str) -> dict:
+    actividad = session.get(Actividad, asiento.actividad_id)
+    filas = list(session.scalars(select(Cuenta)))
+    nombres = {item.codigo: item.nombre for item in filas}
+    extra = {item.codigo: item.casilla for item in filas if item.casilla}
+    inmuebles: dict[int, str] = {}
+    if actividad is not None:
+        inmuebles = {
+            item.id: item.alias
+            for item in session.scalars(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
+        }
+    view = _asiento_view(asiento, nombres, extra, inmuebles)
+    lineas = lineas_de_asiento(asiento)
+    suma = _suma_importes(lineas)
+    n_precio = sum(1 for item in lineas if item.get("importe"))
+    lineas_ok = _cuadra_con_total(suma, asiento.total)
+    desglose = _desglose_calidad(suma, asiento.total, len(lineas), n_precio)
+    logs = session.scalars(
+        select(Cambio).where(Cambio.asiento_id == asiento.id).order_by(Cambio.id.desc())
+    ).all()
+    back = f"/{dashboard_name}" if dashboard_name else "/"
+    back = f"{back}#asiento-{asiento.id}"
+    return {
+        **view,
+        "actividad_codigo": actividad.codigo if actividad else "",
+        "actividad_nombre": actividad.nombre if actividad else "",
+        "year": asiento.ejercicio,
+        "lineas": lineas,
+        "n_lineas": len(lineas),
+        "lineas_suma": suma,
+        "lineas_ok": lineas_ok,
+        "dashboard_href": back,
+        "cambios": [
+            {
+                "campo": item.campo,
+                "antes": item.antes,
+                "despues": item.despues,
+                "cuando": item.created_at.strftime("%d/%m/%Y %H:%M") if item.created_at else "",
+            }
+            for item in logs
+        ],
+    }
+
+
+def render_asiento_page(data: dict) -> str:
+    lineas = data["lineas"]
+    n_lineas = int(data.get("n_lineas") or len(lineas))
+    n_precio = sum(1 for item in lineas if item.get("importe"))
+    desglose = _desglose_calidad(
+        data.get("lineas_suma"), data.get("total"), n_lineas, n_precio
+    )
+    if lineas:
+        rows = _lineas_rows_html(lineas)
+    else:
+        rows = '<tr><td colspan="9">Sin líneas extraídas. Abre el PDF y contrasta el total a mano.</td></tr>'
+    score = _desglose_score_html(desglose)
+    logs = data["cambios"]
+    nombres = {
+        "lineas": "Líneas",
+        "validado": "Validado",
+        "base": "Base",
+        "iva_cuota": "IVA",
+        "total": "Total",
+        "emisor": "Emisor",
+        "nif_emisor": "NIF emisor",
+        "fecha": "Fecha de compra",
+        "rubro": "Rubro",
+        "iva_tipo": "IVA %",
+    }
+
+    def _log_valor(value: str) -> str:
+        text = (value or "").strip()
+        if text.lower() == "true":
+            return "Sí"
+        if text.lower() == "false":
+            return "No"
+        return text or "—"
+
+    if logs:
+        filas_log = "".join(
+            "<tr>"
+            f"<td>{escape(item['cuando'] or '—')}</td>"
+            f"<td>{escape(nombres.get(item['campo'], item['campo']))}</td>"
+            f"<td>{escape(_log_valor(item['antes'] or ''))}</td>"
+            f"<td>{escape(_log_valor(item['despues'] or ''))}</td>"
+            "</tr>"
+            for item in logs[:40]
+        )
+    else:
+        filas_log = '<tr><td colspan="4">Sin cambios registrados todavía.</td></tr>'
+    historial = (
+        '<table class="edit-diff log-table"><thead><tr>'
+        "<th>Fecha</th><th>Campo</th><th>Antes</th><th>Después</th>"
+        f"</tr></thead><tbody>{filas_log}</tbody></table>"
+    )
+    doc = ""
+    if data["has_doc"]:
+        name = escape(data.get("doc_name") or "")
+        extra = f'<span class="doc-open-name">{name}</span>' if name else ""
+        doc = (
+            f'<a class="doc-open" href="/doc/{data["id"]}" target="_blank" rel="noopener">'
+            f"{_FILE_SVG}<span>Abrir documento</span>{extra}</a>"
+        )
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
+        f"<title>Factura {escape(str(data['numero']))} · {escape(str(data['emisor']))}</title>\n"
+        f"<style>{_CSS}</style>\n</head>\n"
+        f"<body class=\"ficha-page\" data-asiento=\"{data['id']}\">\n"
+        '<header class="ficha-bar wrap">'
+        f'<a class="back-link" href="{escape(data["dashboard_href"])}">{_BACK_SVG} Volver al libro</a>'
+        f'<button type="button" class="row-edit" id="ficha-log" '
+        f'title="Historial de cambios" aria-haspopup="dialog" aria-label="Historial de cambios">{_CLOCK_SVG}</button>'
+        "</header>\n"
+        '<main class="wrap ficha">\n'
+        '<div class="ficha-head">'
+        "<div>"
+        f'<p class="ficha-kicker">{escape(data["actividad_codigo"])} · {data["year"]} · asiento #{data["id"]}</p>\n'
+        f"<h1>{escape(data['emisor'])}</h1>\n"
+        f'<p class="ficha-sub">{escape(data["numero"])} · {escape(data["fecha_label"])} · '
+        f'<span class="pill {escape(data["estado"])}">{escape(data["estado_label"])}</span></p>\n'
+        "</div>"
+        f"{doc}"
+        "</div>\n"
+        '<div class="kpi-carousel" id="ficha-kpis">'
+        '<dl class="ficha-grid">'
+        f"<div><dt>NIF emisor</dt><dd class=\"mono\">{escape(data['nif'])}</dd></div>"
+        f"<div><dt>Rubro</dt><dd>{escape(data['cuenta_nombre'])}</dd></div>"
+        f"<div><dt>Base</dt><dd id=\"kpi-base\">{escape(format_euro(data['base']))}</dd></div>"
+        f"<div><dt>IVA</dt><dd id=\"kpi-iva\">{escape(format_euro(data['iva']))}</dd></div>"
+        f"<div><dt>Total</dt><dd id=\"kpi-total\">{escape(format_euro(data['total']))}</dd></div>"
+        f"<div><dt>Elementos</dt><dd id=\"kpi-elementos\">{escape(articulos_label(lineas))}</dd></div>"
+        f"<div><dt>Casilla</dt><dd>{escape(data['casilla_etiqueta'])}</dd></div>"
+        "</dl>\n"
+        '<div class="kpi-dots" hidden></div>'
+        "</div>\n"
+        f"{_ficha_kpi_script()}\n"
+        '<div id="ficha-lines-editor" class="ledger">'
+        f'<h2 class="ficha-h2">{_LIST_SVG} Líneas de la factura'
+        f'<span class="ficha-count" id="ficha-count">{escape(_elementos_label(n_lineas))}</span>'
+        f'<button type="button" class="row-edit" id="ficha-lines-eye" hidden '
+        f'title="Ver líneas eliminadas" aria-pressed="false" aria-label="Ver líneas eliminadas">{_EYE_SVG}</button>'
+        "</h2>\n"
+        f"{score}"
+        '<div class="table-wrap ficha-lines"><table class="ledger-table ficha-ledger">'
+        "<colgroup>"
+        '<col class="fl-n"><col class="fl-id"><col class="fl-concepto"><col class="fl-uds">'
+        '<col class="fl-money"><col class="fl-rate"><col class="fl-money"><col class="fl-money"><col class="fl-act">'
+        "</colgroup>"
+        f"{_lineas_thead(lineas)}\n"
+        f"<tbody id=\"ficha-lines-body\">{rows}</tbody></table></div>\n"
+        '<nav class="pager" id="ficha-pager" aria-label="Páginas de las líneas">'
+        '<button type="button" class="ghost" id="ficha-prev">Anterior</button>'
+        '<span class="pager-pages" id="ficha-pages"></span>'
+        '<span class="pager-label" id="ficha-pager-label"></span>'
+        '<button type="button" class="ghost" id="ficha-next">Siguiente</button>'
+        "</nav>\n"
+        '<p class="edit-actions ficha-line-actions">'
+        '<button type="button" class="ghost" id="ficha-line-add">Añadir línea</button>'
+        "</p>\n"
+        '<div id="ficha-line-tools" hidden>'
+        '<label class="edit-check"><input id="ficha-ack" type="checkbox"> '
+        "Acepto los cambios de esta línea. Base, IVA y total pasan a ser la suma.</label>\n"
+        '<div class="edit-actions">'
+        '<button type="button" class="ghost" id="ficha-lines-cancel">Cancelar</button>'
+        '<button type="button" class="export-btn" id="ficha-lines-save" disabled>Guardar</button>'
+        "</div>\n"
+        "</div>\n"
+        f'<p class="edit-lines-note" id="ficha-lines-note"></p>\n'
+        "</div>\n"
+        '<dialog class="edit-dialog app-confirm" id="app-confirm" aria-labelledby="app-confirm-title">'
+        '<form method="dialog">'
+        '<h2 id="app-confirm-title">Confirmar</h2>'
+        '<p id="app-confirm-text"></p>'
+        '<div class="edit-actions">'
+        '<button type="submit" class="ghost" value="cancel">Cancelar</button>'
+        '<button type="submit" class="export-btn" id="app-confirm-ok" value="ok">Aceptar</button>'
+        "</div></form></dialog>\n"
+        f"{_ficha_lines_script()}\n"
+        f"{_ficha_filter_script()}\n"
+        '<dialog class="edit-dialog ficha-log-dialog" id="ficha-log-dialog" aria-labelledby="ficha-log-title">'
+        f'<h2 id="ficha-log-title">{_CLOCK_SVG} Historial de cambios</h2>'
+        f"{historial}"
+        '<div class="edit-actions"><button type="button" class="ghost" id="ficha-log-close">Cerrar</button></div>'
+        "</dialog>\n"
+        "<script>(() => {"
+        "const log = document.getElementById('ficha-log-dialog');"
+        "document.getElementById('ficha-log')?.addEventListener('click', () => log?.showModal());"
+        "document.getElementById('ficha-log-close')?.addEventListener('click', () => log?.close());"
+        "})();</script>\n"
+        "</main>\n"
+        f"{_site_footer()}\n"
+        "</body>\n</html>\n"
+    )
+
+
+def _ficha_kpi_script() -> str:
+    return r"""
+<script>
+(() => {
+  const root = document.getElementById("ficha-kpis");
+  const track = root?.querySelector(".ficha-grid");
+  const dots = root?.querySelector(".kpi-dots");
+  if (!track || !dots) return;
+  const metrics = () => {
+    const card = track.querySelector(":scope > div");
+    const gap = 10;
+    const stride = (card?.getBoundingClientRect().width || 160) + gap;
+    const fit = Math.max(1, Math.floor((track.clientWidth + gap) / stride));
+    const count = track.querySelectorAll(":scope > div").length;
+    return { stride, fit, pages: Math.max(1, Math.ceil(count / fit)) };
+  };
+  const paint = () => {
+    const { stride, fit, pages } = metrics();
+    const max = Math.max(0, track.scrollWidth - track.clientWidth);
+    const current = max <= 1 ? 0 : Math.min(pages - 1, Math.round((track.scrollLeft / max) * (pages - 1)));
+    dots.hidden = pages < 2;
+    dots.replaceChildren();
+    for (let index = 0; index < pages; index += 1) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "kpi-dot" + (index === current ? " is-on" : "");
+      button.setAttribute("aria-label", `Indicadores, página ${index + 1} de ${pages}`);
+      if (index === current) button.setAttribute("aria-current", "true");
+      button.addEventListener("click", () => {
+        const end = Math.max(0, track.scrollWidth - track.clientWidth);
+        const left = index === pages - 1 ? end : index * stride * fit;
+        track.scrollTo({ left, behavior: "smooth" });
+      });
+      dots.appendChild(button);
+    }
+  };
+  track.addEventListener("scroll", paint, { passive: true });
+  window.addEventListener("resize", paint);
+  let drag = null;
+  track.addEventListener("pointerdown", (event) => {
+    if (event.pointerType !== "mouse" || event.button !== 0) return;
+    drag = { x: event.clientX, left: track.scrollLeft, id: event.pointerId, moved: false };
+    track.setPointerCapture(event.pointerId);
+  });
+  track.addEventListener("pointermove", (event) => {
+    if (!drag || drag.id !== event.pointerId) return;
+    const dx = event.clientX - drag.x;
+    if (Math.abs(dx) > 3) drag.moved = true;
+    if (!drag.moved) return;
+    track.classList.add("is-dragging");
+    track.scrollLeft = drag.left - dx;
+  });
+  const endDrag = (event) => {
+    if (!drag || drag.id !== event.pointerId) return;
+    drag = null;
+    track.classList.remove("is-dragging");
+  };
+  track.addEventListener("pointerup", endDrag);
+  track.addEventListener("pointercancel", endDrag);
+  paint();
+})();
+</script>
+"""
+
+
+def _ficha_lines_script() -> str:
+    return r"""
+<script>
+(() => {
+  const body = document.getElementById("ficha-lines-body");
+  const tools = document.getElementById("ficha-line-tools");
+  const save = document.getElementById("ficha-lines-save");
+  const ack = document.getElementById("ficha-ack");
+  const note = document.getElementById("ficha-lines-note");
+  const asiento = document.body.dataset.asiento;
+  const leaveText = "Hay cambios sin guardar. No se guardan solos. ¿Salir de todas formas?";
+  const ask = (text, opts = {}) => new Promise((resolve) => {
+    const dialog = document.getElementById("app-confirm");
+    const msg = document.getElementById("app-confirm-text");
+    const title = document.getElementById("app-confirm-title");
+    const ok = document.getElementById("app-confirm-ok");
+    if (!dialog || typeof dialog.showModal !== "function") {
+      resolve(window.confirm(text));
+      return;
+    }
+    title.textContent = opts.title || "Confirmar";
+    msg.textContent = text;
+    ok.textContent = opts.ok || "Aceptar";
+    ok.classList.toggle("is-warn", Boolean(opts.warn));
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "ok"), { once: true });
+    if (!dialog.open) dialog.showModal();
+  });
+  document.getElementById("app-confirm")?.addEventListener("click", (event) => {
+    if (event.target?.id === "app-confirm") event.target.close("cancel");
+  });
+  let editing = null;
+  let removed = false;
+  let allowLeave = false;
+  const field = (name, label, money) => {
+    const kind = money ? ' type="number" min="0" step="0.01"' : "";
+    return `<input class="line-edit" disabled data-f="${name}" data-orig=""${kind} aria-label="${label}">`;
+  };
+  const disk = `<button type="button" class="row-edit line-save" title="Guardar línea" aria-label="Guardar línea">${""
+    }<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.4" d="M3 2.5h7.2L13 5.2V13.5H3z"/><path fill="none" stroke="currentColor" stroke-width="1.4" d="M5 2.8V6h5.2M5 13.2v-3.4h6V13"/></svg></button>`;
+  const trash = `<button type="button" class="row-edit line-del" title="Eliminar línea" aria-label="Eliminar línea">${""
+    }<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M3.5 4.5h9M6.2 4.5V3.2h3.6v1.3M5 4.5l.5 8h5l.5-8"/></svg></button>`;
+  const restore = `<button type="button" class="row-edit line-restore" title="Recuperar línea" aria-label="Recuperar línea">${""
+    }<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M3.2 8a4.8 4.8 0 1 0 1.2-3.2M3 3.2V6.2h3"/></svg></button>`;
+  const collect = () => [...body.querySelectorAll("tr[data-line]")].map((tr, idx) => ({
+    posicion: idx + 1,
+    codigo: tr.querySelector("[data-f=codigo]")?.value || "",
+    descripcion: tr.querySelector("[data-f=descripcion]")?.value || "",
+    cantidad: tr.querySelector("[data-f=cantidad]")?.value || "1",
+    base: tr.querySelector("[data-f=base]")?.value || "",
+    iva_tipo: tr.querySelector("[data-f=iva_tipo]")?.value || "",
+    iva_cuota: tr.querySelector("[data-f=iva_cuota]")?.value || "",
+    importe: tr.querySelector("[data-f=importe]")?.value || "",
+    eliminada: tr.dataset.deleted === "1",
+  })).filter((item) => item.descripcion || item.importe || item.codigo);
+  const euro = (value) => new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(value);
+  const round2 = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
+  const num = (tr, name) => {
+    const raw = (tr.querySelector(`[data-f="${name}"]`)?.value || "").trim().replace(",", ".");
+    if (!raw) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  };
+  const writeMoney = (tr, name, value) => {
+    const input = tr.querySelector(`[data-f="${name}"]`);
+    if (!input) return;
+    const text = value == null ? "" : round2(value).toFixed(2);
+    input.value = text;
+    const view = input.parentElement?.querySelector(".line-view");
+    if (view) view.textContent = text ? euro(round2(value)) : "—";
+    const key = { base: "lineBase", iva_cuota: "lineIva", importe: "lineTotal" }[name];
+    if (key) tr.dataset[key] = text;
+  };
+  const recalc = (tr, source) => {
+    const rate = num(tr, "iva_tipo");
+    if (rate == null) return;
+    let origin = source;
+    if (origin === "iva_tipo") origin = tr.dataset.driver || (num(tr, "importe") != null ? "importe" : "base");
+    if (origin === "base") {
+      const base = num(tr, "base");
+      if (base == null) return;
+      const iva = round2(base * rate / 100);
+      writeMoney(tr, "iva_cuota", iva);
+      writeMoney(tr, "importe", round2(base + iva));
+      tr.dataset.driver = "base";
+    } else if (origin === "importe") {
+      const total = num(tr, "importe");
+      if (total == null) return;
+      const base = round2(total / (1 + rate / 100));
+      writeMoney(tr, "base", base);
+      writeMoney(tr, "iva_cuota", round2(total - base));
+      tr.dataset.driver = "importe";
+    }
+  };
+  const refreshKpis = () => {
+    let base = 0;
+    let iva = 0;
+    let total = 0;
+    let nBase = 0;
+    let nIva = 0;
+    let nTotal = 0;
+    const rows = [...body.querySelectorAll("tr[data-line]")].filter((tr) => tr.dataset.deleted !== "1");
+    for (const tr of rows) {
+      const b = num(tr, "base");
+      const i = num(tr, "iva_cuota");
+      const t = num(tr, "importe");
+      if (b != null) { base += b; nBase += 1; }
+      if (i != null) { iva += i; nIva += 1; }
+      if (t != null) { total += t; nTotal += 1; }
+    }
+    const put = (id, amount, has) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = has ? euro(round2(amount)) : "—";
+    };
+    put("kpi-base", base, nBase);
+    put("kpi-iva", iva, nIva);
+    put("kpi-total", total, nTotal);
+    const headingCount = document.getElementById("ficha-count");
+    if (headingCount) {
+      headingCount.textContent = rows.length === 1 ? "1 elemento" : `${rows.length} elementos`;
+    }
+    const scoreText = document.getElementById("ficha-score-text");
+    if (scoreText) {
+      scoreText.textContent = nTotal
+        ? `Suma de ${nTotal} importes ${euro(round2(total))}.`
+        : "Ningún importe en las líneas que cuentan.";
+    }
+    const count = document.getElementById("kpi-elementos");
+    if (count) {
+      let unidades = 0;
+      for (const tr of rows) {
+        const desc = (tr.querySelector("[data-f=descripcion]")?.value || "").trim();
+        if (!desc) continue;
+        const qty = num(tr, "cantidad");
+        unidades += qty == null ? 1 : qty;
+      }
+      const whole = Math.abs(unidades - Math.round(unidades)) < 0.0005;
+      count.textContent = whole ? String(Math.round(unidades)) : String(Math.round(unidades * 1000) / 1000);
+    }
+  };
+  const pencil = (n) => `<button type="button" class="row-edit line-edit-btn" title="Editar línea" aria-label="Editar línea ${n}">`
+    + `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M11.7 1.6c.4-.4 1.1-.4 1.5 0l1.2 1.2c.4.4.4 1.1 0 1.5L6.2 12.5 2 14l1.5-4.2z"/></svg></button>`;
+  const rowHtml = (n) => `<td class="num col-sticky">${n}</td>`
+    + `<td class="mono cell-nowrap"><span class="line-view">—</span>${field("codigo", "Id", false)}</td>`
+    + `<td class="cell-clip"><span class="line-view cell-text">—</span>${field("descripcion", "Concepto", false)}</td>`
+    + `<td class="num cell-nowrap"><span class="line-view">1</span><input class="line-edit" data-f="cantidad" data-orig="1" type="number" min="0" step="0.001" value="1" aria-label="Unidades"></td>`
+    + `<td class="num cell-nowrap"><span class="line-view">—</span>${field("base", "Subtotal", true)}</td>`
+    + `<td class="num cell-nowrap"><span class="line-view">21 %</span><input class="line-edit" data-f="iva_tipo" data-orig="21" type="number" min="0" max="100" step="0.01" value="21" aria-label="IVA %"></td>`
+    + `<td class="num cell-nowrap"><span class="line-view">—</span><input class="line-edit line-calc" disabled data-f="iva_cuota" data-orig="" type="number" step="0.01" tabindex="-1" aria-label="IVA"></td>`
+    + `<td class="num cell-nowrap"><span class="line-view">—</span>${field("importe", "Total de línea", true)}</td>`
+    + `<td class="line-actions cell-estado"><div class="row-actions">${pencil(n)}${disk}${trash}${restore}</div></td>`;
+  const rowDirty = (tr) => {
+    if (!tr) return false;
+    if (tr.dataset.fresh === "1") return true;
+    return [...tr.querySelectorAll("input.line-edit")].some((input) => input.value !== (input.dataset.orig || ""));
+  };
+  const deletionDirty = () => [...body.querySelectorAll("tr[data-line]")]
+    .some((tr) => (tr.dataset.deleted || "0") !== (tr.dataset.wasDeleted || "0"));
+  const pending = () => deletionDirty() || rowDirty(editing);
+  const showTools = (on) => {
+    if (tools) tools.hidden = !on;
+    if (!on && ack) ack.checked = false;
+    if (save) save.disabled = true;
+  };
+  const closeRow = (tr, revert) => {
+    if (!tr) return;
+    if (revert) {
+      if (tr.dataset.fresh === "1") {
+        tr.remove();
+      } else {
+        tr.querySelectorAll("input.line-edit").forEach((input) => { input.value = input.dataset.orig || ""; });
+      }
+    }
+    tr.classList.remove("is-editing");
+    tr.querySelectorAll("input.line-edit").forEach((input) => { input.disabled = true; });
+    if (editing === tr) editing = null;
+    refreshKpis();
+  };
+  const openRow = async (tr) => {
+    if (editing && editing !== tr) {
+      if (rowDirty(editing) && !(await ask(leaveText, { title: "Cambios sin guardar", ok: "Salir" }))) return;
+      closeRow(editing, true);
+    }
+    editing = tr;
+    tr.classList.add("is-editing");
+    tr.querySelectorAll("input.line-edit").forEach((input) => {
+      input.disabled = input.classList.contains("line-calc");
+    });
+    showTools(true);
+    tr.querySelector("input.line-edit")?.focus();
+  };
+  const syncSave = () => {
+    if (save) save.disabled = !(ack?.checked && pending());
+  };
+  ack?.addEventListener("change", syncSave);
+  body?.addEventListener("input", (event) => {
+    const input = event.target.closest("input.line-edit");
+    const tr = input?.closest("tr");
+    if (input && tr && ["base", "importe", "iva_tipo"].includes(input.dataset.f)) recalc(tr, input.dataset.f);
+    refreshKpis();
+    syncSave();
+  });
+  document.getElementById("ficha-lines-cancel")?.addEventListener("click", async () => {
+    if (pending() && !(await ask(leaveText, { title: "Cambios sin guardar", ok: "Salir" }))) return;
+    allowLeave = true;
+    if (removed) {
+      window.location.reload();
+      return;
+    }
+    closeRow(editing, true);
+    showTools(false);
+  });
+  document.getElementById("ficha-line-add")?.addEventListener("click", async () => {
+    if (editing && rowDirty(editing) && !(await ask(leaveText, { title: "Cambios sin guardar", ok: "Salir" }))) return;
+    closeRow(editing, true);
+    body.querySelector("tr:not([data-line])")?.remove();
+    const tr = document.createElement("tr");
+    tr.dataset.line = "1";
+    tr.dataset.fresh = "1";
+    tr.dataset.lineRate = "21";
+    tr.dataset.driver = "importe";
+    const n = body.querySelectorAll("tr[data-line]").length + 1;
+    tr.innerHTML = rowHtml(n);
+    body.appendChild(tr);
+    openRow(tr);
+    refreshKpis();
+    body.dispatchEvent(new CustomEvent("ficha-repaginate", { detail: { last: true } }));
+  });
+  const eye = document.getElementById("ficha-lines-eye");
+  const editor = document.getElementById("ficha-lines-editor");
+  const updateEye = () => {
+    const n = body.querySelectorAll("tr.is-deleted").length;
+    if (!eye) return;
+    eye.hidden = n === 0;
+    eye.title = n ? `Ver ${n} línea${n === 1 ? "" : "s"} eliminada${n === 1 ? "" : "s"}` : "Ver líneas eliminadas";
+  };
+  const markDeleted = (tr, deleted) => {
+    tr.dataset.deleted = deleted ? "1" : "0";
+    tr.classList.toggle("is-deleted", deleted);
+    if (deleted && editing === tr) closeRow(tr, false);
+    updateEye();
+    refreshKpis();
+    syncSave();
+    body?.dispatchEvent(new CustomEvent("ficha-repaginate"));
+  };
+  const persist = async (opts = {}) => {
+    if (!pending()) return;
+    allowLeave = true;
+    try {
+      const res = await fetch(`/api/asientos/${asiento}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lineas: collect(),
+          recalcular_total: true,
+          confirmado: true,
+          ...(opts.mantenerEstado ? { mantener_estado: true } : {}),
+        }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      window.location.reload();
+    } catch {
+      allowLeave = false;
+      if (note) note.textContent = "No se pudo guardar. Abre el libro con el servidor local.";
+      if (save) save.disabled = false;
+    }
+  };
+  body?.addEventListener("click", async (event) => {
+    const edit = event.target.closest(".line-edit-btn");
+    if (edit) {
+      const tr = edit.closest("tr");
+      if (tr?.dataset.deleted === "1") return;
+      openRow(tr);
+      return;
+    }
+    const saveBtn = event.target.closest(".line-save");
+    if (saveBtn) {
+      if (!(await ask("Base, IVA y total de la factura pasan a ser la suma de las líneas visibles.", { title: "¿Guardar esta línea?", ok: "Guardar" }))) return;
+      persist();
+      return;
+    }
+    const del = event.target.closest(".line-del");
+    if (del) {
+      const tr = del.closest("tr");
+      if (!tr) return;
+      const nombre = (tr.querySelector("[data-f=descripcion]")?.value || "esta fila").trim();
+      if (!(await ask(`«${nombre}» no se borra del todo: podrás verla y recuperarla con el ojo.`, { title: "¿Eliminar esta línea?", ok: "Eliminar", warn: true }))) return;
+      markDeleted(tr, true);
+      persist({ mantenerEstado: true });
+      return;
+    }
+    const back = event.target.closest(".line-restore");
+    if (back) {
+      markDeleted(back.closest("tr"), false);
+      persist({ mantenerEstado: true });
+    }
+  });
+  eye?.addEventListener("click", () => {
+    const on = editor?.classList.toggle("show-deleted");
+    eye.setAttribute("aria-pressed", on ? "true" : "false");
+    eye.setAttribute("aria-label", on ? "Ocultar líneas eliminadas" : "Ver líneas eliminadas");
+    eye.title = on ? "Solo las líneas eliminadas" : "Ver líneas eliminadas";
+    eye.classList.toggle("is-on", Boolean(on));
+    body?.dispatchEvent(new CustomEvent("ficha-repaginate"));
+  });
+  updateEye();
+  window.addEventListener("beforeunload", (event) => {
+    if (allowLeave || !pending()) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+  document.addEventListener("click", async (event) => {
+    const link = event.target.closest("a[href]");
+    if (!link || link.target === "_blank" || allowLeave || !pending()) return;
+    event.preventDefault();
+    if (await ask(leaveText, { title: "Cambios sin guardar", ok: "Salir" })) {
+      allowLeave = true;
+      window.location.href = link.href;
+    }
+  });
+  save?.addEventListener("click", async () => {
+    if (!ack?.checked || !pending()) return;
+    save.disabled = true;
+    persist();
+  });
+})();
+</script>
+"""
+
+
+def _ficha_filter_script() -> str:
+    return r"""
+<script>
+(() => {
+  const table = document.querySelector(".ficha-ledger");
+  const body = document.getElementById("ficha-lines-body");
+  if (!table || !body) return;
+  const parseAmount = (raw) => {
+    const text = (raw || "").trim().replace(",", ".");
+    if (!text) return null;
+    const value = Number(text);
+    return Number.isFinite(value) ? value : null;
+  };
+  const boxesOf = (name) => [...table.querySelectorAll(`input[data-fg="${name}"]`)];
+  const selected = (name) => {
+    const boxes = boxesOf(name);
+    if (!boxes.length) return null;
+    const on = boxes.filter((box) => box.checked).map((box) => box.value);
+    if (!on.length) return new Set();
+    if (on.length === boxes.length) return null;
+    return new Set(on);
+  };
+  const allows = (name, value) => {
+    const picked = selected(name);
+    if (picked === null) return true;
+    return picked.has(value);
+  };
+  const inRange = (raw, minId, maxId) => {
+    if (!raw) return true;
+    const amount = Number(raw);
+    if (!Number.isFinite(amount)) return true;
+    const min = parseAmount(document.getElementById(minId)?.value);
+    const max = parseAmount(document.getElementById(maxId)?.value);
+    if (min !== null && amount < min) return false;
+    if (max !== null && amount > max) return false;
+    return true;
+  };
+  const syncFunnels = () => {
+    for (const th of table.querySelectorAll("th.th-filter")) {
+      const btn = th.querySelector(".funnel");
+      const pop = th.querySelector(".filter-pop");
+      if (!btn || !pop) continue;
+      const boxes = [...pop.querySelectorAll("input[data-fg]")];
+      const boxDirty = boxes.length > 0 && boxes.some((box) => !box.checked);
+      const rangeDirty = [...pop.querySelectorAll("input[type=number]")].some((el) => (el.value || "").trim());
+      btn.classList.toggle("on", boxDirty || rangeDirty);
+    }
+  };
+  const PAGE_SIZE = 15;
+  let page = 1;
+  const prev = document.getElementById("ficha-prev");
+  const next = document.getElementById("ficha-next");
+  const pagesBox = document.getElementById("ficha-pages");
+  const pagerLabel = document.getElementById("ficha-pager-label");
+  const eyeOn = () => document.getElementById("ficha-lines-editor")?.classList.contains("show-deleted");
+  const matchesLine = (tr) => allows("line-id", tr.dataset.lineId || "")
+    && allows("line-desc", tr.dataset.lineDesc || "")
+    && allows("line-rate", tr.dataset.lineRate || "")
+    && inRange(tr.dataset.lineBase, "f-line-base-min", "f-line-base-max")
+    && inRange(tr.dataset.lineIva, "f-line-iva-min", "f-line-iva-max")
+    && inRange(tr.dataset.lineTotal, "f-line-total-min", "f-line-total-max");
+  const paintPager = (pages, matched) => {
+    if (pagesBox) {
+      pagesBox.replaceChildren();
+      for (let i = 1; i <= pages; i += 1) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "pager-num" + (i === page ? " is-on" : "");
+        btn.textContent = String(i);
+        btn.setAttribute("aria-label", `Página ${i}`);
+        if (i === page) btn.setAttribute("aria-current", "page");
+        btn.addEventListener("click", () => {
+          page = i;
+          apply({ keepPage: true });
+        });
+        pagesBox.appendChild(btn);
+      }
+    }
+    if (pagerLabel) {
+      if (!matched) pagerLabel.textContent = "0 de 0";
+      else {
+        const start = (page - 1) * PAGE_SIZE;
+        const end = Math.min(start + PAGE_SIZE, matched);
+        pagerLabel.textContent = `${start + 1}–${end} de ${matched}`;
+      }
+    }
+    if (prev) prev.disabled = page <= 1;
+    if (next) next.disabled = page >= pages || matched === 0;
+  };
+  let apply = (opts = {}) => {
+    const rows = [...body.querySelectorAll("tr[data-line]")];
+    const showingDeleted = eyeOn();
+    const matched = [];
+    for (const tr of rows) {
+      const deleted = tr.dataset.deleted === "1";
+      if (showingDeleted) {
+        if (!deleted) {
+          tr.hidden = true;
+          continue;
+        }
+      } else if (deleted) {
+        tr.hidden = false;
+        continue;
+      }
+      if (!matchesLine(tr)) {
+        tr.hidden = true;
+        continue;
+      }
+      matched.push(tr);
+    }
+    const pages = Math.max(1, Math.ceil(matched.length / PAGE_SIZE) || 1);
+    if (opts.last) page = pages;
+    else if (!opts.keepPage) page = 1;
+    page = Math.min(Math.max(1, page), pages);
+    const start = (page - 1) * PAGE_SIZE;
+    matched.forEach((tr, index) => {
+      tr.hidden = index < start || index >= start + PAGE_SIZE;
+    });
+    paintPager(pages, matched.length);
+    syncFunnels();
+  };
+  const placePop = (chip, pop) => {
+    const width = Math.min(300, window.innerWidth - 24);
+    pop.style.inset = "auto";
+    pop.style.margin = "0";
+    pop.style.width = `${width}px`;
+    const box = chip.getBoundingClientRect();
+    pop.style.left = `${Math.min(Math.max(12, box.left), window.innerWidth - width - 12)}px`;
+    pop.style.top = `${box.bottom + 8}px`;
+  };
+  body.addEventListener("input", (event) => {
+    const input = event.target.closest("input.line-edit");
+    const tr = input?.closest("tr");
+    if (!input || !tr) return;
+    const key = { codigo: "lineId", descripcion: "lineDesc", base: "lineBase", iva_tipo: "lineRate", iva_cuota: "lineIva", importe: "lineTotal" }[input.dataset.f];
+    if (key) tr.dataset[key] = input.value;
+    apply({ keepPage: true });
+  });
+  table.addEventListener("change", (event) => {
+    if (event.target.matches("input[data-fg], input[type=number]")) apply();
+  });
+  table.addEventListener("input", (event) => {
+    const search = event.target.closest("[data-filter-search]");
+    if (search) {
+      const q = search.value.trim().toLowerCase();
+      const pop = search.closest(".filter-pop");
+      for (const opt of pop?.querySelectorAll(".filter-opt") || []) {
+        opt.hidden = Boolean(q) && !opt.textContent.toLowerCase().includes(q);
+      }
+      return;
+    }
+    if (event.target.matches("input[type=number]")) apply();
+  });
+  table.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-filter-all]");
+    if (!button) return;
+    const pop = button.closest(".filter-pop");
+    const boxes = [...(pop?.querySelectorAll(".filter-opt:not([hidden]) input[data-fg]") || [])];
+    const allOn = boxes.length > 0 && boxes.every((box) => box.checked);
+    for (const box of boxes) box.checked = !allOn;
+    apply();
+  });
+  for (const chip of table.querySelectorAll(".funnel[popovertarget]")) {
+    const pop = document.getElementById(chip.getAttribute("popovertarget"));
+    if (!pop) continue;
+    pop.addEventListener("toggle", (event) => {
+      const open = event.newState === "open";
+      chip.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) placePop(chip, pop);
+    });
+  }
+  prev?.addEventListener("click", () => {
+    page -= 1;
+    apply({ keepPage: true });
+  });
+  next?.addEventListener("click", () => {
+    page += 1;
+    apply({ keepPage: true });
+  });
+  body.addEventListener("ficha-repaginate", (event) => {
+    apply({ keepPage: !event.detail?.last, last: Boolean(event.detail?.last) });
+  });
+  let sortKey = "id";
+  let sortDir = 1;
+  const lineValue = (tr, key) => {
+    if (key === "n") return Number(tr.querySelector("td")?.textContent || 0);
+    if (key === "id") return tr.dataset.lineId || "";
+    if (key === "desc") return tr.dataset.lineDesc || "";
+    if (key === "uds") return Number(tr.querySelector("[data-f=cantidad]")?.value || 0);
+    if (key === "base") return Number(tr.dataset.lineBase || 0);
+    if (key === "rate") return Number(tr.dataset.lineRate || 0);
+    if (key === "iva") return Number(tr.dataset.lineIva || 0);
+    if (key === "total") return Number(tr.dataset.lineTotal || 0);
+    return "";
+  };
+  const compareSort = (a, b) => {
+    if (typeof a === "number" && typeof b === "number") return a - b;
+    return String(a).localeCompare(String(b), "es", { numeric: true, sensitivity: "base" });
+  };
+  const sortLines = () => {
+    const list = [...body.querySelectorAll("tr[data-line]")];
+    list.sort((a, b) => sortDir * compareSort(lineValue(a, sortKey), lineValue(b, sortKey)));
+    for (const tr of list) body.appendChild(tr);
+    table.querySelectorAll("thead th[data-sort]").forEach((th) => {
+      const on = th.dataset.sort === sortKey;
+      th.classList.toggle("is-sorted", on);
+      th.classList.toggle("is-desc", on && sortDir < 0);
+    });
+  };
+  const applySorted = apply;
+  apply = (opts = {}) => {
+    sortLines();
+    applySorted(opts);
+  };
+  table.querySelectorAll("thead th[data-sort]").forEach((th) => {
+    th.addEventListener("click", (event) => {
+      if (event.target.closest(".funnel, .filter-pop")) return;
+      const key = th.dataset.sort;
+      if (!key) return;
+      if (sortKey === key) sortDir *= -1;
+      else { sortKey = key; sortDir = 1; }
+      apply();
+    });
+  });
+  apply();
+})();
+</script>
+"""
 
 
 def _docs_chip(item: dict) -> str:
@@ -224,6 +1055,7 @@ def _asiento_view(
         "estado_label": ESTADO_LABEL.get(asiento.estado, asiento.estado),
         "inmueble": inmuebles.get(asiento.inmueble_id or 0, ""),
         "doc_uri": doc_path,
+        "has_doc": bool(doc_path),
         "doc_name": doc_name,
         "casilla": casilla,
         "casilla_etiqueta": casilla_etiqueta,
@@ -240,13 +1072,268 @@ def _asiento_view(
         "cmd_validar": f"aeat-hub validar {asiento.id}",
         "n_docs": n_docs,
         "er_estado": er_estado,
+        "n_articulos": _n_articulos(asiento),
     }
+
+
+def _n_articulos(asiento: Asiento) -> str:
+    """Suma de unidades de las líneas con nombre. Sin cantidad guardada, cada línea vale 1."""
+    return articulos_label(lineas_de_asiento(asiento))
 
 
 def _conf_pct(value: Decimal | None) -> int | None:
     if value is None:
         return None
     return int(round(float(value) * 100))
+
+
+def _iva_col_label(lineas: list[dict]) -> str:
+    tipos = {item.get("iva_tipo") for item in lineas if item.get("iva_tipo")}
+    if len(tipos) != 1:
+        return "IVA"
+    tipo = q2(next(iter(tipos)))
+    if tipo is None:
+        return "IVA"
+    label = str(int(tipo)) if tipo == tipo.to_integral_value() else format(tipo, "f").rstrip("0").rstrip(".")
+    return f"IVA ({label} %)"
+
+
+def _sum_lineas(lineas: list[dict], key: str) -> Decimal | None:
+    acc = Decimal("0.00")
+    n = 0
+    for item in lineas:
+        parsed = parse_money_field(item.get(key))
+        if parsed is not None:
+            acc += parsed
+            n += 1
+    return q2(acc) if n else None
+
+
+def _suma_importes(lineas: list[dict]) -> Decimal | None:
+    return _sum_lineas(lineas, "importe")
+
+
+def _cuadra_con_total(suma: Decimal | None, total: Decimal | None) -> bool:
+    if suma is None or total is None:
+        return False
+    return abs(q2(suma) - q2(total)) <= Decimal("0.02")
+
+
+def _elementos_label(n: int) -> str:
+    return "1 elemento" if n == 1 else f"{n} elementos"
+
+
+def _desglose_calidad(suma, total, n_lineas: int, n_con_importe: int | None = None) -> dict:
+    if n_lineas == 0:
+        return {
+            "tone": "muted",
+            "label": "Sin desglose",
+            "score": None,
+            "text": "No hay líneas extraídas para contrastar con el total del libro.",
+        }
+    if suma is None or total is None:
+        return {
+            "tone": "muted",
+            "label": "Sin desglose",
+            "score": None,
+            "text": "El OCR vio conceptos, pero no el importe de cada uno. Contrasta el total a mano.",
+        }
+    suma_q = q2(suma)
+    total_q = q2(total)
+    if _cuadra_con_total(suma_q, total_q):
+        extra = ""
+        if n_con_importe is not None and n_lineas > n_con_importe:
+            extra = (
+                f" {n_lineas - n_con_importe} conceptos siguen sin precio propio; "
+                "la suma usa los importes de línea recuperados."
+            )
+        return {
+            "tone": "ok",
+            "label": "Cuadra",
+            "score": 100,
+            "text": (
+                f"Suma de {n_con_importe or n_lineas} importes {format_euro(suma_q)} "
+                f"= total del libro {format_euro(total_q)}.{extra}"
+            ),
+        }
+    delta = abs(suma_q - total_q)
+    denom = abs(float(total_q))
+    score = 0 if not denom else max(0, int(round(100 * (1 - float(delta) / denom))))
+    tone = "warn" if score >= 80 else "bad"
+    return {
+        "tone": tone,
+        "label": "No cuadra",
+        "score": score,
+        "text": (
+            f"Suma de {_elementos_label(n_lineas)} {format_euro(suma_q)} ≠ "
+            f"total del libro {format_euro(total_q)} (diferencia {format_euro(delta)})."
+        ),
+    }
+
+
+def _desglose_score_html(desglose: dict) -> str:
+    score = ""
+    if desglose["score"] is not None:
+        score = f'<span class="q-score">{desglose["score"]} %</span>'
+    return (
+        f'<div class="ficha-score">'
+        f'<span class="q-chip q-{escape(desglose["tone"])}">'
+        f'<i class="q-dot" aria-hidden="true"></i>'
+        f'<span>{escape(desglose["label"])}</span>{score}</span>'
+        f'<p id="ficha-score-text">{escape(desglose["text"])}</p></div>'
+    )
+
+
+def _filter_amount(min_id: str, max_id: str) -> str:
+    return (
+        f'<label class="filter-field">Mínimo'
+        f'<input id="{min_id}" type="number" min="0" step="0.01" placeholder="0"></label>'
+        f'<label class="filter-field">Máximo'
+        f'<input id="{max_id}" type="number" min="0" step="0.01" placeholder="Sin tope"></label>'
+    )
+
+
+def _unique_labels(values: list[str]) -> list[tuple[str, str]]:
+    seen: list[str] = []
+    for value in values:
+        text = value.strip()
+        if text and text not in seen:
+            seen.append(text)
+    return [(item, item) for item in seen]
+
+
+def _tipo_visible(value: object) -> str:
+    if value in (None, ""):
+        return ""
+    numero = Decimal(str(value).replace(",", "."))
+    if numero == numero.to_integral_value():
+        return str(int(numero))
+    return format(numero, "f").rstrip("0").rstrip(".")
+
+
+def _tipo_linea(item: dict) -> str:
+    raw = item.get("iva_tipo")
+    if raw not in (None, ""):
+        return _tipo_visible(raw)
+    base = parse_money_field(item.get("base"))
+    cuota = parse_money_field(item.get("iva_cuota"))
+    if base and cuota is not None and base != 0:
+        implied = (cuota / base) * Decimal("100")
+        for rate in (Decimal("21"), Decimal("10"), Decimal("4"), Decimal("0")):
+            if abs(implied - rate) < Decimal("0.8"):
+                return str(int(rate))
+        return _tipo_visible(q2(implied))
+    return "21"
+
+
+def _lineas_thead(lineas: list[dict]) -> str:
+    ids = _unique_labels([str(item.get("codigo") or "") for item in lineas])
+    names = _unique_labels([str(item.get("descripcion") or "") for item in lineas])
+    return (
+        "<thead><tr>"
+        '<th class="col-sticky" data-sort="n" data-sort-type="num"><span class="th-label">#</span></th>'
+        + _filter_th("Id", "pop-line-id", _filter_checks("line-id", ids), sort="id")
+        + _filter_th("Concepto", "pop-line-desc", _filter_checks("line-desc", names), sort="desc")
+        + '<th class="num" data-sort="uds" data-sort-type="num"><span class="th-label">Uds.</span></th>'
+        + _filter_th("Subtotal", "pop-line-base", _filter_amount("f-line-base-min", "f-line-base-max"), "num", sort="base", sort_type="num")
+        + _filter_th("IVA %", "pop-line-rate", _filter_checks("line-rate", _unique_labels([_tipo_linea(item) for item in lineas])), sort="rate", sort_type="num")
+        + _filter_th("IVA", "pop-line-iva", _filter_amount("f-line-iva-min", "f-line-iva-max"), "num", sort="iva", sort_type="num")
+        + _filter_th("Total", "pop-line-total", _filter_amount("f-line-total-min", "f-line-total-max"), "num", sort="total", sort_type="num")
+        + '<th class="line-actions col-estado"><span class="th-label">Acciones</span></th>'
+        + "</tr></thead>"
+    )
+
+
+def _line_field(
+    field: str,
+    value: object,
+    label: str,
+    *,
+    money: bool,
+    clip: bool = False,
+    rate: bool = False,
+    calc: bool = False,
+    qty: bool = False,
+) -> str:
+    if rate:
+        raw = _tipo_visible(value) if value not in (None, "") else ""
+        shown = f"{raw} %" if raw else "—"
+        kind = ' type="number" min="0" max="100" step="0.01"'
+    elif qty:
+        raw = "1" if value in (None, "") else str(value)
+        if "." in raw:
+            raw = raw.rstrip("0").rstrip(".")
+        shown = raw or "1"
+        kind = ' type="number" min="0" step="0.001"'
+    else:
+        raw = "" if value is None or value == "" else str(value)
+        shown = format_euro(value) if money or calc else (raw or "—")
+        kind = ' type="number" min="0" step="0.01"' if money or calc else ""
+    classes = ["num", "cell-nowrap"] if money or calc or rate or qty else (["cell-clip"] if clip else ["cell-nowrap"])
+    if field == "codigo":
+        classes = ["mono", "cell-nowrap"]
+    view_class = "line-view cell-text" if clip else "line-view"
+    title = f' title="{escape(shown)}"' if clip and shown != "—" else ""
+    input_class = "line-edit line-calc" if calc else "line-edit"
+    klass = f' class="{" ".join(classes)}"'
+    return (
+        f"<td{klass}>"
+        f'<span class="{view_class}"{title}>{escape(shown)}</span>'
+        f'<input class="{input_class}" disabled data-f="{field}" data-orig="{escape(raw)}"{kind} '
+        f'value="{escape(raw)}" aria-label="{label}">'
+        "</td>"
+    )
+
+
+def _lineas_rows_html(lineas: list[dict]) -> str:
+    rows = []
+    for idx, item in enumerate(lineas, start=1):
+        borrada = bool(item.get("eliminada"))
+        rows.append(
+            f'<tr data-line="1" data-deleted="{"1" if borrada else "0"}" '
+            f'data-was-deleted="{"1" if borrada else "0"}" class="{"is-deleted" if borrada else ""}" '
+            f'data-line-id="{escape(str(item.get("codigo") or ""))}" '
+            f'data-line-desc="{escape(str(item.get("descripcion") or ""))}" '
+            f'data-line-base="{escape("" if item.get("base") in (None, "") else str(item.get("base")))}" '
+            f'data-line-rate="{escape(_tipo_linea(item))}" '
+            f'data-line-iva="{escape("" if item.get("iva_cuota") in (None, "") else str(item.get("iva_cuota")))}" '
+            f'data-line-total="{escape("" if item.get("importe") in (None, "") else str(item.get("importe")))}">'
+            f'<td class="num col-sticky">{idx}</td>'
+            + _line_field("codigo", item.get("codigo"), "Id", money=False)
+            + _line_field("descripcion", item.get("descripcion"), "Concepto", money=False, clip=True)
+            + _line_field("cantidad", item.get("cantidad") or "1", "Unidades", money=False, qty=True)
+            + _line_field("base", item.get("base"), "Subtotal", money=True)
+            + _line_field("iva_tipo", _tipo_linea(item), "IVA %", money=False, rate=True)
+            + _line_field("iva_cuota", item.get("iva_cuota"), "IVA", money=False, calc=True)
+            + _line_field("importe", item.get("importe"), "Total de línea", money=True)
+            + '<td class="line-actions cell-estado"><div class="row-actions">'
+            + f'<button type="button" class="row-edit line-edit-btn" title="Editar línea" '
+            + f'aria-label="Editar línea {idx}">{_PENCIL_SVG}</button>'
+            + f'<button type="button" class="row-edit line-save" title="Guardar línea" '
+            + f'aria-label="Guardar línea {idx}">{_DISK_SVG}</button>'
+            + f'<button type="button" class="row-edit line-del" title="Eliminar línea" '
+            + f'aria-label="Eliminar línea {idx}">{_TRASH_SVG}</button>'
+            + f'<button type="button" class="row-edit line-restore" title="Recuperar línea" '
+            + f'aria-label="Recuperar línea {idx}">{_RESTORE_SVG}</button>'
+            + "</div></td></tr>"
+        )
+    return "".join(rows)
+
+
+def _lineas_tfoot_html(lineas: list[dict]) -> str:
+    if not any(item.get("importe") or item.get("base") for item in lineas):
+        return ""
+    celdas = (
+        ("Subtotal", _sum_lineas(lineas, "base"), ""),
+        ("IVA", _sum_lineas(lineas, "iva_cuota"), ""),
+        ("Total", _sum_lineas(lineas, "importe"), " is-total"),
+    )
+    bits = "".join(
+        f'<div class="line-total{extra}"><span>{label}</span>'
+        f"<strong>{escape(format_euro(valor))}</strong></div>"
+        for label, valor, extra in celdas
+    )
+    return f'<aside class="line-totals" aria-label="Totales de las líneas">{bits}</aside>'
 
 
 def _cola_revision(asientos: list[dict]) -> list[dict]:
@@ -324,6 +1411,7 @@ def _insights(
                 "kind": "alerta",
                 "titulo": "Sin rentas en el ejercicio",
                 "detalle": f"Suelta el recibo en inbox y: aeat-hub ingest --actividad {codigo}",
+                "filter": "ingreso",
             }
         )
     if mejoras > ZERO:
@@ -343,6 +1431,7 @@ def _insights(
                 "kind": "alerta",
                 "titulo": f"{dupes} duplicado(s)",
                 "detalle": "No entran en los totales. Revisa antes de declarar.",
+                "filter": "duplicado",
             }
         )
     baja = sum(1 for item in asientos if item.get("baja"))
@@ -352,6 +1441,7 @@ def _insights(
                 "kind": "alerta",
                 "titulo": f"{baja} asiento(s) con baja confianza",
                 "detalle": "El modelo no está seguro. Ábrelos, corrige si hace falta y valida para no reprocesarlos.",
+                "filter": "baja",
             }
         )
     validados = sum(1 for item in asientos if item.get("validado"))
@@ -425,37 +1515,44 @@ def _nature_label(
 
 
 def _masthead(data: dict) -> str:
-    inmueble = f" · {escape(data['inmueble'])}" if data["inmueble"] else ""
+    inmueble = data.get("inmueble") or ""
+    inmueble_wrap = (
+        f'<span id="mast-inmueble-wrap"> · <span id="mast-inmueble">{escape(inmueble)}</span></span>'
+        if inmueble
+        else '<span id="mast-inmueble-wrap" hidden> · <span id="mast-inmueble"></span></span>'
+    )
     badge = ""
     if data["cola_revision"]:
         badge = f'<span class="tab-badge">{len(data["cola_revision"])}</span>'
+    show_inmueble = "1" if (inmueble or data["regimen"] == REGIMEN_CI) else "0"
     return f"""
 <header class="mast">
   <div class="wrap mast-grid">
     <div>
       <p class="eyebrow">AEAT Hub · libro auxiliar</p>
-      <h1>{escape(data["nombre"])} <span>{escape(data["codigo"])} · {data["year"]}</span></h1>
-      <p class="meta">{escape(data["titular"])} · {escape(data["regimen_label"])}{inmueble}</p>
+      <h1 class="mast-h1">
+        <span id="mast-nombre">{escape(data["nombre"])}</span>
+        <span id="mast-kicker">{escape(data["codigo"])} · {data["year"]}</span>
+        <button type="button" class="row-edit mast-edit" id="mast-edit"
+          data-has-inmueble="{show_inmueble}"
+          title="Personalizar títulos" aria-label="Personalizar títulos del libro">{_PENCIL_SVG}</button>
+      </h1>
+      <p class="meta">
+        <span id="mast-titular">{escape(data["titular"])}</span>
+        · <span id="mast-regimen">{escape(data["regimen_label"])}</span>{inmueble_wrap}
+      </p>
       <p class="mast-strip">
         {data["n_pendientes"]} por revisar · {data["n_sin_validar"]} sin validar ·
         neto {escape(format_euro(data["resultado"]))}
       </p>
     </div>
-    <aside class="stamp">
-      <strong>No es software oficial de la AEAT</strong>
-      <span>Generado {escape(data["generated"])} desde SQLite. Revisa antes de declarar.</span>
-    </aside>
   </div>
   <nav class="tabs" role="tablist" aria-label="Secciones del libro">
     <div class="wrap tabs-row">
-      <button type="button" class="tab" role="tab" id="tab-revisar" data-panel="revisar"
-        aria-controls="panel-revisar" aria-selected="false" tabindex="-1">
-        Revisar calidad {badge}
-      </button>
       <button type="button" class="tab" role="tab" id="tab-libro" data-panel="libro"
-        aria-controls="panel-libro" aria-selected="false" tabindex="-1">Libro</button>
-      <button type="button" class="tab" role="tab" id="tab-resumen" data-panel="resumen"
-        aria-controls="panel-resumen" aria-selected="false" tabindex="-1">Resumen</button>
+        aria-controls="panel-libro" aria-selected="false" tabindex="-1">Libro {badge}</button>
+      <button type="button" class="tab" role="tab" id="tab-insights" data-panel="insights"
+        aria-controls="panel-insights" aria-selected="false" tabindex="-1">Insights</button>
     </div>
   </nav>
 </header>
@@ -502,42 +1599,6 @@ def _kpi_btn_count(label: str, pendientes: int, total: int, filter_key: str) -> 
     )
 
 
-def _panel_revisar(data: dict) -> str:
-    cola = data["cola_revision"]
-    if not cola:
-        return """
-<section class="panel" role="tabpanel" id="panel-revisar" data-panel="revisar"
-  aria-labelledby="tab-revisar">
-  <p class="panel-lead">Todos los asientos están validados o son duplicados. El modelo no los volverá a pisar.</p>
-  <p class="empty ok">Nada pendiente de revisión humana.</p>
-</section>
-"""
-    rows = "\n".join(_review_row(item) for item in cola)
-    return f"""
-<section class="panel" role="tabpanel" id="panel-revisar" data-panel="revisar"
-  aria-labelledby="tab-revisar">
-  <p class="panel-lead">{len(cola)} asiento(s) sin validar, ordenados por peor confianza primero.
-     Abre el PDF, comprueba emisor/importe/rubro y copia el comando en la terminal.</p>
-  <div class="review-table-wrap">
-    <table class="review-table">
-      <thead>
-        <tr>
-          <th>Factura</th>
-          <th>Rubro propuesto</th>
-          <th>Confianza</th>
-          <th>Doc</th>
-          <th>Acción</th>
-        </tr>
-      </thead>
-      <tbody>{rows}</tbody>
-    </table>
-  </div>
-  <p class="hint">Tras validar o reclasificar:
-    <code>aeat-hub dashboard --actividad {escape(data["codigo"])} --year {data["year"]}</code></p>
-</section>
-"""
-
-
 def _quality_pct_label(pct: int | None) -> str:
     return "—" if pct is None else f"{pct} %"
 
@@ -550,7 +1611,10 @@ def _quality_cell(item: dict, *, prefix: str) -> str:
     elif item["baja"]:
         tone = "warn"
         label = "Revisar"
-        hint = "El modelo no está seguro. Abre el PDF, corrige si hace falta y valida."
+        hint = (
+            "El modelo no está seguro. Abre el documento, corrige NIF o importes "
+            "si hace falta y pulsa Por validar."
+        )
     else:
         tone = "ok"
         label = "Aceptable"
@@ -579,42 +1643,9 @@ def _quality_cell(item: dict, *, prefix: str) -> str:
     )
 
 
-def _review_actions(item: dict) -> str:
-    cmds = [
-        f'<button type="button" class="cmd-btn cmd-btn-ok" data-copy="{escape(item["cmd_validar"])}" '
-        'title="Rubro correcto; bloquea reparse">Validar</button>'
-    ]
-    for nombre, label, title in RUBRO_CHIPS:
-        if nombre == item["cuenta_nombre"]:
-            continue
-        cmd = f'aeat-hub reclasificar {item["id"]} "{nombre}"'
-        cmds.append(
-            f'<button type="button" class="cmd-btn" data-copy="{escape(cmd)}" '
-            f'title="{escape(title)}">{escape(label)}</button>'
-        )
-    return f'<div class="cmds">{"".join(cmds)}</div>'
-
-
-def _review_row(item: dict) -> str:
-    doc_cell = "—"
-    if item["doc_uri"]:
-        title = escape(item["doc_name"] or "Factura")
-        doc_cell = f'<a class="doc-link" href="{escape(item["doc_uri"])}" title="{title}">PDF</a>'
-    rubro = escape(item["cuenta_nombre"])
-    row_class = "review-row review-baja" if item["baja"] else "review-row"
-    return (
-        f'<tr class="{row_class}" id="review-asiento-{item["id"]}">'
-        f"<td>"
-        f"<strong>{escape(item['emisor'])}</strong>"
-        f'<span class="sub">{escape(item["fecha_label"])} · '
-        f"{escape(format_euro(item['total']))} · {escape(item['numero'])}"
-        f"{_docs_chip(item)}</span></td>"
-        f"<td>{rubro}</td>"
-        f"<td>{_quality_cell(item, prefix='review')}</td>"
-        f'<td class="cell-doc">{doc_cell}</td>'
-        f"<td>{_review_actions(item)}</td>"
-        "</tr>"
-    )
+def _amount_attr(value: Decimal | None) -> str:
+    quantized = q2(value)
+    return "" if quantized is None else f"{quantized:.2f}"
 
 
 def _panel_libro(data: dict) -> str:
@@ -625,7 +1656,7 @@ def _panel_libro(data: dict) -> str:
     )
 
 
-def _panel_resumen(data: dict) -> str:
+def _panel_insights(data: dict) -> str:
     mejora_note = ""
     if data["regimen"] == REGIMEN_CI:
         mejora_note = (
@@ -633,9 +1664,10 @@ def _panel_resumen(data: dict) -> str:
             "del rendimiento del año: se capitalizan y se amortizan.</p>"
         )
     return f"""
-<section class="panel" role="tabpanel" id="panel-resumen" data-panel="resumen"
-  aria-labelledby="tab-resumen">
-  <div class="kpi-grid resumen-kpis">
+<section class="panel" role="tabpanel" id="panel-insights" data-panel="insights"
+  aria-labelledby="tab-insights">
+  <p class="panel-lead">Arriba, cómo va el ejercicio. Abajo, el borrador de la Renta.</p>
+  <div class="kpi-grid">
     {_kpi_btn("Gastos", data["gastos"], "gasto", "gasto")}
     {_kpi_btn("Ingresos", data["ingresos"], "ingreso", "ingreso")}
     {_kpi_btn("Mejoras", data["mejoras"], "mejora", "mejora")}
@@ -652,75 +1684,35 @@ def _panel_resumen(data: dict) -> str:
 def _insights_html(data: dict) -> str:
     kpis = [item for item in data["insights"] if item["kind"] == "kpi"]
     alerts = [item for item in data["insights"] if item["kind"] == "alerta"]
-    last = data["por_mes_acc"][-1] if data["por_mes_acc"] else {
-        "neto": ZERO,
-        "ingresos": ZERO,
-        "gastos": ZERO,
-    }
     sats = "".join(_evo_kpi(item) for item in kpis)
-    board_class = "evo-board" if sats else "evo-board evo-board-solo"
-    alert_bits = [
-        f'<aside class="evo-alert">'
-        f"<strong>{escape(item['titulo'])}</strong>"
-        f"<p>{escape(item['detalle'])}</p></aside>"
-        for item in alerts
-    ]
-    alerts_html = f'<div class="evo-alerts">{"".join(alert_bits)}</div>' if alert_bits else ""
-    sats_wrap = f'<div class="evo-sats">{sats}</div>' if sats else ""
+    alert_bits = []
+    for item in alerts:
+        filt = escape(item.get("filter") or "")
+        alert_bits.append(
+            f'<button type="button" class="evo-alert" data-filter="{filt}" data-scroll="#ledger">'
+            f"<strong>{escape(item['titulo'])}</strong>"
+            f"<p>{escape(item['detalle'])}</p></button>"
+        )
+    alerts_html = ""
+    if alert_bits:
+        alerts_html = (
+            '<h3 class="insight-sub">Atención</h3>'
+            f'<div class="evo-alerts">{"".join(alert_bits)}</div>'
+        )
+    sats_wrap = ""
+    if sats:
+        sats_wrap = f'<h3 class="insight-sub">Destacados</h3><div class="evo-sats">{sats}</div>'
     return f"""
-<section class="insights" id="insights" aria-label="Evolución e insights">
+<section class="insights insight-block" id="insights" aria-labelledby="insight-operativo">
   <div class="review-head">
-    <h2>Evolución</h2>
-    <p>El neto del año está en la tarjeta. Aquí, el mes y el rubro.</p>
+    <h2 id="insight-operativo">Operativo</h2>
+    <p>Evolución del ejercicio. Las alertas abren el libro ya filtrado.</p>
   </div>
-  <div class="{board_class}">
-    {_evo_hero(last, data["por_mes_acc"])}
-    {sats_wrap}
-  </div>
-  {alerts_html}
+  <h3 class="insight-sub">Evolución</h3>
   {_charts(data)}
+  {sats_wrap}
+  {alerts_html}
 </section>
-"""
-
-
-def _evo_hero(last: dict, series: list[dict]) -> str:
-    ingresos = last["ingresos"]
-    gastos = last["gastos"]
-    neto = last["neto"]
-    total = ingresos + gastos
-    w_i = float(ingresos / total * 100) if total > 0 else 0.0
-    w_g = float(gastos / total * 100) if total > 0 else 0.0
-    ratio = ""
-    if ingresos > ZERO:
-        pct = int(round(float(gastos / ingresos * 100)))
-        ratio = f"<em>Los gastos son el {pct} % de las rentas.</em>"
-    elif gastos > ZERO:
-        ratio = "<em>Hay gastos y aún no hay rentas en el ejercicio.</em>"
-    return f"""
-<article class="evo-hero">
-  <div class="evo-hero-top">
-    <span class="evo-label">Acumulado del año</span>
-    <strong>{escape(format_euro(neto))}</strong>
-    <span class="evo-sub">Rendimiento neto · ingresos − gastos</span>
-  </div>
-  {_spark_neto(series)}
-  <div class="evo-track evo-track-split" role="img"
-       aria-label="Ingresos {format_euro(ingresos)}, gastos {format_euro(gastos)}">
-    <i class="ing" style="width:{w_i:.2f}%"></i>
-    <i class="gas" style="width:{w_g:.2f}%"></i>
-  </div>
-  <dl class="evo-hero-stats">
-    <div>
-      <dt>Ingresos</dt>
-      <dd class="ing">{escape(format_euro(ingresos))}</dd>
-    </div>
-    <div>
-      <dt>Gastos</dt>
-      <dd class="gas">{escape(format_euro(gastos))}</dd>
-    </div>
-  </dl>
-  {ratio}
-</article>
 """
 
 
@@ -742,29 +1734,6 @@ def _evo_kpi(item: dict) -> str:
     )
 
 
-def _spark_neto(series: list[dict]) -> str:
-    if len(series) < 2:
-        return ""
-    width, height, pad = 280, 48, 3
-    values = [float(item["neto"]) for item in series]
-    hi = max(values + [0.0])
-    lo = min(values + [0.0])
-    span = hi - lo or 1.0
-    inner_w = width - pad * 2
-    inner_h = height - pad * 2
-    pts = []
-    for idx, value in enumerate(values):
-        x = pad + inner_w * idx / (len(values) - 1)
-        y = pad + inner_h * (hi - value) / span
-        pts.append(f"{x:.1f},{y:.1f}")
-    zero_y = pad + inner_h * (hi - 0.0) / span
-    return (
-        f'<svg class="spark" viewBox="0 0 {width} {height}" aria-hidden="true">'
-        f'<line class="spark-zero" x1="0" y1="{zero_y:.1f}" x2="{width}" y2="{zero_y:.1f}"/>'
-        f'<polyline class="spark-line" fill="none" points="{" ".join(pts)}"/></svg>'
-    )
-
-
 def _irpf_html(data: dict) -> str:
     irpf = data.get("irpf")
     if not irpf:
@@ -775,7 +1744,10 @@ def _irpf_html(data: dict) -> str:
             continue
         mark = "Sí" if item["resta_del_ano"] else "No"
         rows.append(
-            "<tr>"
+            "<tr "
+            f'data-irpf-concepto="{escape(item["etiqueta"])}" '
+            f'data-irpf-resta="{"si" if item["resta_del_ano"] else "no"}" '
+            f'data-irpf-importe="{escape(str(item["total"] or ""))}">'
             f"<td>{escape(item['etiqueta'])}</td>"
             f'<td class="num">{item["n"]}</td>'
             f'<td class="num">{escape(format_euro(item["total"]))}</td>'
@@ -783,11 +1755,13 @@ def _irpf_html(data: dict) -> str:
             f'<td class="muted">{escape(item["notas"])}</td>'
             "</tr>"
         )
+    conceptos = _unique_labels([item["etiqueta"] for item in irpf["filas"] if not (item["n"] == 0 and item["clave"] not in {"ingresos", "mejoras"})])
+    resta = [("si", "Sí"), ("no", "No")]
     return f"""
-<section class="irpf" id="irpf" aria-label="Borrador para la Renta">
+<section class="irpf insight-block" id="irpf" aria-labelledby="insight-renta">
   <div class="review-head">
-    <h2>Como iría en la Renta</h2>
-    <p>Totales para el anexo de inmueble (IRPF). Hacienda no recibe este Excel: copias los importes a la declaración.</p>
+    <h2 id="insight-renta">Renta</h2>
+    <p>Como iría en la Renta. Borrador para copiar a la declaración. Hacienda no recibe este HTML.</p>
   </div>
   <div class="irpf-kpis">
     <article><span>Ingresos íntegros</span><strong>{escape(format_euro(irpf["ingresos"]))}</strong></article>
@@ -796,14 +1770,14 @@ def _irpf_html(data: dict) -> str:
     <article><span>Mejoras (fuera del año)</span><strong>{escape(format_euro(irpf["mejoras"]))}</strong></article>
   </div>
   <div class="table-wrap">
-    <table>
+    <table class="irpf-table">
       <thead>
         <tr>
-          <th>Concepto</th>
-          <th class="num">Asientos</th>
-          <th class="num">Importe</th>
-          <th>Resta del año</th>
-          <th>Nota</th>
+          {_filter_th("Concepto", "pop-irpf-concepto", _filter_checks("irpf-concepto", conceptos))}
+          <th class="num"><span class="th-label">Asientos</span></th>
+          {_filter_th("Importe", "pop-irpf-importe", _filter_amount("f-irpf-min", "f-irpf-max"), "num")}
+          {_filter_th("Resta del año", "pop-irpf-resta", _filter_checks("irpf-resta", resta))}
+          <th><span class="th-label">Nota</span></th>
         </tr>
       </thead>
       <tbody>{"".join(rows)}</tbody>
@@ -813,12 +1787,30 @@ def _irpf_html(data: dict) -> str:
 """
 
 
+def _site_footer() -> str:
+    repo_label = REPO_URL.removeprefix("https://")
+    return f"""
+<footer class="site-foot">
+  <div class="wrap">
+    <p>{escape(CONTACT_NAME)} ·
+      <a href="mailto:{escape(CONTACT_MAIL)}">{escape(CONTACT_MAIL)}</a>
+      · <a href="{escape(REPO_URL)}" target="_blank" rel="noopener">{escape(repo_label)}</a></p>
+    <p>Código abierto. Issues y pull requests para mejorar el modelo de extracción.</p>
+  </div>
+</footer>
+"""
+
+
 def _footer(data: dict) -> str:
     xlsx = data.get("xlsx_name") or f"libro_{data['codigo']}_{data['year']}.xlsx"
     return f"""
 <footer class="foot">
-  <p>Para el gestor o para copiar importes a Hacienda. No es presentación telemática.</p>
-  <a class="export-btn" href="{escape(xlsx)}" download="{escape(xlsx)}">Exportar Excel</a>
+  <p>Para el gestor o para copiar importes a Hacienda. No es presentación telemática.
+     <strong>Exportar visible</strong> respeta los filtros del libro (fecha, rubro, importes).</p>
+  <div class="foot-actions">
+    <button type="button" class="export-btn" id="export-visible">Exportar visible</button>
+    <a class="ghost export-full" href="{escape(xlsx)}" download="{escape(xlsx)}">Libro completo (xlsx)</a>
+  </div>
 </footer>
 """
 
@@ -831,7 +1823,7 @@ def _charts(data: dict) -> str:
       <span class="swatch g">gastos</span>
       <span class="swatch i">ingresos</span>
     </figcaption>
-    {_svg_months(data["por_mes"])}
+    <div class="chart-scroll">{_svg_months(data["por_mes"])}</div>
   </figure>
   <figure>
     <figcaption>Por rubro
@@ -846,10 +1838,14 @@ def _charts(data: dict) -> str:
 
 
 def _svg_months(series: list[dict]) -> str:
-    if not series:
+    active = [
+        item for item in series if item["gastos"] > ZERO or item["ingresos"] > ZERO
+    ]
+    if not active:
         return '<p class="empty">Sin movimientos mensuales todavía.</p>'
-    width, height = 640, 220
-    pad_l, pad_r, pad_t, pad_b = 44, 12, 16, 36
+    series = active
+    width, height = 640, 280
+    pad_l, pad_r, pad_t, pad_b = 56, 16, 28, 40
     inner_w = width - pad_l - pad_r
     inner_h = height - pad_t - pad_b
     peak = max(
@@ -858,7 +1854,7 @@ def _svg_months(series: list[dict]) -> str:
     )
     peak = peak if peak > 0 else Decimal("1")
     slot = inner_w / max(len(series), 1)
-    bar_w = min(slot * 0.32, 22)
+    bar_w = min(slot * 0.34, 46)
     ticks = [
         (ZERO, pad_t + inner_h),
         (peak / 2, pad_t + inner_h / 2),
@@ -866,31 +1862,39 @@ def _svg_months(series: list[dict]) -> str:
     ]
     parts = [
         f'<svg viewBox="0 0 {width} {height}" role="img" '
-        'aria-label="Gastos e ingresos de cada mes del ejercicio">'
+        'aria-label="Gastos e ingresos de cada mes con movimiento">'
     ]
     for value, y in ticks:
         parts.append(
             f'<line class="grid" x1="{pad_l}" y1="{y:.1f}" x2="{width - pad_r}" y2="{y:.1f}"/>'
-            f'<text class="tick" x="{pad_l - 6}" y="{y + 4:.1f}">{escape(_compact(value))}</text>'
+            f'<text class="tick" x="{pad_l - 8}" y="{y + 4:.1f}">{escape(_compact(value))}</text>'
         )
     for idx, item in enumerate(series):
-        x0 = pad_l + slot * idx + slot * 0.18
+        x0 = pad_l + slot * idx + (slot - bar_w * 2 - 4) / 2
         h_g = float(item["gastos"] / peak) * inner_h
         h_i = float(item["ingresos"] / peak) * inner_h
         y_g = pad_t + inner_h - h_g
         y_i = pad_t + inner_h - h_i
         if h_g >= 0.5:
             parts.append(
-                f'<rect class="bar-g" x="{x0:.1f}" y="{y_g:.1f}" width="{bar_w:.1f}" height="{h_g:.1f}" rx="1">'
+                f'<rect class="bar-g" x="{x0:.1f}" y="{y_g:.1f}" width="{bar_w:.1f}" height="{h_g:.1f}" rx="3">'
                 f'<title>{item["mes"]} gastos {format_euro(item["gastos"])}</title></rect>'
+            )
+            parts.append(
+                f'<text class="bar-label" x="{x0 + bar_w / 2:.1f}" y="{y_g - 6:.1f}">'
+                f"{escape(_compact(item['gastos']))}</text>"
             )
         if h_i >= 0.5:
             parts.append(
-                f'<rect class="bar-i" x="{x0 + bar_w + 2:.1f}" y="{y_i:.1f}" width="{bar_w:.1f}" height="{h_i:.1f}" rx="1">'
+                f'<rect class="bar-i" x="{x0 + bar_w + 4:.1f}" y="{y_i:.1f}" width="{bar_w:.1f}" height="{h_i:.1f}" rx="3">'
                 f'<title>{item["mes"]} ingresos {format_euro(item["ingresos"])}</title></rect>'
             )
+            parts.append(
+                f'<text class="bar-label" x="{x0 + bar_w + 4 + bar_w / 2:.1f}" y="{y_i - 6:.1f}">'
+                f"{escape(_compact(item['ingresos']))}</text>"
+            )
         parts.append(
-            f'<text class="axis" x="{x0 + bar_w:.1f}" y="{height - 12}">{item["mes"]}</text>'
+            f'<text class="axis" x="{x0 + bar_w + 2:.1f}" y="{height - 14}">{item["mes"]}</text>'
         )
     parts.append("</svg>")
     return "".join(parts)
@@ -900,9 +1904,9 @@ def _svg_nature(series: list[dict]) -> str:
     if not series:
         return '<p class="empty">Aún no hay importes que agrupar.</p>'
     width = 640
-    row_h = 52
-    pad_l, pad_r = 16, 140
-    height = 12 + row_h * len(series)
+    row_h = 58
+    pad_l, pad_r = 18, 16
+    height = 16 + row_h * len(series)
     peak = max((item["total"] for item in series), default=Decimal("1"))
     grand = sum((item["total"] for item in series), ZERO) or Decimal("1")
     inner_w = width - pad_l - pad_r
@@ -911,15 +1915,18 @@ def _svg_nature(series: list[dict]) -> str:
         'aria-label="Importes por rubro">'
     ]
     for idx, item in enumerate(series):
-        y = 6 + idx * row_h
+        y = 8 + idx * row_h
         bar = float(item["total"] / peak) * inner_w if peak else 0
         kind = {"gasto": "bar-g", "ingreso": "bar-i", "mejora": "bar-m"}.get(item["tipo"], "bar-g")
         pct = int(round(float(item["total"] / grand * 100)))
+        label = item["label"]
+        shown = label if len(label) <= 28 else f"{label[:27]}…"
         parts.append(
-            f'<text class="axis left" x="{pad_l}" y="{y + 12}">{escape(item["label"])}</text>'
-            f'<rect class="{kind}" x="{pad_l}" y="{y + 18}" width="{max(bar, 2):.1f}" height="12" rx="2">'
+            f'<text class="axis left" x="{pad_l}" y="{y + 14}">'
+            f"<title>{escape(label)}</title>{escape(shown)}</text>"
+            f'<rect class="{kind}" x="{pad_l}" y="{y + 22}" width="{max(bar, 8):.1f}" height="16" rx="4">'
             f'<title>{escape(item["label"])} {format_euro(item["total"])} ({pct} %)</title></rect>'
-            f'<text class="tick right" x="{pad_l + max(bar, 2) + 8:.1f}" y="{y + 28}">'
+            f'<text class="tick right" x="{pad_l}" y="{y + 52}">'
             f'{escape(format_euro(item["total"]))} · {pct} %</text>'
         )
     parts.append("</svg>")
@@ -943,6 +1950,75 @@ _SEARCH_SVG = (
     '<path fill="none" stroke="currentColor" stroke-width="1.4" d="M10.2 10.2 13.5 13.5"/>'
     "</svg>"
 )
+_PENCIL_SVG = (
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    '<path fill="currentColor" d="M11.7 1.6c.4-.4 1.1-.4 1.5 0l1.2 1.2c.4.4.4 1.1 0 1.5L6.2 12.5 2 14l1.5-4.2z"/>'
+    "</svg>"
+)
+_DISK_SVG = (
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    '<path fill="none" stroke="currentColor" stroke-width="1.4" d="M3 2.5h7.2L13 5.2V13.5H3z"/>'
+    '<path fill="none" stroke="currentColor" stroke-width="1.4" d="M5 2.8V6h5.2M5 13.2v-3.4h6V13"/>'
+    "</svg>"
+)
+_TRASH_SVG = (
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" '
+    'd="M3.5 4.5h9M6.2 4.5V3.2h3.6v1.3M5 4.5l.5 8h5l.5-8"/>'
+    "</svg>"
+)
+_EYE_SVG = (
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    '<path fill="none" stroke="currentColor" stroke-width="1.4" d="M1.6 8s2.2-3.6 6.4-3.6S14.4 8 14.4 8s-2.2 3.6-6.4 3.6S1.6 8 1.6 8z"/>'
+    '<circle cx="8" cy="8" r="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/>'
+    "</svg>"
+)
+_RESTORE_SVG = (
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" '
+    'stroke-linejoin="round" d="M3.2 8a4.8 4.8 0 1 0 1.2-3.2M3 3.2V6.2h3"/>'
+    "</svg>"
+)
+_BACK_SVG = (
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    '<path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
+    'stroke-linejoin="round" d="M10.2 3.2 5.5 8l4.7 4.8M5.5 8h5.8"/>'
+    "</svg>"
+)
+_FILE_SVG = (
+    '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">'
+    '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" '
+    'd="M4.2 2.5h5.1L12.3 5.5v8H4.2z"/>'
+    '<path fill="none" stroke="currentColor" stroke-width="1.4" d="M9.3 2.5v3h3"/>'
+    "</svg>"
+)
+_LIST_SVG = (
+    '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">'
+    '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" '
+    'd="M6.2 4.2h6.2M6.2 8h6.2M6.2 11.8h6.2"/>'
+    '<circle cx="3.6" cy="4.2" r="0.9" fill="currentColor"/>'
+    '<circle cx="3.6" cy="8" r="0.9" fill="currentColor"/>'
+    '<circle cx="3.6" cy="11.8" r="0.9" fill="currentColor"/>'
+    "</svg>"
+)
+_CLOCK_SVG = (
+    '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">'
+    '<circle cx="8" cy="8" r="5.2" fill="none" stroke="currentColor" stroke-width="1.4"/>'
+    '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M8 5.2V8l2 1.6"/>'
+    "</svg>"
+)
+
+
+def _filter_date_range() -> str:
+    return """
+<label class="filter-field">Desde
+  <input id="f-desde" type="date">
+</label>
+<label class="filter-field">Hasta
+  <input id="f-hasta" type="date">
+</label>
+<p class="filter-hint">Un solo lado vale: desde esa fecha, o hasta esa fecha. Vacío = sin tope.</p>
+"""
 
 
 def _filter_checks(name: str, pairs: list[tuple[str, str]]) -> str:
@@ -962,10 +2038,102 @@ def _filter_checks(name: str, pairs: list[tuple[str, str]]) -> str:
     )
 
 
-def _filter_th(label: str, pop_id: str, inner: str, extra: str = "") -> str:
+def _edit_dialog(data: dict | None = None) -> str:
+    nombres = (data or {}).get("rubros") or []
+    opciones = '<option value="">Sin clasificar</option>' + "".join(
+        f'<option value="{escape(nombre)}">{escape(nombre)}</option>' for nombre in nombres
+    )
+    return f"""
+<dialog class="edit-dialog" id="edit-dialog" aria-labelledby="edit-title">
+  <form method="dialog" id="edit-form">
+    <div id="edit-form-pane">
+      <h2 id="edit-title">Editar asiento</h2>
+      <p class="edit-meta" id="edit-meta"></p>
+      <label>Emisor
+        <input id="edit-emisor" name="emisor" maxlength="200" autocomplete="organization">
+      </label>
+      <label>NIF emisor
+        <input id="edit-nif" name="nif_emisor" maxlength="12" autocomplete="off">
+      </label>
+      <label>Fecha de compra
+        <input id="edit-fecha" name="fecha" type="date">
+      </label>
+      <label>Rubro
+        <select id="edit-rubro">{opciones}</select>
+      </label>
+      <p class="edit-hint" id="edit-articulos">Artículos: —</p>
+      <p class="edit-hint">Base, IVA y total no se editan aquí. Salen de las líneas de la ficha, y el número de artículos es el de esas líneas.</p>
+      <label class="edit-check">
+        <input id="edit-validar" type="checkbox">
+        Validado (OK). Desmárcalo para volver a revisión.
+      </label>
+      <p class="edit-log-title">Historial</p>
+      <ol class="edit-log" id="edit-log"></ol>
+      <div class="edit-actions">
+        <button type="button" class="ghost" id="edit-cancel" value="cancel">Cancelar</button>
+        <button type="button" class="export-btn" id="edit-review">Revisar cambio</button>
+      </div>
+    </div>
+    <div id="edit-confirm" hidden>
+      <h2>¿Seguro que quieres modificar este asiento?</h2>
+      <p>Comprueba el antes y el después. Esta acción queda en el log del libro.</p>
+      <table class="edit-diff">
+        <thead><tr><th>Campo</th><th>Antes</th><th>Después</th></tr></thead>
+        <tbody id="edit-diff-body"></tbody>
+      </table>
+      <label class="edit-check">
+        <input id="edit-ack" type="checkbox">
+        He revisado el documento y confirmo que los datos son correctos.
+      </label>
+      <div class="edit-actions">
+        <button type="button" class="ghost" id="edit-back">Volver</button>
+        <button type="button" class="export-btn" id="edit-commit" disabled>Sí, modificar</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+"""
+
+
+def _mast_dialog() -> str:
+    return """
+<dialog class="edit-dialog" id="mast-dialog" aria-labelledby="mast-title">
+  <form method="dialog" id="mast-form">
+    <h2 id="mast-title">Títulos del libro</h2>
+    <p class="edit-meta">Cabecera de este expediente. El código (CI-VA-001) y el régimen fiscal no se cambian aquí.</p>
+    <label>Expediente
+      <input id="mast-input-nombre" maxlength="200" autocomplete="off">
+    </label>
+    <label>Titular
+      <input id="mast-input-titular" maxlength="200" autocomplete="off">
+    </label>
+    <label id="mast-inmueble-field">Inmueble
+      <input id="mast-input-inmueble" maxlength="200" autocomplete="off">
+    </label>
+    <div class="edit-actions">
+      <button type="button" class="ghost" id="mast-cancel">Cancelar</button>
+      <button type="button" class="export-btn" id="mast-save">Guardar</button>
+    </div>
+  </form>
+</dialog>
+"""
+
+
+def _filter_th(
+    label: str,
+    pop_id: str,
+    inner: str,
+    extra: str = "",
+    *,
+    col: str = "",
+    sort: str = "",
+    sort_type: str = "text",
+) -> str:
     cls = f" {extra}" if extra else ""
+    col_attr = f' data-col="{col}"' if col else ""
+    sort_attr = f' data-sort="{sort}" data-sort-type="{sort_type}"' if sort else ""
     return (
-        f'<th class="th-filter{cls}">'
+        f'<th class="th-filter{cls}"{col_attr}{sort_attr}>'
         f'<div class="th-head"><span class="th-label">{label}</span>'
         f'<button type="button" class="funnel" popovertarget="{pop_id}" '
         f'aria-label="Filtrar {label}" aria-expanded="false">{_FUNNEL_SVG}</button></div>'
@@ -978,12 +2146,37 @@ def _filter_th(label: str, pop_id: str, inner: str, extra: str = "") -> str:
     )
 
 
+_COL_TOGGLES: tuple[tuple[str, str], ...] = (
+    ("factura", "Nº factura"),
+    ("confianza", "Confianza"),
+    ("nif", "NIF emisor"),
+    ("base", "Base"),
+    ("iva", "IVA"),
+    ("doc", "Doc"),
+)
+
+
+def _cols_picker() -> str:
+    opts = "".join(
+        f'<label class="filter-opt"><input type="checkbox" data-col-toggle="{key}" checked>'
+        f"<span>{escape(label)}</span></label>"
+        for key, label in _COL_TOGGLES
+    )
+    return f"""
+<div id="pop-cols" popover="auto" class="filter-pop cols-pop" role="dialog" aria-label="Columnas visibles">
+  <p class="filter-pop-title">Columnas</p>
+  <p class="filter-hint">Id, fecha, emisor, total y estado siempre se ven.</p>
+  <div class="filter-opts">{opts}</div>
+  <div class="filter-pop-foot">
+    <button type="button" class="filter-all" id="cols-all">Mostrar todas</button>
+    <button type="button" class="filter-done" popovertarget="pop-cols" popovertargetaction="hide">Listo</button>
+  </div>
+</div>
+"""
+
+
 def _ledger_filter_choices(data: dict) -> dict[str, list[tuple[str, str]]]:
     asientos = data["asientos"]
-    fechas = sorted(
-        {(item["fecha"], item["fecha_label"]) for item in asientos if item["fecha"]},
-        key=lambda pair: pair[0],
-    )
     emisores = sorted({item["emisor"] for item in asientos if item["emisor"] != "—"})
     nifs = sorted({item["nif"] for item in asientos if item["nif"] != "—"})
     numeros = sorted({item["numero"] for item in asientos if item["numero"] != "—"})
@@ -991,7 +2184,6 @@ def _ledger_filter_choices(data: dict) -> dict[str, list[tuple[str, str]]]:
         {item["cuenta_nombre"] for item in asientos if item["cuenta"]},
     )
     return {
-        "fecha": list(fechas),
         "emisor": [(item, item) for item in emisores],
         "nif": [(item, item) for item in nifs],
         "factura": [(item, item) for item in numeros],
@@ -1005,11 +2197,20 @@ def _ledger_filter_choices(data: dict) -> dict[str, list[tuple[str, str]]]:
             ("gasto", "Gastos"),
             ("ingreso", "Ingresos"),
             ("mejora", "Mejoras"),
-            ("pendiente", "Por revisar"),
-            ("confirmado", "Confirmado"),
+            ("pendiente", "Por validar"),
+            ("confirmado", "Validado"),
             ("duplicado", "Duplicados"),
         ],
     }
+
+
+def _sum_money(items: list[dict], key: str) -> Decimal:
+    total = ZERO
+    for item in items:
+        value = q2(item.get(key))
+        if value is not None:
+            total += value
+    return total
 
 
 def _ledger(data: dict) -> str:
@@ -1038,53 +2239,93 @@ def _ledger(data: dict) -> str:
   <input id="f-max" type="number" min="0" step="0.01" placeholder="Sin tope">
 </label>
 """
+    vivos = [item for item in data["asientos"] if item["estado"] != "duplicado"]
+    libro_total = _sum_money(vivos, "total")
+    libro_base = _sum_money(vivos, "base")
+    libro_iva = _sum_money(vivos, "iva")
+    n_facturas = len(data["asientos"])
     return f"""
 <section class="ledger" id="ledger">
-  <p class="panel-lead">Detalle fiscal de cada asiento. El embudo de cada columna abre el filtro.</p>
-  <div class="ledger-status">
-    <p class="status" id="status" aria-live="polite"></p>
-    <button type="button" class="ghost" id="f-clear" hidden>Limpiar filtros</button>
+  <div class="libro-kpis" id="libro-kpis" aria-label="Resumen del libro" aria-live="polite">
+    <div><span>Facturas</span><strong id="libro-n">{n_facturas}</strong><em id="libro-n-note"></em></div>
+    <div><span>Total</span><strong id="libro-total">{escape(format_euro(libro_total))}</strong></div>
+    <div><span>Total visible</span><strong id="libro-visible">{escape(format_euro(libro_total))}</strong></div>
+    <div><span>Base visible</span><strong id="libro-base">{escape(format_euro(libro_base))}</strong></div>
+    <div><span>IVA visible</span><strong id="libro-iva">{escape(format_euro(libro_iva))}</strong></div>
   </div>
+  <div class="ledger-status">
+    <p class="status" id="status" hidden></p>
+    <button type="button" class="ghost" id="f-clear" hidden>Limpiar filtros</button>
+    <div class="ledger-actions">
+      <button type="button" class="ghost" id="cols-toggle" popovertarget="pop-cols"
+        aria-expanded="false" aria-haspopup="dialog">Columnas</button>
+    </div>
+  </div>
+  {_cols_picker()}
   {dup_note}
-  <p class="table-scroll-hint">Desliza horizontalmente para ver todas las columnas.</p>
   <div class="table-wrap" tabindex="0" aria-label="Tabla de asientos con desplazamiento horizontal">
     <table class="ledger-table">
       <colgroup>
         <col class="col-id">
+        <col class="col-factura">
         <col class="col-fecha">
         <col class="col-emisor">
         <col class="col-calidad">
-        <col class="col-estado">
         <col class="col-total">
-        <col class="col-rubro">
+        <col class="col-articulos">
         <col class="col-nif">
-        <col class="col-factura">
         <col class="col-base">
         <col class="col-iva">
         <col class="col-doc">
+        <col class="col-estado">
       </colgroup>
       <thead>
         <tr>
-          {_filter_th("Id", "pop-q", id_inner, "col-sticky")}
-          {_filter_th("Fecha compra", "pop-fecha", _filter_checks("fecha", choices["fecha"]))}
-          {_filter_th("Emisor", "pop-emisor", _filter_checks("emisor", choices["emisor"]))}
-          {_filter_th("Confianza", "pop-confianza", _filter_checks("confianza", choices["confianza"]))}
-          {_filter_th("Estado", "pop-estado", _filter_checks("estado", choices["estado"]), "cell-estado")}
-          {_filter_th("Total", "pop-total", total_inner, "num")}
-          {_filter_th("Rubro", "pop-rubro", _filter_checks("rubro", choices["rubro"]))}
-          {_filter_th("NIF emisor", "pop-nif", _filter_checks("nif", choices["nif"]))}
-          {_filter_th("Nº factura", "pop-factura", _filter_checks("factura", choices["factura"]))}
-          <th class="num th-plain"><span class="th-label">Base</span></th>
-          <th class="num th-plain"><span class="th-label">IVA</span></th>
-          <th class="cell-doc th-plain"><span class="th-label">Doc</span></th>
+          {_filter_th("Id", "pop-q", id_inner, "col-sticky", col="id", sort="id", sort_type="num")}
+          {_filter_th("Nº factura", "pop-factura", _filter_checks("factura", choices["factura"]), col="factura", sort="factura")}
+          {_filter_th("Fecha compra", "pop-fecha", _filter_date_range(), col="fecha", sort="fecha")}
+          {_filter_th("Emisor", "pop-emisor", _filter_checks("emisor", choices["emisor"]), col="emisor", sort="emisor")}
+          {_filter_th("Confianza", "pop-confianza", _filter_checks("confianza", choices["confianza"]), col="confianza", sort="confianza")}
+          {_filter_th("Total", "pop-total", total_inner, "num", col="total", sort="total", sort_type="num")}
+          <th class="num th-plain" data-col="articulos" data-sort="articulos" data-sort-type="num" title="Artículos con nombre en la factura"><span class="th-label">Artículos</span></th>
+          {_filter_th("NIF emisor", "pop-nif", _filter_checks("nif", choices["nif"]), col="nif", sort="nif")}
+          <th class="num th-plain" data-col="base" data-sort="base" data-sort-type="num"><span class="th-label">Base</span></th>
+          <th class="num th-plain" data-col="iva" data-sort="iva" data-sort-type="num"><span class="th-label">IVA</span></th>
+          <th class="cell-doc th-plain" data-col="doc" data-sort="doc"><span class="th-label">Doc</span></th>
+          {_filter_th("Estado", "pop-estado", _filter_checks("estado", choices["estado"]), "col-estado", col="estado", sort="estado")}
         </tr>
       </thead>
       <tbody>{rows}</tbody>
     </table>
   </div>
+  <nav class="pager" id="libro-pager" aria-label="Páginas del libro">
+    <button type="button" class="ghost" id="libro-prev">Anterior</button>
+    <span class="pager-pages" id="libro-pages"></span>
+    <span class="pager-label" id="libro-pager-label"></span>
+    <button type="button" class="ghost" id="libro-next">Siguiente</button>
+  </nav>
   {empty}
 </section>
 """
+
+
+def _estado_action(item: dict) -> str:
+    if item["estado"] == "duplicado":
+        return (
+            '<span class="estado-btn estado-dup" title="Duplicado: no entra en los totales">'
+            "Duplicado</span>"
+        )
+    if item["validado"]:
+        return (
+            f'<button type="button" class="estado-btn estado-ok" data-reopen="{item["id"]}" '
+            'title="Validado. Pulsa para devolver a revisión" '
+            f'aria-label="Validado. Devolver asiento {item["id"]} a revisión">Validado</button>'
+        )
+    return (
+        f'<button type="button" class="estado-btn estado-pend" data-validar="{item["id"]}" '
+        'title="Pendiente de validar. Pulsa para confirmar" '
+        f'aria-label="Por validar. Confirmar asiento {item["id"]}">Por validar</button>'
+    )
 
 
 def _row_html(item: dict) -> str:
@@ -1104,38 +2345,64 @@ def _row_html(item: dict) -> str:
         ]
     ).lower()
     doc_cell = "—"
-    if item["doc_uri"]:
+    if item["has_doc"]:
         title = escape(item["doc_name"] or "Factura")
-        doc_cell = f'<a class="doc-link" href="{escape(item["doc_uri"])}" title="{title}">Abrir</a>'
-    rubro = escape(item["cuenta_nombre"])
+        doc_cell = (
+            f'<a class="doc-link" href="/doc/{item["id"]}" target="_blank" '
+            f'rel="noopener" title="{title}">Abrir</a>'
+        )
+    href = f"/asiento/{item['id']}"
     emisor = escape(item["emisor"])
     if item["emisor"] != "—":
         emisor = f'<span class="cell-text" title="{emisor}">{emisor}</span>'
+    emisor = f'<a class="row-go" href="{href}">{emisor}</a>'
+    numero = escape(item["numero"])
+    factura = (
+        f'<a class="row-go" href="{href}" title="{numero}">{numero}</a>{_docs_chip(item)}'
+    )
     calidad = _quality_cell(item, prefix="libro")
     baja_flag = "1" if item["baja"] else "0"
     emisor_key = item["emisor"] if item["emisor"] != "—" else ""
+    nif_val = "" if item["nif"] in {"", "—"} else item["nif"]
+    pencil = (
+        f'<button type="button" class="row-edit" data-edit="{item["id"]}" '
+        f'title="Editar asiento" aria-label="Editar asiento {item["id"]}">{_PENCIL_SVG}</button>'
+    )
+    accion = f"{pencil}{_estado_action(item)}"
     return (
-        f'<tr data-id="{item["id"]}" data-tipo="{escape(item["tipo"])}" '
+        f'<tr id="asiento-{item["id"]}" data-href="/asiento/{item["id"]}" data-id="{item["id"]}" '
+        f'data-tipo="{escape(item["tipo"])}" '
         f'data-estado="{escape(item["estado"])}" data-baja="{baja_flag}" '
-        f'data-fecha="{escape(item["fecha"])}" data-emisor="{escape(emisor_key)}" '
-        f'data-cuenta="{escape(item["cuenta"])}" data-nif="{escape(item["nif"])}" '
+        f'data-fecha="{escape(item["fecha"])}" data-fecha-label="{escape(item["fecha_label"])}" '
+        f'data-emisor="{escape(emisor_key)}" '
+        f'data-cuenta="{escape(item["cuenta"])}" data-nif="{escape(nif_val)}" '
         f'data-numero="{escape(item["numero"])}" data-validado="'
         f'{"1" if item["validado"] else "0"}" '
-        f'data-total="{item["total_num"]:.2f}" data-q="{escape(blob)}">'
-        f'<td class="mono col-sticky" data-label="Id">'
-        f'<a href="#asiento-{item["id"]}" id="asiento-{item["id"]}">{item["id"]}</a></td>'
-        f'<td class="cell-nowrap" data-label="Fecha">{escape(item["fecha_label"])}</td>'
-        f'<td class="cell-clip" data-label="Emisor">{emisor}</td>'
-        f'<td class="cell-calidad" data-label="Confianza">{calidad}</td>'
-        f'<td class="cell-estado" data-label="Estado"><span class="pill {escape(item["estado"])}">'
-        f'{escape(item["estado_label"])}</span></td>'
-        f'<td class="num cell-nowrap" data-label="Total">{escape(format_euro(item["total"]))}</td>'
-        f'<td class="cell-rubro" data-label="Rubro">{rubro}</td>'
-        f'<td class="mono cell-nowrap" data-label="NIF">{escape(item["nif"])}</td>'
-        f'<td class="mono cell-clip" data-label="Factura">{escape(item["numero"])}{_docs_chip(item)}</td>'
-        f'<td class="num cell-nowrap" data-label="Base">{escape(format_euro(item["base"]))}</td>'
-        f'<td class="num cell-nowrap" data-label="IVA">{escape(format_euro(item["iva"]))}</td>'
-        f'<td class="cell-doc" data-label="Doc">{doc_cell}</td>'
+        f'data-total="{item["total_num"]:.2f}" '
+        f'data-base="{_amount_attr(item["base"])}" '
+        f'data-iva="{_amount_attr(item["iva"])}" '
+        f'data-estado-label="{escape(item["estado_label"])}" '
+        f'data-q="{escape(blob)}">'
+        f'<td class="mono col-sticky" data-col="id" data-label="Id">'
+        f'<a class="row-go" href="/asiento/{item["id"]}">{item["id"]}</a></td>'
+        f'<td class="mono cell-clip" data-col="factura" data-label="Nº factura">{factura}</td>'
+        f'<td class="cell-nowrap" data-col="fecha" data-label="Fecha">'
+        f'<a class="row-go" href="/asiento/{item["id"]}">{escape(item["fecha_label"])}</a></td>'
+        f'<td class="cell-clip" data-col="emisor" data-label="Emisor">{emisor}</td>'
+        f'<td class="cell-calidad" data-col="confianza" data-label="Confianza">{calidad}</td>'
+        f'<td class="num cell-nowrap" data-col="total" data-label="Total">'
+        f'<a class="total-drill" href="/asiento/{item["id"]}" '
+        f'title="Ver detalle de la factura" aria-label="Detalle de la factura {item["id"]}">'
+        f'<span class="total-amt">{escape(format_euro(item["total"]))}</span>'
+        f'<span class="total-caret" aria-hidden="true">▸</span></a></td>'
+        f'<td class="num cell-nowrap" data-col="articulos" data-label="Artículos">'
+        f'<a class="row-go" href="{href}" title="Artículos de la factura {item["id"]}">'
+        f'{item["n_articulos"] if item["n_articulos"] else "—"}</a></td>'
+        f'<td class="mono cell-nowrap" data-col="nif" data-label="NIF">{escape(item["nif"])}</td>'
+        f'<td class="num cell-nowrap" data-col="base" data-label="Base">{escape(format_euro(item["base"]))}</td>'
+        f'<td class="num cell-nowrap" data-col="iva" data-label="IVA">{escape(format_euro(item["iva"]))}</td>'
+        f'<td class="cell-doc" data-col="doc" data-label="Doc">{doc_cell}</td>'
+        f'<td class="cell-estado" data-col="estado" data-label="Estado"><div class="row-actions">{accion}</div></td>'
         "</tr>"
     )
 
@@ -1152,18 +2419,28 @@ _CSS = r"""
   --mejora: #7a6236;
   --neto: #243447;
   --warn: #a35b12;
+  --link: #1d5f8c;
+  --link-hover: #134868;
 }
 * { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
 html, body { margin: 0; background: var(--paper); color: var(--ink); }
+html { height: 100%; }
 body {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
   font: 15px/1.45 "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
 }
-.wrap { width: min(1360px, calc(100% - 32px)); margin-inline: auto; }
+.wrap { width: min(1680px, calc(100% - 24px)); margin-inline: auto; max-width: 100%; }
 .mast {
   background: var(--sheet);
   padding: 28px 0 0;
 }
-.mast-grid { display: flex; justify-content: space-between; gap: 24px; align-items: end; padding-bottom: 22px; }
+.mast-grid { padding-bottom: 22px; }
 .eyebrow {
   margin: 0 0 6px;
   letter-spacing: .14em;
@@ -1175,18 +2452,24 @@ h1 {
   margin: 0;
   font: 600 34px/1.1 "Iowan Old Style", Palatino, "Palatino Linotype", serif;
 }
+.mast-h1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+}
+.mast-h1 #mast-nombre { color: inherit; font: inherit; }
+.mast-h1 #mast-kicker { color: var(--muted); font-size: 22px; font-weight: 500; }
+.mast-edit { align-self: center; }
 h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .meta { margin: 8px 0 0; color: var(--muted); }
 .mast-strip { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
-.stamp {
-  max-width: 280px;
-  border: 1px solid var(--line);
-  padding: 10px 12px;
-  font-size: 12px;
-  color: var(--muted);
+.panels {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 0 8px;
 }
-.stamp strong { display: block; color: var(--gasto); font-size: 12px; margin-bottom: 4px; }
-.panels { padding: 18px 0 48px; }
 .panel[hidden] { display: none !important; }
 .tabs {
   width: 100%;
@@ -1289,22 +2572,24 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   inset: unset;
   margin: 0;
   position: fixed;
-  z-index: 20;
-  width: 220px;
-  padding: 10px 12px;
+  z-index: 80;
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(70vh, 420px);
+  overflow: auto;
+  padding: 12px 14px;
   background: var(--ink);
   color: var(--sheet);
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.45;
   border: 0;
-  box-shadow: 0 8px 20px rgba(28, 24, 20, .18);
+  box-shadow: 0 10px 28px rgba(28, 24, 20, .28);
 }
 .q-pop strong { display: block; margin-bottom: 8px; font-size: 13px; }
-.q-pop dl { margin: 0; display: grid; gap: 4px; }
-.q-pop dl div { display: flex; justify-content: space-between; gap: 12px; }
-.q-pop dt { color: #c9c2b6; }
-.q-pop dd { margin: 0; font-variant-numeric: tabular-nums; }
-.q-pop p { margin: 8px 0 0; color: #d8d0c4; }
+.q-pop dl { margin: 0; display: grid; gap: 6px; }
+.q-pop dl div { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
+.q-pop dt { color: #c9c2b6; flex: 0 0 auto; }
+.q-pop dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
+.q-pop p { margin: 10px 0 0; color: #d8d0c4; white-space: normal; overflow-wrap: anywhere; }
 .resumen-kpis { margin-bottom: 12px; }
 .empty.ok { color: var(--ingreso); padding: 16px; border: 1px solid var(--line); background: #fff; }
 .kpis { padding: 22px 0 8px; }
@@ -1414,17 +2699,24 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   padding: 16px 18px;
   margin: 0 0 20px;
 }
-.evo-board {
-  display: grid;
-  grid-template-columns: minmax(240px, 1.35fr) minmax(0, 1fr);
-  gap: 12px;
-  align-items: stretch;
+.insight-block + .insight-block { margin-top: 28px; }
+.insight-sub {
+  margin: 18px 0 0;
+  font-size: 13px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
-.evo-board-solo { grid-template-columns: 1fr; }
+.chart-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.chart-scroll svg { min-width: 640px; }
 .evo-sats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  margin-top: 16px;
 }
 .evo-label {
   display: block;
@@ -1434,49 +2726,6 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   text-transform: uppercase;
   color: var(--muted);
 }
-.evo-hero {
-  background: var(--neto);
-  color: #f4efe6;
-  padding: 18px 18px 16px;
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-}
-.evo-hero .evo-label { color: #c9c2b6; }
-.evo-hero strong {
-  display: block;
-  margin: 8px 0 4px;
-  font: 600 36px/1 "Iowan Old Style", Palatino, serif;
-  font-variant-numeric: tabular-nums;
-  color: #fff;
-}
-.evo-sub { display: block; font-size: 12px; color: #c9c2b6; }
-.evo-hero em {
-  display: block;
-  margin-top: 10px;
-  font-style: normal;
-  font-size: 12px;
-  color: #d8d0c4;
-}
-.evo-hero-stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin: 12px 0 0;
-}
-.evo-hero-stats dt {
-  font-size: 11px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: #c9c2b6;
-}
-.evo-hero-stats dd {
-  margin: 4px 0 0;
-  font: 600 16px/1 Palatino, serif;
-  font-variant-numeric: tabular-nums;
-}
-.evo-hero-stats dd.ing { color: #b7d4cb; }
-.evo-hero-stats dd.gas { color: #e3b4ab; }
 .evo-kpi {
   border: 1px solid var(--line);
   border-top-width: 3px;
@@ -1506,35 +2755,45 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .evo-track i { display: block; height: 100%; }
 .evo-track i.ing { background: var(--ingreso); }
 .evo-track i.gas { background: var(--gasto); }
-.evo-track-split {
-  display: flex;
-  background: rgba(251, 247, 239, .14);
-  margin-top: auto;
-  padding: 0;
-}
-.evo-track-split i { flex: 0 0 auto; }
 .evo-alerts { display: grid; gap: 8px; margin-top: 12px; }
 .evo-alert {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
   border: 1px solid var(--line);
   border-left: 4px solid var(--warn);
   background: #fff;
   padding: 10px 12px;
 }
+.evo-alert:hover { border-color: var(--warn); }
 .evo-alert strong { display: block; font-size: 13px; }
 .evo-alert p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
-.spark { width: 100%; height: 48px; margin: 16px 0 14px; display: block; }
-.spark-line { stroke: #f4efe6; stroke-width: 1.8; }
-.spark-zero { stroke: rgba(251, 247, 239, .28); stroke-dasharray: 3 3; }
 .irpf-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
 .irpf-kpis article { border: 1px solid var(--line); padding: 10px 12px; background: #fff; }
 .irpf-kpis span { display: block; font-size: 12px; color: var(--muted); }
 .irpf-kpis strong { display: block; margin-top: 6px; font: 600 20px/1 Palatino, serif; }
 .muted { color: var(--muted); font-size: 12px; }
 .foot {
-  margin: 0 0 48px;
+  margin-top: auto;
+  padding-top: 40px;
   color: var(--muted);
   font-size: 13px;
 }
+.site-foot {
+  margin-top: auto;
+  padding: 24px 0 48px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.site-foot p { margin: 0; }
+.site-foot p + p { margin-top: 4px; }
+.site-foot a { color: var(--link); text-decoration: none; }
+.site-foot a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .export-btn {
   display: inline-block;
   margin-top: 10px;
@@ -1543,9 +2802,14 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   color: #f4efe6;
   font: 600 14px/1 "Avenir Next", "Segoe UI", system-ui, sans-serif;
   text-decoration: none;
+  border: 0;
   border-radius: 2px;
+  cursor: pointer;
 }
 .export-btn:hover { filter: brightness(1.08); }
+.export-btn-inline { margin-top: 0; padding: 8px 12px; font-size: 13px; }
+.foot-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.export-full { margin-top: 10px; }
 .toast {
   position: fixed;
   right: 16px;
@@ -1557,7 +2821,7 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   font-size: 13px;
   line-height: 1.4;
   white-space: pre-wrap;
-  z-index: 5;
+  z-index: 90;
 }
 tbody tr.flash { background: rgba(163, 91, 18, .12); }
 .charts {
@@ -1575,11 +2839,11 @@ figure {
 figcaption {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 12px;
+  gap: 4px 10px;
   align-items: baseline;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--muted);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .swatch { color: var(--ink); font-size: 12px; }
 .swatch::before {
@@ -1593,18 +2857,81 @@ figcaption {
 .swatch.g::before { background: var(--gasto); }
 .swatch.i::before { background: var(--ingreso); }
 .swatch.m::before { background: var(--mejora); }
-svg { width: 100%; height: auto; display: block; }
+figure svg { width: 100%; height: auto; display: block; }
 .grid { stroke: var(--line); stroke-width: 1; }
 .tick, .axis, .legend { font: 11px/1 "Avenir Next", system-ui, sans-serif; fill: var(--muted); }
 .tick { text-anchor: end; }
 .axis { text-anchor: middle; }
 .axis.left { text-anchor: start; fill: var(--ink); font-size: 12px; }
 .tick.right { text-anchor: start; fill: var(--ink); font-size: 11px; }
+.bar-label { font: 10px/1 "Avenir Next", system-ui, sans-serif; fill: var(--ink); text-anchor: middle; }
 .bar-g { fill: var(--gasto); }
 .bar-i { fill: var(--ingreso); }
 .bar-m { fill: var(--mejora); }
-.ledger { background: var(--sheet); border: 1px solid var(--line); padding: 16px 16px 8px; margin-bottom: 48px; }
+.ledger { background: var(--sheet); border: 1px solid var(--line); padding: 16px 16px 8px; margin-bottom: 12px; }
+.libro-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.libro-kpis > div {
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 12px 14px 11px;
+  min-width: 0;
+}
+.libro-kpis span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.libro-kpis strong {
+  display: block;
+  margin-top: 6px;
+  font: 600 22px/1.15 "Iowan Old Style", Palatino, serif;
+  font-variant-numeric: tabular-nums;
+}
+.libro-kpis em:empty { display: none; }
+.libro-kpis em {
+  display: block;
+  margin-top: 4px;
+  font-style: normal;
+  font-size: 12px;
+  color: var(--muted);
+}
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+.pager-pages { display: flex; flex-wrap: wrap; gap: 4px; }
+.pager-num {
+  min-width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pager-num.is-on { background: var(--ink); color: var(--sheet); border-color: var(--ink); }
+.pager-label {
+  min-width: 7em;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.pager .ghost:disabled { opacity: .4; cursor: default; }
 .ledger-status { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 0 0 10px; }
+.ledger-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
 .status { margin: 0; font-size: 13px; color: var(--muted); min-height: 1.2em; }
 .status.empty-query { color: var(--warn); }
 .table-scroll-hint {
@@ -1621,23 +2948,377 @@ svg { width: 100%; height: auto; display: block; }
   scrollbar-gutter: stable both-edges;
 }
 .ledger-table {
-  width: max(100%, 1180px);
-  min-width: 1180px;
+  width: 100%;
+  min-width: 1080px;
   table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
 }
-.col-id { width: 56px; }
-.col-fecha { width: 118px; }
-.col-emisor { width: 150px; }
-.col-calidad { width: 110px; }
-.col-estado { width: 112px; }
-.col-total { width: 84px; }
-.col-rubro { width: 168px; }
-.col-nif { width: 104px; }
-.col-factura { width: 118px; }
-.col-base, .col-iva { width: 72px; }
-.col-doc { width: 52px; }
+.col-id { width: 6%; }
+.col-factura { width: 11%; }
+.col-fecha { width: 11%; }
+.col-emisor { width: 14%; }
+.col-calidad { width: 9%; }
+.col-total { width: 7%; }
+.col-articulos { width: 7%; }
+.col-nif { width: 9%; }
+.col-base, .col-iva { width: 6%; }
+.col-doc { width: 4%; }
+.col-estado { width: 13%; }
+th[data-col="id"], td[data-col="id"] { min-width: 6.4em; }
+th[data-col="factura"], td[data-col="factura"] { min-width: 9em; }
+th[data-col="fecha"], td[data-col="fecha"] { min-width: 11.5em; }
+th[data-col="emisor"], td[data-col="emisor"] { min-width: 8em; }
+th[data-col="confianza"], td[data-col="confianza"] { min-width: 7em; }
+th[data-col="estado"], td[data-col="estado"] { min-width: 10.5em; }
+th[data-col="total"], td[data-col="total"] { min-width: 5.5em; }
+th[data-col="articulos"], td[data-col="articulos"] { min-width: 6.4em; }
+th[data-col="nif"], td[data-col="nif"] { min-width: 7em; }
+.ledger-table.col-off-factura [data-col="factura"],
+.ledger-table.col-off-confianza [data-col="confianza"],
+.ledger-table.col-off-nif [data-col="nif"],
+.ledger-table.col-off-base [data-col="base"],
+.ledger-table.col-off-iva [data-col="iva"],
+.ledger-table.col-off-doc [data-col="doc"] { display: none; }
+.row-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.row-edit,
+.estado-btn {
+  box-sizing: border-box;
+  height: 28px;
+  border: 1px solid var(--line);
+  background: #fff;
+  cursor: pointer;
+  border-radius: 6px;
+  font: 600 12px/1 inherit;
+}
+.row-edit {
+  flex: 0 0 28px;
+  width: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+}
+.row-edit svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  flex-shrink: 0;
+}
+.row-edit:hover { border-color: var(--ink); }
+.estado-btn {
+  flex: 0 0 auto;
+  min-width: 7.4em;
+  padding: 0 10px;
+  text-align: center;
+  border-radius: 999px;
+  letter-spacing: .02em;
+}
+.estado-btn.estado-ok {
+  background: var(--ingreso);
+  border-color: var(--ingreso);
+  color: #fff;
+}
+.estado-btn.estado-ok:hover { filter: brightness(.92); }
+.estado-btn.estado-pend {
+  background: var(--gasto);
+  border-color: var(--gasto);
+  color: #fff;
+}
+.estado-btn.estado-pend:hover { filter: brightness(.92); }
+.estado-btn.estado-dup {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f3f0ea;
+  color: var(--muted);
+  cursor: default;
+}
+.edit-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-height: min(88vh, 720px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  padding: 0;
+  background: var(--sheet);
+  color: var(--ink);
+  box-shadow: 0 16px 40px rgba(28, 24, 20, .22);
+}
+.edit-dialog::backdrop { background: rgba(28, 24, 20, .42); }
+.app-confirm { width: min(420px, calc(100vw - 32px)); }
+.app-confirm h2 { font-size: 18px; }
+.export-btn.is-warn { background: var(--gasto); }
+.edit-dialog form { padding: 18px 18px 16px; }
+.edit-dialog h2 { margin: 0 0 8px; font: 600 20px/1.2 Palatino, serif; }
+.edit-dialog p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+.edit-meta { font-size: 13px; }
+.edit-dialog label { display: block; margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+.edit-dialog label input:not([type=checkbox]) {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  padding: 8px 10px;
+}
+.edit-check { display: flex !important; align-items: flex-start; gap: 8px; color: var(--ink) !important; font-size: 13px !important; }
+.edit-check input { margin-top: 2px; }
+.edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.edit-actions .export-btn { margin-top: 0; }
+.edit-log-title { margin: 14px 0 6px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.edit-log { margin: 0; padding-left: 18px; max-height: 120px; overflow: auto; font-size: 12px; color: var(--muted); }
+.edit-log li { margin: 0 0 4px; }
+.edit-lines-wrap { max-height: 160px; overflow: auto; border: 1px solid var(--line); background: #fff; margin: 0 0 6px; }
+.edit-lines { width: 100%; border-collapse: collapse; font-size: 12px; }
+.edit-lines th, .edit-lines td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.edit-lines th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.edit-lines td:last-child, .edit-lines th:last-child { text-align: right; white-space: nowrap; }
+.edit-lines td:first-child, .edit-lines th:first-child { width: 2.2em; color: var(--muted); }
+.edit-lines td.mono { font-size: 12px; }
+.line-totals {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 18px 0 8px;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+}
+.line-totals .line-total {
+  min-width: 128px;
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+}
+.line-totals span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.line-totals strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+.line-totals .is-total { border-color: var(--ink); }
+.line-totals .is-total strong { font-size: 22px; }
+.edit-lines-note { font-size: 12px !important; margin: 0 0 12px !important; }
+.edit-lines-note.ok { color: var(--ingreso) !important; }
+.total-drill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+.total-drill:hover .total-amt { text-decoration: underline; }
+.total-caret { color: var(--muted); font-size: 11px; }
+tbody tr[data-href] { cursor: pointer; }
+a.row-go { color: inherit; text-decoration: none; }
+a.row-go:hover { text-decoration: underline; }
+.ficha-page { min-height: 100vh; }
+.ficha-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 0 0;
+}
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+}
+.back-link svg { flex-shrink: 0; }
+.back-link:hover { color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
+.ficha { flex: 1 1 auto; padding: 12px 0 48px; }
+.ficha-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px 24px;
+  flex-wrap: wrap;
+  margin: 0 0 18px;
+}
+.ficha-kicker { margin: 0 0 4px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.ficha h1 { margin: 0 0 8px; font: 600 28px/1.2 Palatino, serif; }
+.ficha-sub { margin: 0; }
+.doc-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-top: 4px;
+  color: var(--link);
+  font-weight: 600;
+  text-decoration: none;
+}
+.doc-open svg { flex-shrink: 0; }
+.doc-open > span:first-of-type {
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+.doc-open:hover { color: var(--link-hover); }
+.doc-open-name {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 13px;
+  text-decoration: none;
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kpi-carousel { margin: 0 0 22px; }
+.ficha-grid {
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  cursor: grab;
+}
+.ficha-grid.is-dragging {
+  cursor: grabbing;
+  scroll-behavior: auto;
+  scroll-snap-type: none;
+  user-select: none;
+}
+.ficha-grid::-webkit-scrollbar { display: none; }
+.ficha-grid > div {
+  flex: 0 0 calc((100% - 40px) / 5);
+  min-width: 0;
+  scroll-snap-align: start;
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+}
+.ficha-grid dt { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
+.ficha-grid dd { margin: 0; font-size: 16px; }
+.kpi-dots {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.kpi-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #b7ad9f;
+  cursor: pointer;
+}
+.kpi-dot.is-on { width: 18px; background: var(--ink); }
+.ficha h2, .ficha-h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 10px;
+  font: 600 18px/1.2 Palatino, serif;
+}
+.ficha-h2 svg { color: var(--muted); flex-shrink: 0; }
+.ficha-count {
+  margin-left: 2px;
+  font: 500 13px/1.2 "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  color: var(--muted);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.ficha-score {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+.ficha-score .q-chip { cursor: default; }
+.ficha-score p { margin: 0; font-size: 13px; color: var(--muted); }
+.q-score { font-weight: 600; font-variant-numeric: tabular-nums; }
+.q-chip.q-muted .q-dot { background: var(--muted); }
+.ficha-lines { max-height: min(70vh, 720px); }
+.fl-n { width: 4%; }
+.fl-id { width: 14%; }
+.fl-concepto { width: 32%; }
+.fl-uds { width: 6%; }
+.fl-money { width: 8%; }
+.fl-rate { width: 8%; }
+.fl-act { width: 12%; }
+.ficha-ledger td.line-actions .row-actions { justify-content: flex-end; }
+.ficha-ledger th.line-actions { text-align: right; white-space: nowrap; }
+#ficha-lines-editor tr.is-editing td.col-sticky,
+#ficha-lines-editor tr.is-editing td.cell-estado { background: #fff6eb; }
+#ficha-lines-editor.show-deleted tr.is-deleted td.col-sticky,
+#ficha-lines-editor.show-deleted tr.is-deleted td.cell-estado { background: #f3efe8; }
+#ficha-lines-editor tr:not(.is-editing) .line-edit { display: none; }
+#ficha-lines-editor tr:not(.is-editing) .line-save,
+#ficha-lines-editor tr:not(.is-deleted) .line-restore,
+#ficha-lines-editor tr.is-deleted .line-edit-btn,
+#ficha-lines-editor tr.is-deleted .line-save,
+#ficha-lines-editor tr.is-deleted .line-del { display: none; }
+#ficha-lines-editor tr.is-deleted { display: none; }
+#ficha-lines-editor.show-deleted tr[data-line]:not(.is-deleted) { display: none; }
+#ficha-lines-editor.show-deleted tr.is-deleted { display: table-row; background: #f3efe8; }
+#ficha-lines-editor tr.is-editing .line-view,
+#ficha-lines-editor tr.is-editing .line-edit-btn { display: none; }
+#ficha-lines-editor tr.is-editing { background: #fff6eb; }
+#ficha-lines-editor tr.is-editing .line-edit {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  padding: 6px 8px;
+}
+#ficha-lines-editor tr.is-editing .line-calc {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.ficha-h2 #ficha-lines-eye { margin-left: 8px; }
+.ficha-h2 #ficha-lines-eye.is-on { border-color: var(--ink); background: #ece4d6; }
+.line-del { color: var(--gasto); }
+.ficha-log-dialog { width: min(720px, calc(100vw - 32px)); padding: 18px 18px 16px; }
+.ficha-log-dialog h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ficha-log-dialog h2 svg { color: var(--muted); }
+.log-table { margin: 0; }
+.log-table td, .log-table th { vertical-align: top; }
+.edit-diff { width: 100%; border-collapse: collapse; font-size: 13px; margin: 0 0 14px; background: #fff; }
+.edit-diff th, .edit-diff td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
+.edit-diff th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
 thead th {
   position: sticky;
   top: 0;
@@ -1645,6 +3326,8 @@ thead th {
   background: #fff;
   box-shadow: 0 1px 0 var(--line);
   vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
 }
 thead th.col-sticky {
   left: 0;
@@ -1659,6 +3342,20 @@ tbody td.col-sticky {
 }
 tbody tr:hover td.col-sticky { background: #faf6ef; }
 tbody tr:target td.col-sticky { background: #fff6eb; }
+thead th.col-estado {
+  right: 0;
+  z-index: 4;
+  box-shadow: -8px 0 8px -8px rgba(28, 24, 20, .16);
+}
+tbody td.cell-estado {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: #fff;
+  box-shadow: -8px 0 8px -8px rgba(28, 24, 20, .16);
+}
+tbody tr:hover td.cell-estado { background: #faf6ef; }
+tbody tr:target td.cell-estado { background: #fff6eb; }
 th, td {
   text-align: left;
   padding: 10px 8px;
@@ -1668,17 +3365,28 @@ th, td {
 thead th {
   padding: 8px 10px;
   vertical-align: middle;
+  white-space: nowrap;
 }
 .th-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 8px;
+  flex-wrap: nowrap;
   min-width: 0;
 }
-.th-label { display: block; }
+.th-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+th[data-sort] .th-label { cursor: pointer; }
+th.is-sorted .th-label::after { content: " ↑"; }
+th.is-sorted.is-desc .th-label::after { content: " ↓"; }
 .funnel {
-  flex: 0 0 auto;
+  flex: 0 0 22px;
   width: 22px;
   height: 22px;
   border: 0;
@@ -1795,11 +3503,15 @@ thead th {
   border-radius: 8px;
   color: var(--ink);
 }
+.filter-field input[type=date] {
+  min-height: 34px;
+}
 .filter-pop-foot {
   display: flex;
   justify-content: flex-end;
   margin-top: 10px;
 }
+.cols-pop .filter-pop-foot { justify-content: space-between; align-items: center; }
 .filter-done {
   border: 0;
   background: none;
@@ -1808,17 +3520,32 @@ thead th {
   cursor: pointer;
   padding: 4px 0;
 }
-.cell-clip, .cell-rubro {
+.cell-clip,
+.cell-nowrap {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 0;
+}
+.cell-clip {
+  white-space: nowrap;
+}
+.cell-clip .row-go,
+.cell-clip .cell-text {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.cell-rubro { white-space: nowrap; }
 .cell-nowrap { white-space: nowrap; }
 .cell-calidad { white-space: nowrap; min-width: 0; }
-.cell-estado, .cell-doc { text-align: center; white-space: nowrap; }
+.cell-estado { text-align: left; white-space: nowrap; }
+.cell-doc { text-align: center; white-space: nowrap; }
 thead th.num, tbody td.num { text-align: right; }
-thead th.cell-estado, thead th.cell-doc { text-align: center; }
-thead th.num .th-head, thead th.cell-estado .th-head, thead th.cell-doc .th-head { justify-content: space-between; }
+thead th.cell-doc { text-align: center; }
+thead th.num .th-head { justify-content: flex-end; }
+thead th.col-estado .th-head { justify-content: flex-start; }
+thead th.cell-doc .th-head { justify-content: center; }
 thead th.col-sticky { text-align: left; }
 tbody td.col-sticky { text-align: center; }
 tbody tr:hover { background: rgba(28, 24, 20, .03); }
@@ -1860,47 +3587,94 @@ th {
 .doc-link { font-weight: 600; color: var(--neto); text-decoration: none; border-bottom: 1px solid transparent; }
 .doc-link:hover { border-bottom-color: var(--neto); }
 .empty { color: var(--muted); padding: 12px; }
-@media (max-width: 900px) {
-  .kpi-grid, .mast-grid, .irpf-kpis, .evo-board, .evo-sats, .charts { grid-template-columns: 1fr; display: grid; }
+@media (max-width: 1100px) {
+  .wrap { width: calc(100% - 20px); }
+  .ficha-page .wrap { width: calc(100% - 20px); }
+  h1 { font-size: 28px; }
+  .mast { padding-top: 20px; }
+  .mast-h1 #mast-kicker, h1 span { font-size: 18px; }
+  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi-grid > :last-child { grid-column: 1 / -1; }
+  .irpf-kpis, .evo-sats, .charts { grid-template-columns: 1fr 1fr; display: grid; }
   .charts figure:last-child { grid-column: auto; }
+  .ledger { padding: 12px 12px 8px; }
+  .ledger-table { min-width: 980px; font-size: 12px; }
+  .table-wrap { max-height: min(68vh, 640px); }
+  .edit-dialog { width: min(560px, calc(100vw - 20px)); max-height: min(90dvh, 720px); }
+}
+@media (max-width: 700px) {
+  .wrap, .ficha-page .wrap { width: calc(100% - 16px); }
+  .mast { padding-top: 16px; }
+  h1 { font-size: 24px; }
+  .mast-h1 { gap: 6px 8px; }
+  .mast-h1 #mast-kicker, h1 span { font-size: 16px; }
+  .meta, .mast-strip, .panel-lead { font-size: 13px; }
+  .kpis { padding: 14px 0 4px; }
+  .kpi, .kpi-btn { padding: 12px; }
+  .kpi strong, .kpi-btn strong, .evo-kpi strong { font-size: 22px; }
+  .kpi-grid, .libro-kpis { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .irpf-kpis, .evo-sats, .charts { grid-template-columns: 1fr; display: grid; }
+  .tabs-row { gap: 0; }
+  .tab { flex: 1 1 auto; text-align: center; padding: 14px 10px 12px; }
+  .ledger-status { gap: 8px; }
+  .ledger-actions { margin-left: auto; }
+  .foot-actions { flex-direction: column; align-items: stretch; }
+  .foot-actions .export-btn, .foot-actions .ghost { width: 100%; text-align: center; }
   .action { align-items: flex-start; }
-  .table-wrap { max-height: none; border: 0; }
-  .table-scroll-hint { display: none; }
-  .ledger-table { min-width: 0; width: 100%; table-layout: auto; }
-  thead { display: block; margin-bottom: 10px; border: 1px solid var(--line); background: #fff; }
-  thead tr { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; }
-  thead th {
-    display: flex;
-    flex-direction: column;
+  body { overflow-x: hidden; }
+  .table-scroll-hint { display: block; }
+  .ledger .table-wrap {
+    max-width: 100%;
+    max-height: min(70dvh, 640px);
+    overflow-x: auto;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-gutter: stable;
+  }
+  .ledger .table-wrap::-webkit-scrollbar { height: 8px; }
+  .ledger .table-wrap::-webkit-scrollbar-thumb {
+    background: #c8bfb2;
+    border-radius: 999px;
+  }
+  .ledger-table {
+    min-width: 980px;
+    width: max-content;
+    font-size: 12px;
+  }
+  .ledger-table thead th.col-sticky,
+  .ledger-table tbody td.col-sticky,
+  .ledger-table thead th.col-estado,
+  .ledger-table tbody td.cell-estado {
     position: static;
     box-shadow: none;
-    flex: 1 1 140px;
-    min-width: 140px;
-    padding: 4px 8px;
-    border: 0;
-    text-align: left;
   }
-  thead th.th-plain { display: none; }
-  thead th.col-sticky, tbody td.col-sticky {
-    position: static;
-    box-shadow: none;
-    background: transparent;
+  .ficha { padding-bottom: 28px; }
+  .ficha h1 { font-size: 22px; }
+  .ficha-grid > div { flex-basis: calc((100% - 10px) / 2); }
+  .ficha-lines input { width: 100%; box-sizing: border-box; font: inherit; }
+  .ficha .edit-lines { min-width: 560px; }
+  .ficha-score { align-items: flex-start; }
+  .doc-open { width: 100%; }
+  .site-foot { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
+}
+@media (pointer: coarse) {
+  .tab, .ghost, .export-btn, .estado-btn, .filter-done, .back-link {
+    min-height: 44px;
   }
-  tbody tr { display: block; border: 1px solid var(--line); margin-bottom: 10px; padding: 8px; background: #fff; }
-  tbody td { display: grid; grid-template-columns: 110px 1fr; gap: 8px; border: 0; padding: 4px 0; }
-  tbody td::before {
-    content: attr(data-label);
-    color: var(--muted);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: .04em;
+  .row-edit, .mast-edit {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
   }
-  tbody td.num { text-align: left; }
+  .funnel, .q-chip { min-height: 36px; }
 }
 @media print {
-  body { background: #fff; }
+  body { background: #fff; min-height: 0; display: block; }
+  .foot, .site-foot { margin-top: 24px; padding-top: 16px; padding-bottom: 16px; }
   .kpi-btn, .ghost, .cmd-btn, .review, .tabs, .funnel, .filter-pop, .export-btn { display: none; }
-  .mast, .kpi, .evo-hero, .evo-kpi, figure, .ledger { break-inside: avoid; }
+  .mast, .kpi, .evo-kpi, figure, .ledger { break-inside: avoid; }
   .table-wrap { max-height: none; }
 }
 """
@@ -1916,6 +3690,8 @@ _JS = r"""
   const rows = [...document.querySelectorAll(".ledger-table tbody tr")];
   const fMin = document.getElementById("f-min");
   const fMax = document.getElementById("f-max");
+  const fDesde = document.getElementById("f-desde");
+  const fHasta = document.getElementById("f-hasta");
   const fClear = document.getElementById("f-clear");
 
   const showPanel = (name, { focusTab = false } = {}) => {
@@ -1991,10 +3767,23 @@ _JS = r"""
     return "ok";
   };
 
+  const dateLabel = (iso) => {
+    if (!iso) return "";
+    const [year, month, day] = iso.split("-");
+    return `${day}/${month}/${year}`;
+  };
+
   const matchesRow = (row) => {
     const q = (input?.value || "").trim().toLowerCase();
     if (q && !(row.dataset.q || "").includes(q)) return false;
-    if (!matchesGroup("fecha", row.dataset.fecha)) return false;
+    const desde = fDesde?.value || "";
+    const hasta = fHasta?.value || "";
+    if (desde || hasta) {
+      const fecha = row.dataset.fecha || "";
+      if (!fecha) return false;
+      if (desde && fecha < desde) return false;
+      if (hasta && fecha > hasta) return false;
+    }
     if (!matchesGroup("emisor", row.dataset.emisor)) return false;
     if (!matchesGroup("nif", row.dataset.nif)) return false;
     if (!matchesGroup("factura", row.dataset.numero)) return false;
@@ -2015,7 +3804,9 @@ _JS = r"""
     const bits = [];
     const q = (input?.value || "").trim();
     if (q) bits.push(`«${q}»`);
-    if (selectedValues("fecha")) bits.push("fecha");
+    if (fDesde?.value && fHasta?.value) bits.push(`${dateLabel(fDesde.value)} – ${dateLabel(fHasta.value)}`);
+    else if (fDesde?.value) bits.push(`desde ${dateLabel(fDesde.value)}`);
+    else if (fHasta?.value) bits.push(`hasta ${dateLabel(fHasta.value)}`);
     if (selectedValues("emisor")) bits.push("emisor");
     if (selectedValues("confianza")) bits.push("confianza");
     if (selectedValues("estado")) bits.push("estado");
@@ -2034,7 +3825,7 @@ _JS = r"""
       if (!btn || !pop) continue;
       const boxes = [...pop.querySelectorAll("input[data-fg]")];
       const boxDirty = boxes.length > 0 && boxes.some((box) => !box.checked);
-      const rangeDirty = [...pop.querySelectorAll("input[type=number], #q")].some((el) => (el.value || "").trim());
+      const rangeDirty = [...pop.querySelectorAll("input[type=number], input[type=date], #q")].some((el) => (el.value || "").trim());
       btn.classList.toggle("on", boxDirty || rangeDirty);
     }
   };
@@ -2056,39 +3847,136 @@ _JS = r"""
     }
   };
 
-  const apply = () => {
+  const applyIrpf = () => {
+    const irpfRows = [...document.querySelectorAll("#irpf tbody tr")];
+    if (!irpfRows.length) return;
+    const min = parseAmount(document.getElementById("f-irpf-min")?.value);
+    const max = parseAmount(document.getElementById("f-irpf-max")?.value);
+    for (const row of irpfRows) {
+      const amount = Number(row.dataset.irpfImporte || 0);
+      const show = matchesGroup("irpf-concepto", row.dataset.irpfConcepto || "")
+        && matchesGroup("irpf-resta", row.dataset.irpfResta || "")
+        && (min === null || amount >= min)
+        && (max === null || amount <= max);
+      row.hidden = !show;
+    }
+  };
+
+  const PAGE_SIZE = 15;
+  let libroPage = 1;
+  const libroPrev = document.getElementById("libro-prev");
+  const libroNext = document.getElementById("libro-next");
+  const libroPages = document.getElementById("libro-pages");
+  const libroPagerLabel = document.getElementById("libro-pager-label");
+  const paintLibroPager = (matchedCount) => {
+    const pages = Math.max(1, Math.ceil(matchedCount / PAGE_SIZE) || 1);
+    libroPage = Math.min(Math.max(1, libroPage), pages);
+    if (libroPages) {
+      libroPages.replaceChildren();
+      for (let i = 1; i <= pages; i += 1) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "pager-num" + (i === libroPage ? " is-on" : "");
+        btn.textContent = String(i);
+        btn.setAttribute("aria-label", `Página ${i}`);
+        if (i === libroPage) btn.setAttribute("aria-current", "page");
+        btn.addEventListener("click", () => {
+          libroPage = i;
+          apply({ keepPage: true });
+        });
+        libroPages.appendChild(btn);
+      }
+    }
+    if (libroPagerLabel) {
+      if (!matchedCount) libroPagerLabel.textContent = "0 de 0";
+      else {
+        const start = (libroPage - 1) * PAGE_SIZE;
+        const end = Math.min(start + PAGE_SIZE, matchedCount);
+        libroPagerLabel.textContent = `${start + 1}–${end} de ${matchedCount}`;
+      }
+    }
+    if (libroPrev) libroPrev.disabled = libroPage <= 1 || matchedCount === 0;
+    if (libroNext) libroNext.disabled = libroPage >= pages || matchedCount === 0;
+    const pager = document.getElementById("libro-pager");
+    if (pager) pager.hidden = rows.length === 0;
+  };
+
+  const apply = (opts = {}) => {
     const bits = activeBits();
     let visible = 0;
     let totalVisible = 0;
+    let baseVisible = 0;
+    let ivaVisible = 0;
+    let totalLibro = 0;
+    const countsInBook = (row) => row.dataset.estado !== "duplicado";
+    const matched = [];
     for (const row of rows) {
+      const amount = Number(row.dataset.total || 0);
+      const base = Number(row.dataset.base || 0);
+      const iva = Number(row.dataset.iva || 0);
+      if (countsInBook(row)) totalLibro += amount;
       const show = matchesRow(row);
-      row.hidden = !show;
-      if (show) {
-        visible += 1;
-        totalVisible += Number(row.dataset.total || 0);
+      row.dataset.match = show ? "1" : "0";
+      if (!show) {
+        row.hidden = true;
+        continue;
+      }
+      matched.push(row);
+      visible += 1;
+      if (countsInBook(row)) {
+        totalVisible += amount;
+        baseVisible += base;
+        ivaVisible += iva;
       }
     }
+    const pageCount = Math.max(1, Math.ceil(matched.length / PAGE_SIZE) || 1);
+    if (opts.last) libroPage = pageCount;
+    else if (!opts.keepPage) libroPage = 1;
+    libroPage = Math.min(Math.max(1, libroPage), pageCount);
+    const start = (libroPage - 1) * PAGE_SIZE;
+    matched.forEach((row, index) => {
+      row.hidden = index < start || index >= start + PAGE_SIZE;
+    });
+    paintLibroPager(matched.length);
     syncFunnels();
     syncKpiPressed();
+    applyIrpf();
     if (fClear) fClear.hidden = bits.length === 0;
+    const libroN = document.getElementById("libro-n");
+    const libroNote = document.getElementById("libro-n-note");
+    const libroTotal = document.getElementById("libro-total");
+    const libroVisible = document.getElementById("libro-visible");
+    const libroBase = document.getElementById("libro-base");
+    const libroIva = document.getElementById("libro-iva");
+    if (libroN) libroN.textContent = String(visible);
+    if (libroNote) libroNote.textContent = visible === rows.length ? "" : `de ${rows.length}`;
+    if (libroTotal) libroTotal.textContent = formatEuro(totalLibro);
+    if (libroVisible) libroVisible.textContent = formatEuro(totalVisible);
+    if (libroBase) libroBase.textContent = formatEuro(baseVisible);
+    if (libroIva) libroIva.textContent = formatEuro(ivaVisible);
     if (!status) return;
     status.classList.toggle("empty-query", bits.length > 0 && visible === 0);
     if (visible === 0) {
+      status.hidden = false;
       status.textContent = bits.length
         ? "Ningún asiento coincide con estos filtros."
         : "No hay asientos en este ejercicio.";
       return;
     }
-    let line = `Mostrando ${visible} de ${rows.length}`;
-    if (bits.length) line += ` · ${bits.join(" · ")}`;
-    if (totalVisible) line += ` · Total visible: ${formatEuro(totalVisible)}`;
-    status.textContent = line;
+    status.hidden = true;
+    status.textContent = "";
   };
 
   const clearAdvanced = () => {
     for (const box of document.querySelectorAll("input[data-fg]")) box.checked = true;
     if (fMin) fMin.value = "";
     if (fMax) fMax.value = "";
+    if (fDesde) fDesde.value = "";
+    if (fHasta) fHasta.value = "";
+    const irpfMin = document.getElementById("f-irpf-min");
+    const irpfMax = document.getElementById("f-irpf-max");
+    if (irpfMin) irpfMin.value = "";
+    if (irpfMax) irpfMax.value = "";
     if (input) input.value = "";
     for (const search of document.querySelectorAll("[data-filter-search]")) {
       search.value = "";
@@ -2121,13 +4009,24 @@ _JS = r"""
     const anchor = document.getElementById(`asiento-${id}`);
     const row = anchor?.closest("tr");
     if (!row) return;
-    row.hidden = false;
+    const matched = rows.filter((item) => item.dataset.match === "1");
+    const index = matched.indexOf(row);
+    if (index >= 0) {
+      libroPage = Math.floor(index / PAGE_SIZE) + 1;
+      apply({ keepPage: true });
+    }
     row.classList.add("flash");
     row.scrollIntoView({ behavior: "smooth", block: "center" });
     setTimeout(() => row.classList.remove("flash"), 1600);
   };
 
   for (const button of kpiButtons) {
+    button.addEventListener("click", () => {
+      showPanel("libro");
+      setFilter(button.dataset.filter, button.dataset.scroll || "#ledger");
+    });
+  }
+  for (const button of document.querySelectorAll(".evo-alert[data-filter]")) {
     button.addEventListener("click", () => {
       showPanel("libro");
       setFilter(button.dataset.filter, button.dataset.scroll || "#ledger");
@@ -2161,6 +4060,12 @@ _JS = r"""
   input?.addEventListener("input", apply);
   fMin?.addEventListener("input", apply);
   fMax?.addEventListener("input", apply);
+  fDesde?.addEventListener("input", apply);
+  fDesde?.addEventListener("change", apply);
+  fHasta?.addEventListener("input", apply);
+  fHasta?.addEventListener("change", apply);
+  document.getElementById("f-irpf-min")?.addEventListener("input", apply);
+  document.getElementById("f-irpf-max")?.addEventListener("input", apply);
   fClear?.addEventListener("click", clearAdvanced);
   for (const box of document.querySelectorAll("input[data-fg]")) {
     box.addEventListener("change", apply);
@@ -2187,16 +4092,26 @@ _JS = r"""
   }
 
   const placePop = (chip, pop) => {
-    const box = chip.getBoundingClientRect();
-    const width = pop.classList.contains("filter-pop") ? Math.min(300, window.innerWidth - 24) : 220;
-    const left = Math.min(box.left, window.innerWidth - width - 12);
+    const isFilter = pop.classList.contains("filter-pop");
+    const width = Math.min(isFilter ? 300 : 320, window.innerWidth - 24);
     pop.style.inset = "auto";
     pop.style.margin = "0";
-    pop.style.width = pop.classList.contains("filter-pop") ? `${width}px` : "";
-    pop.style.left = `${Math.max(12, left)}px`;
-    pop.style.top = `${box.bottom + 6}px`;
+    pop.style.width = `${width}px`;
+    pop.style.maxHeight = "min(420px, 70vh)";
+    pop.style.overflowY = "auto";
+    const box = chip.getBoundingClientRect();
+    const left = Math.min(Math.max(12, box.left), window.innerWidth - width - 12);
+    pop.style.left = `${left}px`;
+    pop.style.top = `${box.bottom + 8}px`;
+    requestAnimationFrame(() => {
+      const height = pop.offsetHeight;
+      const below = box.bottom + 8;
+      const overflow = below + height > window.innerHeight - 12;
+      const top = overflow ? Math.max(12, box.top - height - 8) : below;
+      pop.style.top = `${top}px`;
+    });
   };
-  for (const chip of document.querySelectorAll(".funnel[popovertarget], .q-chip[popovertarget]")) {
+  for (const chip of document.querySelectorAll(".funnel[popovertarget], .q-chip[popovertarget], #cols-toggle")) {
     const pop = document.getElementById(chip.getAttribute("popovertarget"));
     if (!pop) continue;
     pop.addEventListener("toggle", (event) => {
@@ -2206,6 +4121,566 @@ _JS = r"""
     });
   }
 
+  const csvCell = (value) => {
+    const text = String(value ?? "");
+    if (/[;"\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+    return text;
+  };
+  const exportVisible = () => {
+    const headers = ["Id","Fecha","Emisor","NIF","Factura","Base","IVA","Total","Rubro","Estado"];
+    const lines = [headers.join(";")];
+    for (const row of rows) {
+      if (row.dataset.match === "0") continue;
+      const nif = row.dataset.nif || "";
+      const base = row.dataset.base || "";
+      const iva = row.dataset.iva || "";
+      const total = row.dataset.total || "";
+      const fecha = row.querySelector('[data-label="Fecha"]')?.textContent?.trim() || "";
+      lines.push([
+        row.dataset.id || "",
+        fecha,
+        row.dataset.emisor || "",
+        nif,
+        row.dataset.numero || "",
+        base,
+        iva,
+        total,
+        row.dataset.cuenta || "",
+        row.dataset.estadoLabel || "",
+      ].map(csvCell).join(";"));
+    }
+    const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "libro_filtrado.csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+  document.getElementById("export-visible")?.addEventListener("click", exportVisible);
+  document.getElementById("export-visible-top")?.addEventListener("click", exportVisible);
+
+  const table = document.querySelector(".ledger-table");
+  const COL_KEY = "aeat-hub-libro-cols";
+  const colBoxes = [...document.querySelectorAll("#pop-cols input[data-col-toggle]")];
+  const readCols = () => {
+    try { return JSON.parse(localStorage.getItem(COL_KEY) || "{}"); }
+    catch { return {}; }
+  };
+  const applyCols = () => {
+    const saved = readCols();
+    for (const box of colBoxes) {
+      const on = saved[box.dataset.colToggle] !== false;
+      box.checked = on;
+      table?.classList.toggle(`col-off-${box.dataset.colToggle}`, !on);
+    }
+  };
+  for (const box of colBoxes) {
+    box.addEventListener("change", () => {
+      const saved = readCols();
+      saved[box.dataset.colToggle] = box.checked;
+      try { localStorage.setItem(COL_KEY, JSON.stringify(saved)); } catch {}
+      applyCols();
+    });
+  }
+  document.getElementById("cols-all")?.addEventListener("click", () => {
+    try { localStorage.removeItem(COL_KEY); } catch {}
+    applyCols();
+  });
+  applyCols();
+
+  const dialog = document.getElementById("edit-dialog");
+  const formPane = document.getElementById("edit-form-pane");
+  const confirmPane = document.getElementById("edit-confirm");
+  const diffBody = document.getElementById("edit-diff-body");
+  const logList = document.getElementById("edit-log");
+  const ack = document.getElementById("edit-ack");
+  const commitBtn = document.getElementById("edit-commit");
+  const labels = {
+    emisor: "Emisor",
+    nif_emisor: "NIF emisor",
+    fecha: "Fecha de compra",
+    validado: "Estado",
+    rubro: "Rubro",
+  };
+  let editingRow = null;
+  let pendingBody = null;
+
+  const closeDialog = () => {
+    dialog?.close();
+    editingRow = null;
+    pendingBody = null;
+  };
+  const showForm = () => {
+    if (formPane) formPane.hidden = false;
+    if (confirmPane) confirmPane.hidden = true;
+    if (ack) ack.checked = false;
+    if (commitBtn) commitBtn.disabled = true;
+  };
+  const showConfirm = () => {
+    if (formPane) formPane.hidden = true;
+    if (confirmPane) confirmPane.hidden = false;
+    if (ack) ack.checked = false;
+    if (commitBtn) commitBtn.disabled = true;
+  };
+  const renderLog = (items) => {
+    if (!logList) return;
+    if (!items || !items.length) {
+      logList.innerHTML = "<li>Sin cambios registrados todavía.</li>";
+      return;
+    }
+    logList.innerHTML = items.slice(0, 8).map((item) => {
+      const campo = labels[item.campo] || item.campo;
+      const cuando = item.cuando ? ` · ${item.cuando}` : "";
+      return `<li><strong>${campo}</strong>: ${item.antes || "—"} → ${item.despues || "—"}${cuando}</li>`;
+    }).join("");
+  };
+  const snapshotFromRow = (row) => ({
+    emisor: row.dataset.emisor || "",
+    nif_emisor: row.dataset.nif || "",
+    fecha: row.dataset.fecha || "",
+    validado: row.dataset.validado === "1",
+    rubro: row.dataset.cuenta || "",
+    n_articulos: row.dataset.articulos || "",
+  });
+  const formatLineEuro = (value) => {
+    if (value === "" || value == null) return "—";
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "—";
+    return formatEuro(num);
+  };
+  const escapeText = (value) => String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  const renderLines = (payload, bodyId = "edit-lines-body", noteId = "edit-lines-note") => {
+    const body = document.getElementById(bodyId);
+    const note = document.getElementById(noteId);
+    if (!body) return;
+    const table = body.closest("table");
+    const toNum = (value) => {
+      if (value === "" || value == null) return null;
+      const num = Number(value);
+      return Number.isFinite(num) ? num : null;
+    };
+    const lines = payload?.lineas || [];
+    if (!lines.length) {
+      body.innerHTML = '<tr><td colspan="6">Sin líneas extraídas. Abre el PDF y contrasta el total a mano.</td></tr>';
+      table?.querySelector("tfoot")?.remove();
+      const head = table?.querySelector("thead th:nth-child(5)");
+      if (head) head.textContent = "IVA";
+      if (note) {
+        note.textContent = "";
+        note.classList.remove("ok");
+      }
+      return;
+    }
+    const tipos = [...new Set(lines.map((item) => item.iva_tipo).filter(Boolean))];
+    const head = table?.querySelector("thead th:nth-child(5)");
+    if (head) {
+      if (tipos.length === 1 && Number.isFinite(Number(tipos[0]))) {
+        const n = Number(tipos[0]);
+        head.textContent = `IVA (${Math.abs(n - Math.round(n)) < 0.001 ? Math.round(n) : n} %)`;
+      } else {
+        head.textContent = "IVA";
+      }
+    }
+    body.innerHTML = lines.map((item, idx) => (
+      `<tr data-line="1"><td class="num">${escapeText(item.posicion || idx + 1)}</td>`
+      + `<td><input data-f="codigo" value="${escapeText(item.codigo || "")}" aria-label="Id de línea"></td>`
+      + `<td><input data-f="descripcion" value="${escapeText(item.descripcion || "")}" aria-label="Concepto"></td>`
+      + `<td><input data-f="base" type="number" min="0" step="0.01" value="${escapeText(item.base || "")}" aria-label="Subtotal"></td>`
+      + `<td><input data-f="iva_cuota" type="number" min="0" step="0.01" value="${escapeText(item.iva_cuota || "")}" aria-label="IVA"></td>`
+      + `<td><input data-f="importe" type="number" min="0" step="0.01" value="${escapeText(item.importe || "")}" aria-label="Total de línea"></td>`
+      + `<td><button type="button" class="ghost line-del">Quitar</button></td></tr>`
+    )).join("");
+    const sumOf = (key) => lines.reduce((acc, item) => acc + (toNum(item[key]) || 0), 0);
+    let foot = table?.querySelector("tfoot");
+    if (table && lines.some((item) => item.importe || item.base)) {
+      if (!foot) {
+        foot = document.createElement("tfoot");
+        table.appendChild(foot);
+      }
+      foot.innerHTML = `<tr><td colspan="3">Suma</td><td>${formatLineEuro(sumOf("base"))}</td>`
+        + `<td>${formatLineEuro(sumOf("iva_cuota"))}</td><td>${formatLineEuro(sumOf("importe"))}</td></tr>`;
+    } else {
+      foot?.remove();
+    }
+    if (!note) return;
+    const hasAmount = lines.some((item) => item.importe || item.base);
+    if (!hasAmount) {
+      note.classList.remove("ok");
+      note.textContent = "El OCR vio estos conceptos, pero no el importe de cada uno. Abre el PDF y contrasta el total.";
+      return;
+    }
+    const sum = toNum(payload.lineas_suma);
+    const base = toNum(payload.base);
+    const total = toNum(payload.total);
+    const sumLabel = formatLineEuro(sum);
+    if (payload.lineas_ok) {
+      note.classList.add("ok");
+      const sumBase = sumOf("base");
+      const sumIva = sumOf("iva_cuota");
+      if (sumBase && sumIva) {
+        note.textContent = `Suma de subtotales ${formatLineEuro(sumBase)} + IVA ${formatLineEuro(sumIva)} = ${sumLabel}.`;
+      } else if (base != null && sum != null && Math.abs(sum - base) <= 0.02) {
+        note.textContent = `Suma de líneas ${sumLabel} = base.`;
+      } else {
+        note.textContent = `Suma de líneas ${sumLabel} = total.`;
+      }
+    } else {
+      note.classList.remove("ok");
+      note.textContent = `Suma de líneas ${sumLabel}. Contrasta con base ${formatLineEuro(base)} / total ${formatLineEuro(total)}. El OCR no siempre lee todos los rubros.`;
+    }
+  };
+  const fillForm = (snap, row) => {
+    const emisor = document.getElementById("edit-emisor");
+    const nif = document.getElementById("edit-nif");
+    const fecha = document.getElementById("edit-fecha");
+    const validar = document.getElementById("edit-validar");
+    const rubro = document.getElementById("edit-rubro");
+    const meta = document.getElementById("edit-meta");
+    const articulos = document.getElementById("edit-articulos");
+    if (emisor) emisor.value = snap.emisor || "";
+    if (nif) nif.value = snap.nif_emisor;
+    if (fecha) fecha.value = snap.fecha || "";
+    if (validar) validar.checked = Boolean(snap.validado);
+    if (rubro) rubro.value = snap.rubro || "";
+    if (articulos) {
+      const n = snap.n_articulos;
+      articulos.textContent = n && n !== "0"
+        ? `Artículos: ${n}. Suma de unidades de la ficha.`
+        : "Artículos: ninguno con nombre en la ficha.";
+    }
+    if (meta) {
+      meta.textContent = `#${row.dataset.id} · ${row.dataset.emisor || "—"} · ${row.dataset.fechaLabel || ""}`;
+    }
+  };
+  let linesBefore = [];
+  const collectLines = () => [...document.querySelectorAll("#edit-lines-body tr[data-line]")].map((tr, idx) => ({
+    posicion: idx + 1,
+    codigo: tr.querySelector("[data-f=codigo]")?.value || "",
+    descripcion: tr.querySelector("[data-f=descripcion]")?.value || "",
+    base: tr.querySelector("[data-f=base]")?.value || "",
+    iva_cuota: tr.querySelector("[data-f=iva_cuota]")?.value || "",
+    importe: tr.querySelector("[data-f=importe]")?.value || "",
+  }));
+  const linesKey = (items) => JSON.stringify((items || []).map((item) => ({
+    descripcion: item.descripcion || "",
+    codigo: item.codigo || "",
+    base: item.base || "",
+    iva_cuota: item.iva_cuota || "",
+    importe: item.importe || "",
+  })));
+  const proposedFromForm = () => ({
+    emisor: (document.getElementById("edit-emisor")?.value || "").trim(),
+    nif_emisor: (document.getElementById("edit-nif")?.value || "").trim().toUpperCase(),
+    fecha: document.getElementById("edit-fecha")?.value || "",
+    validado: Boolean(document.getElementById("edit-validar")?.checked),
+    rubro: document.getElementById("edit-rubro")?.value || "",
+  });
+  const diffsOf = (before, after) => {
+    const rows = [];
+    const labels = { emisor: "Emisor", nif_emisor: "NIF", fecha: "Fecha", validado: "Estado", rubro: "Rubro" };
+    for (const key of ["emisor", "nif_emisor", "fecha", "validado", "rubro"]) {
+      const a = key === "validado" ? (before[key] ? "OK" : "Por revisar") : String(before[key] ?? "");
+      const b = key === "validado" ? (after[key] ? "OK" : "Por revisar") : String(after[key] ?? "");
+      if (a !== b) rows.push({ campo: labels[key] || key, antes: a || "—", despues: b || "—" });
+    }
+    return rows;
+  };
+  const openEdit = async (row, { onlyValidate = false, onlyReopen = false } = {}) => {
+    editingRow = row;
+    linesBefore = [];
+    showForm();
+    fillForm(snapshotFromRow(row), row);
+    renderLog([]);
+    renderLines({ lineas: [] });
+    dialog?.showModal();
+    try {
+      const res = await fetch(`/api/asientos/${row.dataset.id}`);
+      if (res.ok) {
+        const payload = await res.json();
+        fillForm({
+          emisor: payload.emisor || "",
+          nif_emisor: payload.nif_emisor || "",
+          fecha: payload.fecha || "",
+          validado: Boolean(payload.validado),
+          rubro: payload.rubro || "",
+          n_articulos: payload.n_articulos || "",
+        }, row);
+        linesBefore = payload.lineas || [];
+        renderLog(payload.cambios || []);
+        renderLines(payload);
+      }
+    } catch { /* historial y líneas opcionales */ }
+    if (onlyValidate) {
+      const validar = document.getElementById("edit-validar");
+      if (validar) validar.checked = true;
+      document.getElementById("edit-review")?.click();
+    } else if (onlyReopen) {
+      const validar = document.getElementById("edit-validar");
+      if (validar) validar.checked = false;
+      document.getElementById("edit-review")?.click();
+    }
+  };
+  const setRowActions = (row, validado) => {
+    const acciones = row.querySelector(".row-actions");
+    if (!acciones) return;
+    const pencil = acciones.querySelector(".row-edit");
+    acciones.innerHTML = "";
+    if (pencil) acciones.appendChild(pencil);
+    if (row.dataset.estado === "duplicado") {
+      const badge = document.createElement("span");
+      badge.className = "estado-btn estado-dup";
+      badge.title = "Duplicado: no entra en los totales";
+      badge.textContent = "Duplicado";
+      acciones.appendChild(badge);
+      return;
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    if (validado) {
+      btn.className = "estado-btn estado-ok";
+      btn.dataset.reopen = row.dataset.id;
+      btn.textContent = "Validado";
+      btn.title = "Validado. Pulsa para devolver a revisión";
+      btn.setAttribute("aria-label", `Validado. Devolver asiento ${row.dataset.id} a revisión`);
+      btn.addEventListener("click", () => openEdit(row, { onlyReopen: true }));
+    } else {
+      btn.className = "estado-btn estado-pend";
+      btn.dataset.validar = row.dataset.id;
+      btn.textContent = "Por validar";
+      btn.title = "Pendiente de validar. Pulsa para confirmar";
+      btn.setAttribute("aria-label", `Por validar. Confirmar asiento ${row.dataset.id}`);
+      btn.addEventListener("click", () => openEdit(row, { onlyValidate: true }));
+    }
+    acciones.appendChild(btn);
+  };
+  const applyPayload = (row, payload) => {
+    row.dataset.validado = payload.validado ? "1" : "0";
+    row.dataset.baja = payload.validado ? "0" : row.dataset.baja;
+    row.dataset.estado = payload.estado || row.dataset.estado;
+    row.dataset.estadoLabel = payload.estado_label || row.dataset.estadoLabel;
+    row.dataset.nif = payload.nif_emisor || "";
+    if (payload.emisor != null) {
+      row.dataset.emisor = payload.emisor;
+      const emisorCell = row.querySelector('[data-label="Emisor"] .cell-text')
+        || row.querySelector('[data-label="Emisor"] a')
+        || row.querySelector('[data-label="Emisor"]');
+      if (emisorCell) emisorCell.textContent = payload.emisor || "—";
+    }
+    if (payload.fecha_label) {
+      row.dataset.fecha = payload.fecha || "";
+      row.dataset.fechaLabel = payload.fecha_label;
+      const fechaCell = row.querySelector('[data-label="Fecha"] a')
+        || row.querySelector('[data-label="Fecha"]');
+      if (fechaCell) fechaCell.textContent = payload.fecha_label;
+    }
+    if (payload.n_articulos != null) {
+      const art = row.querySelector('[data-label="Artículos"] a')
+        || row.querySelector('[data-label="Artículos"]');
+      if (art) art.textContent = payload.n_articulos ? String(payload.n_articulos) : "—";
+    }
+    row.dataset.base = payload.base || "";
+    row.dataset.iva = payload.iva_cuota || "";
+    row.dataset.total = payload.total || row.dataset.total;
+    const setText = (label, text) => {
+      const cell = row.querySelector(`[data-label="${label}"]`);
+      if (cell) cell.textContent = text;
+    };
+    setText("NIF", payload.nif_emisor || "—");
+    setText("Base", payload.base ? formatEuro(Number(payload.base)) : "—");
+    setText("IVA", payload.iva_cuota ? formatEuro(Number(payload.iva_cuota)) : "—");
+    if (payload.rubro != null) {
+      row.dataset.cuenta = payload.rubro;
+      setText("Rubro", payload.rubro || "Sin clasificar");
+    }
+    const amt = row.querySelector(".total-amt");
+    if (amt) amt.textContent = payload.total ? formatEuro(Number(payload.total)) : "—";
+    setRowActions(row, Boolean(payload.validado));
+    const chip = row.querySelector(".q-chip span");
+    if (chip) chip.textContent = payload.validado ? "Validado" : "Revisar";
+    row.querySelector(".q-chip")?.classList.toggle("q-warn", !payload.validado);
+    row.querySelector(".q-chip")?.classList.toggle("q-ok", Boolean(payload.validado));
+  };
+
+  document.getElementById("edit-line-add")?.addEventListener("click", () => {
+    const body = document.getElementById("edit-lines-body");
+    if (!body) return;
+    body.querySelector("tr:not([data-line])")?.remove();
+    const tr = document.createElement("tr");
+    tr.dataset.line = "1";
+    const n = body.querySelectorAll("tr[data-line]").length + 1;
+    tr.innerHTML = `<td class="num">${n}</td>`
+      + `<td><input data-f="codigo" aria-label="Id de línea"></td>`
+      + `<td><input data-f="descripcion" aria-label="Concepto"></td>`
+      + `<td><input data-f="base" type="number" min="0" step="0.01" aria-label="Subtotal"></td>`
+      + `<td><input data-f="iva_cuota" type="number" min="0" step="0.01" aria-label="IVA"></td>`
+      + `<td><input data-f="importe" type="number" min="0" step="0.01" aria-label="Total de línea"></td>`
+      + `<td><button type="button" class="ghost line-del">Quitar</button></td>`;
+    body.appendChild(tr);
+  });
+  document.getElementById("edit-lines-body")?.addEventListener("click", (event) => {
+    const button = event.target.closest(".line-del");
+    if (!button) return;
+    button.closest("tr")?.remove();
+  });
+  document.getElementById("edit-cancel")?.addEventListener("click", closeDialog);
+  document.getElementById("edit-back")?.addEventListener("click", showForm);
+  ack?.addEventListener("change", () => {
+    if (commitBtn) commitBtn.disabled = !ack.checked;
+  });
+  document.getElementById("edit-review")?.addEventListener("click", () => {
+    if (!editingRow) return;
+    const before = snapshotFromRow(editingRow);
+    const after = proposedFromForm();
+    const diffs = diffsOf(before, after);
+    if (!diffs.length) {
+      toast("No hay cambios que guardar.");
+      return;
+    }
+    pendingBody = { ...after, confirmado: true };
+    if (diffBody) {
+      diffBody.innerHTML = diffs.map((item) => (
+        `<tr><td>${labels[item.campo] || item.campo}</td><td>${item.antes}</td><td>${item.despues}</td></tr>`
+      )).join("");
+    }
+    showConfirm();
+  });
+  document.getElementById("edit-commit")?.addEventListener("click", async () => {
+    if (!editingRow || !pendingBody || !ack?.checked) return;
+    try {
+      const res = await fetch(`/api/asientos/${editingRow.dataset.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(pendingBody),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const payload = await res.json();
+      applyPayload(editingRow, payload);
+      apply({ keepPage: true });
+      closeDialog();
+      toast("Cambio guardado. Queda en el log del asiento.");
+    } catch {
+      toast("No se pudo guardar. Abre el dashboard con `aeat-hub dashboard` (servidor local).");
+    }
+  });
+  for (const row of rows) {
+    row.querySelector("[data-edit]")?.addEventListener("click", () => openEdit(row));
+    row.querySelector("[data-validar]")?.addEventListener("click", () => openEdit(row, { onlyValidate: true }));
+    row.querySelector("[data-reopen]")?.addEventListener("click", () => openEdit(row, { onlyReopen: true }));
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("a, button, input, label, [popover], .row-actions")) return;
+      const href = row.dataset.href;
+      if (href) window.location.href = href;
+    });
+  }
+
+  libroPrev?.addEventListener("click", () => {
+    libroPage -= 1;
+    apply({ keepPage: true });
+  });
+  libroNext?.addEventListener("click", () => {
+    libroPage += 1;
+    apply({ keepPage: true });
+  });
+  let sortKey = "id";
+  let sortDir = 1;
+  const libroTable = document.querySelector("#ledger .ledger-table");
+  const sortValue = (row, key) => {
+    if (key === "id") return Number(row.dataset.id || 0);
+    if (key === "total" || key === "base" || key === "iva") return Number(row.dataset[key] || 0);
+    if (key === "articulos") {
+      const text = (row.querySelector('[data-col="articulos"]')?.textContent || "").replace(",", ".").trim();
+      const n = Number(text);
+      return Number.isFinite(n) ? n : -1;
+    }
+    if (key === "confianza") return row.querySelector(".q-chip span")?.textContent?.trim() || "";
+    if (key === "doc") return row.querySelector(".doc-link") ? "1" : "0";
+    if (key === "estado") return row.dataset.estadoLabel || "";
+    if (key === "factura") return row.dataset.numero || "";
+    if (key === "fecha") return row.dataset.fecha || "";
+    if (key === "emisor") return row.dataset.emisor || "";
+    if (key === "nif") return row.dataset.nif || "";
+    return "";
+  };
+  const compareSort = (a, b) => {
+    if (typeof a === "number" && typeof b === "number") return a - b;
+    return String(a).localeCompare(String(b), "es", { numeric: true, sensitivity: "base" });
+  };
+  const sortLibro = () => {
+    rows.sort((a, b) => sortDir * compareSort(sortValue(a, sortKey), sortValue(b, sortKey)));
+    const body = libroTable?.tBodies[0];
+    if (body) for (const row of rows) body.appendChild(row);
+    libroTable?.querySelectorAll("thead th[data-sort]").forEach((th) => {
+      const on = th.dataset.sort === sortKey;
+      th.classList.toggle("is-sorted", on);
+      th.classList.toggle("is-desc", on && sortDir < 0);
+    });
+  };
+  libroTable?.querySelectorAll("thead th[data-sort]").forEach((th) => {
+    th.addEventListener("click", (event) => {
+      if (event.target.closest(".funnel, .filter-pop")) return;
+      const key = th.dataset.sort;
+      if (!key) return;
+      if (sortKey === key) sortDir *= -1;
+      else { sortKey = key; sortDir = 1; }
+      sortLibro();
+      apply();
+    });
+  });
+  sortLibro();
   apply();
+
+  const mastDialog = document.getElementById("mast-dialog");
+  const mastEdit = document.getElementById("mast-edit");
+  const mastNombre = document.getElementById("mast-input-nombre");
+  const mastTitular = document.getElementById("mast-input-titular");
+  const mastInmueble = document.getElementById("mast-input-inmueble");
+  const mastInmuebleField = document.getElementById("mast-inmueble-field");
+  const openMast = () => {
+    if (mastNombre) mastNombre.value = document.getElementById("mast-nombre")?.textContent?.trim() || "";
+    if (mastTitular) mastTitular.value = document.getElementById("mast-titular")?.textContent?.trim() || "";
+    if (mastInmueble) mastInmueble.value = document.getElementById("mast-inmueble")?.textContent?.trim() || "";
+    if (mastInmuebleField) {
+      mastInmuebleField.hidden = mastEdit?.dataset.hasInmueble !== "1";
+    }
+    mastDialog?.showModal();
+  };
+  mastEdit?.addEventListener("click", openMast);
+  document.getElementById("mast-cancel")?.addEventListener("click", () => mastDialog?.close());
+  document.getElementById("mast-save")?.addEventListener("click", async () => {
+    const body = {
+      nombre: mastNombre?.value || "",
+      titular: mastTitular?.value || "",
+      confirmado: true,
+    };
+    if (mastEdit?.dataset.hasInmueble === "1") body.inmueble = mastInmueble?.value || "";
+    try {
+      const res = await fetch("/api/expediente", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const payload = await res.json();
+      const nombreEl = document.getElementById("mast-nombre");
+      const titularEl = document.getElementById("mast-titular");
+      const wrap = document.getElementById("mast-inmueble-wrap");
+      const inmuebleEl = document.getElementById("mast-inmueble");
+      if (nombreEl && payload.nombre) nombreEl.textContent = payload.nombre;
+      if (titularEl && payload.titular) titularEl.textContent = payload.titular;
+      if (inmuebleEl) inmuebleEl.textContent = payload.inmueble || "";
+      if (wrap) wrap.hidden = !payload.inmueble;
+      mastDialog?.close();
+      toast("Títulos guardados. Quedan en SQLite para este expediente.");
+    } catch {
+      toast("No se pudo guardar. Abre el dashboard con `aeat-hub dashboard` (servidor local).");
+    }
+  });
 })();
 """

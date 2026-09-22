@@ -32,7 +32,7 @@ def test_prefer_unlimited_cae_a_cascada_local(tmp_path: Path, monkeypatch):
     assert any("unlimited" in item.lower() or "Unlimited" in item for item in warnings) or any(
         "no disponible" in item for item in warnings
     )
-    assert result.engine == "pdf-native"
+    assert result.engine == "rapidocr"
     assert "IBERDROLA" in result.text.upper()
 
 
@@ -58,7 +58,7 @@ def test_prefer_deepseek_cae_a_cascada_local(tmp_path: Path, monkeypatch):
     warnings: list[str] = []
     result = transcribe(pdf, prefer="deepseek", warnings=warnings, rapid=FakeRapid())
     assert any("deepseek" in item.lower() or "no disponible" in item for item in warnings)
-    assert result.engine == "pdf-native"
+    assert result.engine == "rapidocr"
 
 
 def test_scan_engine_choice_linux_usa_rapid(monkeypatch):

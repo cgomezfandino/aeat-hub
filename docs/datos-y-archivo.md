@@ -80,4 +80,4 @@ Una factura **pendiente con cuenta propuesta** (p. ej. PVC a confianza 0,72) **s
 
 ## Dashboard y Excel
 
-La vista habitual es `exports/dashboard_CI-VA-001_2026.html` (`aeat-hub dashboard`). El Excel es opcional. Ninguno de los dos es el maestro: un segundo comando lo regenera desde SQLite. Si reclasificas, vuelve a generar el ejercicio.
+La vista habitual es `aeat-hub dashboard` (HTML en `127.0.0.1` y `exports/dashboard_CI-VA-001_2026.html`). El Excel es opcional. El maestro es SQLite.

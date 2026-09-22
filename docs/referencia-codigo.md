@@ -35,10 +35,12 @@ Paquete: `src/aeat_hub/`. Python ≥ 3.12. Entrada CLI: `aeat_hub.cli:app`.
 | `er.py` | Clustering factura canónica y relaciones |
 | `media.py` | SHA-256 y average hash |
 | `dedupe.py` | Tres niveles |
-| `classify.py` | Reglas + `reclassify` |
+| `classify.py` | Reglas + `reclassify` / `validar_asiento` / `reabrir_asiento` |
 | `filing.py` | Árbol en disco |
 | `ingest.py` | Pipeline del inbox |
 | `dashboard.py` | HTML local del ejercicio |
+| `hub_http.py` | Servidor `127.0.0.1` (libro, ficha `/asiento/<id>`, docs, correcciones) |
+| `edits.py` | NIF/importes/validar/reabrir y líneas de factura |
 | `export.py` | OpenPyXL (opcional) |
 
 ## Tablas SQLite (`db/ledger.sqlite`)
@@ -55,6 +57,7 @@ Paquete: `src/aeat_hub/`. Python ≥ 3.12. Entrada CLI: `aeat_hub.cli:app`.
 | `facturas` | `id` | Entidad canónica (NIF/emisor + `numero_norm`) |
 | `relaciones` | `id` | ER: `evidencia`, `continuacion`, `conflicto`, … |
 | `asientos` | `id` | FK actividad/inmueble/documento/`factura`/cuenta |
+| `cambios` | `id` | Log humano: campo, antes, después |
 | `reglas_aprendidas` | `id` | Único `(actividad, nif_emisor, patron)` |
 
 ### Campos relevantes de `asientos`
@@ -76,6 +79,7 @@ Facturas sintéticas en `tests/samples.py` (CIF de juguete `B12345674`, DNI `123
 | `test_filing.py` | Árbol año/mes/tipo/rubro y reclasificar |
 | `test_export.py` | Hojas XLSX |
 | `test_dashboard.py` | KPIs HTML, pendientes e IRPF |
+| `test_edits.py` | Corrección NIF/importes, reapertura, líneas, confirmación y log |
 | `test_irpf.py` | Casillas de Renta |
 | `test_cli.py` | `init`, listar, alta AE |
 | `test_ocr_optional.py` | Fallback si Unlimited no está |

@@ -5,14 +5,14 @@ Qué cubre el MVP (v0.1.0), qué no, y el siguiente bloque de trabajo.
 ## Qué sí hay hoy
 
 Libro local de **un titular**, varios expedientes. El maestro es **SQLite**
-(`$AEAT_HUB_DATA_DIR/db/ledger.sqlite`). El dashboard HTML y el Excel son
-**fotos** de ese libro: se regeneran con `aeat-hub dashboard` / `export`. El
-navegador **no escribe** la base.
+(`$AEAT_HUB_DATA_DIR/db/ledger.sqlite`). El dashboard se sirve en `127.0.0.1`
+para abrir el documento, corregir NIF/importes y validar. El Excel es una
+exportación opcional.
 
 | Superficie | Sirve para | No sirve para |
 | --- | --- | --- |
-| Dashboard HTML | Ver el ejercicio, filtrar, cazar baja calidad, insights del mes, copiar comandos de `validar` / `reclasificar` | Guardar un asiento como `validado`, cambiar el rubro, crear cuentas |
-| CLI | Ingest, pendientes, `validar`, `reclasificar` (por nombre), `cuenta alta` | Interfaz de revisión continua |
+| Dashboard HTML | Ver el ejercicio, filtrar, abrir la ficha de cada factura (líneas compradas), editar con lápiz (confirmación + log), validar o devolver a revisión, exportar el recorte filtrado | Crear cuentas, reclasificar el rubro, presentar modelos |
+| CLI | Ingest, pendientes, `validar`, `reabrir`, `reclasificar` (por nombre), `cuenta alta`, `factura numero` | Interfaz de revisión continua |
 | Excel | Libro por rubro + hoja `Casillas_IRPF` (totales anuales del inmueble) | Presentar el modelo 100 / 303; cortes trimestrales |
 
 El primer expediente semilla es el alquiler de Valladolid (`CI-VA-001`,

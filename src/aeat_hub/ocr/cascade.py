@@ -1,4 +1,8 @@
-"""Cascada OCR: PDF nativo → Vision (macOS) o RapidOCR (portable)."""
+"""Cascada OCR: siempre imagen. Vision en macOS, RapidOCR si no hay Vision.
+
+No se usa la capa de texto que incrusta Adobe Scan ni otro programa.
+`--ocr native` sigue disponible solo si se pide a mano.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +18,6 @@ from aeat_hub.ocr.rapid import RapidOCRProvider
 from aeat_hub.ocr.tesseract import TesseractProvider
 from aeat_hub.ocr.unlimited import UnlimitedOCRProvider
 
-NATIVE_THRESHOLD = 0.65
 OPTIONAL = {
     "unlimited": UnlimitedOCRProvider,
     "paddle": PaddleVLProvider,
@@ -25,9 +28,9 @@ OPTIONAL = {
 
 
 def describe_auto() -> str:
-    """Qué haría `--ocr auto` para fotos/escaneos en esta máquina."""
+    """Qué haría `--ocr auto` en esta máquina."""
     name, reason = scan_engine_choice()
-    return f"PDF nativo si hay texto usable; si no, {name} ({reason})"
+    return f"Siempre OCR de imagen: {name} ({reason}). No usa el texto incrustado del PDF."
 
 
 def scan_engine_choice() -> tuple[str, str]:
@@ -60,11 +63,8 @@ def transcribe(
             notes.append(f"{exc.name} no disponible ({exc.reason}); se usa la cascada local.")
             prefer = "auto"
 
-    if path.suffix.lower() == ".pdf" and prefer in {"auto", "native"}:
-        native = PdfNativeProvider().transcribe(path)
-        if native.confidence >= NATIVE_THRESHOLD or prefer == "native":
-            return native
-        notes.append("PDF sin capa de texto usable; se pasa al OCR de imagen.")
+    if path.suffix.lower() == ".pdf" and prefer == "native":
+        return PdfNativeProvider().transcribe(path)
 
     return _scan(path, prefer=prefer, notes=notes, rapid=rapid)
 

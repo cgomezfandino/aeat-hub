@@ -61,7 +61,7 @@ En actividad económica, de momento solo se detecta «seguridad social» / «ret
 3. Por defecto aplica la misma cuenta a otros asientos **pendiente** del mismo NIF (`origen=aprendida`). `--solo-este` lo evita.
 4. Mueve el fichero al nuevo rubro.
 
-`aeat-hub validar <id>` confirma el asiento **sin cambiar el rubro**. Úsalo cuando el modelo acertó y solo quieres el check humano.
+`aeat-hub validar <id>` confirma el asiento **sin cambiar el rubro**. Úsalo cuando el modelo acertó y solo quieres el check humano. `aeat-hub reabrir <id>` (o pulsar el botón verde **Validado** en el libro) lo deshace.
 
 Las facturas futuras de ese NIF en esa actividad se clasifican solas. Los asientos `validado` no se vuelven a parsear.
 

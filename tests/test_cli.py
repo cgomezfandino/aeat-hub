@@ -36,6 +36,7 @@ def test_cli_init_ingest_pendientes_export(layout, tmp_path):
             "--year",
             "2026",
             "--no-open",
+            "--no-serve",
         ],
     )
     assert dash.exit_code == 0, dash.output
@@ -65,6 +66,52 @@ def test_cli_actividad_alta_ae(layout):
     )
     assert result.exit_code == 0, result.output
     assert "AE-TALLER" in result.output
+
+
+def test_cli_actividad_titulo(layout):
+    runner.invoke(app, ["init", "--data-dir", str(layout.root)])
+    result = runner.invoke(
+        app,
+        [
+            "actividad",
+            "titulo",
+            "--data-dir",
+            str(layout.root),
+            "--actividad",
+            "CI-VA-001",
+            "--nombre",
+            "Alquiler piso Centro",
+            "--titular",
+            "Ana Demo",
+            "--inmueble",
+            "Piso VA",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Alquiler piso Centro" in result.output
+    assert "Ana Demo" in result.output
+    assert "Piso VA" in result.output
+    dash = runner.invoke(
+        app,
+        [
+            "dashboard",
+            "--data-dir",
+            str(layout.root),
+            "--actividad",
+            "CI-VA-001",
+            "--year",
+            "2026",
+            "--no-open",
+            "--no-serve",
+        ],
+    )
+    assert dash.exit_code == 0, dash.output
+    html = (layout.exports / "dashboard_CI-VA-001_2026.html").read_text(encoding="utf-8")
+    assert "Alquiler piso Centro" in html
+    assert "Ana Demo" in html
+    assert "Piso VA" in html
+    assert "CI-VA-001" in html
+    assert "Rendimientos de capital inmobiliario" in html
 
 
 def test_cli_cuentas_no_enseña_ids_internos(layout):
@@ -151,6 +198,11 @@ def test_cli_factura_numero(layout):
             return True, "fake"
 
         def transcribe(self, path):
+            if str(path).lower().endswith(".pdf"):
+                from aeat_hub.ocr.pdf_native import PdfNativeProvider
+
+                native = PdfNativeProvider().transcribe(path)
+                return OCRResult(text=native.text, engine="rapidocr", confidence=0.9)
             return OCRResult(text="foto", engine="rapidocr", confidence=0.7)
 
     initialize(layout)

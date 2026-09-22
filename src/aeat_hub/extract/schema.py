@@ -11,6 +11,13 @@ from pydantic import BaseModel, Field
 class InvoiceLine(BaseModel):
     descripcion: str | None = None
     importe: Decimal | None = None
+    codigo: str | None = None
+    posicion: int | None = None
+    cantidad: Decimal | None = None
+    base: Decimal | None = None
+    iva_cuota: Decimal | None = None
+    iva_tipo: Decimal | None = None
+    eliminada: bool = False
 
 
 class InvoiceExtract(BaseModel):

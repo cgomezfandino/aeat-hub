@@ -27,10 +27,25 @@ KEYWORD_ACCOUNTS: tuple[tuple[tuple[str, ...], str, float], ...] = (
     ((" impuesto sobre bienes", " recibo ibi", "ibi ", "tasa de basura", "gerencia territorial"), "CI.GAS.IBI", 0.86),
     (("indemnizacion", "indemnización"), "CI.ING.INDEMN", 0.8),
     (("arrendamiento", "renta de alquiler", "recibo de alquiler"), "CI.ING.RENTA", 0.8),
-    (("ventana", "ventanas", "pvc", "climalit", "carpinter"), "CI.MEJ.PVC", 0.72),
+    (("ventana", "ventanas", "climalit", "carpinteria", "carpintería"), "CI.MEJ.PVC", 0.72),
     (("tarima", "parquet", "solado", "suelo laminado", "porcelanico", "porcelánico"), "CI.MEJ.SOLADO", 0.72),
     (("revestimiento", "alicatado"), "CI.MEJ.REVEST", 0.7),
-    (("leroy merlin", "bricomart", "bauhaus"), "CI.GAS.HOGAR", 0.6),
+    (("leroy merlin", "bricomart", "bauhaus", "obramat", "bricoman"), "CI.GAS.HOGAR", 0.6),
+)
+
+BRICOLAJE = ("leroy merlin", "bricomart", "bauhaus", "obramat", "bricoman")
+OBRA_CLARA = (
+    "ventana",
+    "ventanas",
+    "climalit",
+    "carpinteria",
+    "carpintería",
+    "tarima",
+    "parquet",
+    "solado",
+    "suelo laminado",
+    "revestimiento",
+    "alicatado",
 )
 
 MEJORA_HINTS = ("mejora", "reforma", "instalaci", "obra")
@@ -134,6 +149,14 @@ def validar_asiento(asiento: Asiento) -> None:
         asiento.estado = "confirmado"
 
 
+def reabrir_asiento(asiento: Asiento) -> None:
+    """Devuelve un asiento validado a revisión humana."""
+    asiento.validado = False
+    asiento.origen_clasificacion = "usuario"
+    if asiento.estado != "duplicado":
+        asiento.estado = "pendiente"
+
+
 def _apply_cuenta(asiento: Asiento, cuenta: Cuenta, *, origen: str, confianza: Decimal) -> None:
     asiento.cuenta_codigo = cuenta.codigo
     asiento.tipo = cuenta.tipo
@@ -177,6 +200,8 @@ def _from_learned(
 
 
 def _from_keywords(blob: str) -> Classification | None:
+    if any(token in blob for token in BRICOLAJE) and not any(token in blob for token in OBRA_CLARA):
+        return Classification("CI.GAS.HOGAR", "regla", Decimal("0.72"), "gasto")
     for needles, codigo, conf in KEYWORD_ACCOUNTS:
         if any(needle in blob for needle in needles):
             tipo = TIPO_MEJORA if codigo.startswith("CI.MEJ") else (

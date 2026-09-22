@@ -12,7 +12,7 @@ from rich.table import Table
 from sqlalchemy import select
 
 from aeat_hub import __version__
-from aeat_hub.classify import reclassify, validar_asiento
+from aeat_hub.classify import reabrir_asiento, reclassify, validar_asiento
 from aeat_hub.db import make_engine, session_factory, session_scope
 from aeat_hub.evals.gold import load_gold
 from aeat_hub.evals.runner import ENGINE_ORDER, list_engine_status, run_eval
@@ -35,6 +35,7 @@ from aeat_hub.services import (
     get_actividad,
     get_cuenta_por_nombre,
     initialize,
+    patch_expediente,
     require_layout,
 )
 
@@ -116,6 +117,39 @@ def actividad_listar(
         for row in rows:
             table.add_row(row.codigo, row.nombre, row.regimen)
         console.print(table)
+
+
+@actividad_app.command("titulo")
+def actividad_titulo(
+    actividad: str = typer.Option(..., "--actividad"),
+    nombre: Optional[str] = typer.Option(None, "--nombre", help="Título del expediente (cabecera del libro)"),
+    titular: Optional[str] = typer.Option(None, "--titular", help="Nombre del titular"),
+    inmueble: Optional[str] = typer.Option(None, "--inmueble", help="Alias del inmueble"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Personaliza los títulos del libro: expediente, titular e inmueble."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    payload: dict = {}
+    if nombre is not None:
+        payload["nombre"] = nombre
+    if titular is not None:
+        payload["titular"] = titular
+    if inmueble is not None:
+        payload["inmueble"] = inmueble
+    try:
+        with session_scope(factory) as session:
+            data = patch_expediente(session, actividad, payload)
+    except RuntimeError as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(1) from err
+    bits = [f"{data['codigo']} · {data['nombre']}"]
+    if data["titular"]:
+        bits.append(data["titular"])
+    if data["inmueble"]:
+        bits.append(data["inmueble"])
+    console.print(" · ".join(bits))
+    console.print("Regenera el libro: aeat-hub dashboard --actividad … --year …")
 
 
 @cuenta_app.command("alta")
@@ -294,6 +328,25 @@ def validar(
         )
 
 
+@app.command()
+def reabrir(
+    asiento_id: int = typer.Argument(..., help="Id del asiento"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Devuelve un asiento validado a revisión (por si Validar fue un error)."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    with session_scope(factory) as session:
+        asiento = session.get(Asiento, asiento_id)
+        if asiento is None:
+            raise typer.BadParameter(f"No existe el asiento {asiento_id}")
+        reabrir_asiento(asiento)
+        console.print(
+            f"Asiento {asiento.id} otra vez pendiente. "
+            "Revisa el documento y vuelve a validar cuando encaje."
+        )
+
+
 @factura_app.command("numero")
 def factura_numero(
     asiento_id: int = typer.Argument(..., help="Id del asiento"),
@@ -351,11 +404,17 @@ def dashboard(
     year: int = typer.Option(..., "--year"),
     data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Abre el HTML en el navegador"),
+    serve: bool = typer.Option(
+        True,
+        "--serve/--no-serve",
+        help="Sirve el HTML, los documentos y las correcciones en 127.0.0.1",
+    ),
+    port: int = typer.Option(8765, "--port", help="Puerto del servidor local"),
     reparse: bool = typer.Option(
         False, "--reparse", help="Relee el OCR guardado y actualiza emisor/fecha/importes antes de generar"
     ),
 ) -> None:
-    """Genera un dashboard HTML del ejercicio. SQLite no cambia (salvo --reparse)."""
+    """Genera el dashboard y, por defecto, lo sirve en local para abrir PDFs y editar asientos."""
     layout = _layout(data_dir)
     factory = _session_factory(layout)
     with session_scope(factory) as session:
@@ -365,6 +424,20 @@ def dashboard(
             console.print(f"Releídos {n} asientos desde el texto OCR guardado.")
         dest = write_dashboard(session, layout, act, year)
         console.print(f"Escrito {dest}")
+    if serve:
+        from aeat_hub.hub_http import bind_server
+
+        httpd, actual = bind_server(layout, factory, dest.name, port=port)
+        url = f"http://127.0.0.1:{actual}/{dest.name}"
+        console.print(f"Servidor local {url}  (Ctrl+C para salir)")
+        if open_browser:
+            webbrowser.open(url)
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            console.print("Servidor detenido.")
+            httpd.shutdown()
+        return
     if open_browser:
         webbrowser.open(dest.as_uri())
 

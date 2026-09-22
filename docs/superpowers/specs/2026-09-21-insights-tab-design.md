@@ -1,7 +1,7 @@
 # Tab Insights (antes Resumen)
 
 Fecha: 2026-09-21
-Estado: aprobado en chat, pendiente de implementación
+Estado: implementado
 
 ## Objetivo
 

@@ -16,6 +16,26 @@ def test_clasifica_luz_por_proveedor(session):
     assert result.confianza >= Decimal("0.8")
 
 
+def test_codo_pvc_de_obramat_es_hogar(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    text = (
+        "OBRAMAT\nBRICOLAJE BRICOMAN S L U\n"
+        "CODO 87R 40MM H-H PVC\nTotal 2,63 €"
+    )
+    extract = parse_invoice(text)
+    result = classify(session, actividad, extract, text)
+    assert result.cuenta_codigo == "CI.GAS.HOGAR"
+    assert result.tipo == "gasto"
+
+
+def test_lapices_carpintero_en_obramat_no_son_ventanas(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    text = "OBRAMAT\nBRICOLAJE BRICOMAN,S.L.U\n3 LAPICES CARPINTERO BICOLOR\nTotal 113,99 €"
+    extract = parse_invoice(text)
+    result = classify(session, actividad, extract, text)
+    assert result.cuenta_codigo == "CI.GAS.HOGAR"
+
+
 def test_clasifica_pvc_como_mejora_no_gasto(session):
     actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
     extract = parse_invoice(FACTURA_PVC)

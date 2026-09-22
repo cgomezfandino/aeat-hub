@@ -18,6 +18,11 @@ class SelectiveRapid:
     def transcribe(self, path: Path) -> OCRResult:
         if path.suffix.lower() in {".jpg", ".jpeg"}:
             raise RuntimeError("ocr boom de prueba")
+        if path.suffix.lower() == ".pdf":
+            from aeat_hub.ocr.pdf_native import PdfNativeProvider
+
+            native = PdfNativeProvider().transcribe(path)
+            return OCRResult(text=native.text, engine="rapidocr", confidence=0.9)
         return OCRResult(text="foto ocr", engine="rapidocr", confidence=0.7)
 
 

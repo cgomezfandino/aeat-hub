@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aeat_hub.db import create_schema, make_engine, session_factory
 from aeat_hub.fiscal.accounts import REGIMEN_AE, REGIMEN_CI, codigo_interno
 from aeat_hub.fiscal.irpf import INDEX_CI, tipo_desde_casilla
-from aeat_hub.models import Actividad, Cuenta, Titular
+from aeat_hub.models import Actividad, Cuenta, Inmueble, Titular
 from aeat_hub.paths import DataLayout
 from aeat_hub.seed import seed_cuentas, seed_valladolid
 
@@ -131,3 +133,54 @@ def alta_cuenta(
     session.add(cuenta)
     session.flush()
     return cuenta
+
+
+def _titulo_limpio(value: object) -> str | None:
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
+    if not text:
+        return None
+    return text[:200]
+
+
+def patch_expediente(session: Session, codigo: str, payload: dict) -> dict:
+    """Cambia los títulos visibles: expediente, titular e inmueble."""
+    actividad = get_actividad(session, codigo)
+    titular = session.get(Titular, actividad.titular_id)
+    inmueble = session.scalar(
+        select(Inmueble).where(Inmueble.actividad_id == actividad.id).order_by(Inmueble.id)
+    )
+    nombre = _titulo_limpio(payload.get("nombre"))
+    titular_nombre = _titulo_limpio(payload.get("titular"))
+    inmueble_alias = _titulo_limpio(payload.get("inmueble"))
+    changed = False
+    if nombre:
+        actividad.nombre = nombre
+        changed = True
+    if titular is not None and titular_nombre:
+        titular.nombre = titular_nombre
+        changed = True
+    if inmueble_alias:
+        if inmueble is not None:
+            inmueble.alias = inmueble_alias
+            changed = True
+        elif actividad.regimen == REGIMEN_CI:
+            inmueble = Inmueble(
+                actividad_id=actividad.id,
+                alias=inmueble_alias,
+                porcentaje_titularidad=Decimal("100.00"),
+                uso="vivienda",
+            )
+            session.add(inmueble)
+            changed = True
+    if not changed:
+        raise RuntimeError("Indica un título de expediente, titular o inmueble.")
+    session.flush()
+    return {
+        "nombre": actividad.nombre,
+        "codigo": actividad.codigo,
+        "titular": titular.nombre if titular else "",
+        "inmueble": inmueble.alias if inmueble is not None else "",
+        "regimen": actividad.regimen,
+    }

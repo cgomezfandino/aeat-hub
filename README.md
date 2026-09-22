@@ -15,7 +15,7 @@ Esto **no es software oficial de la AEAT**. Revisa los asientos antes de declara
 - Extrae NIF, fecha, número, bases e IVA.
 - Deduplica a tres niveles: mismo fichero, misma factura fiscal, sospechosos (importe±3 días o foto casi igual).
 - Clasifica por proveedor/palabras clave. Si reclasificas, **aprende** (regla por NIF emisor).
-- SQLite como fuente de verdad. El dashboard HTML y el Excel son **fotos** del ejercicio: se ven, se filtran y se exportan; **no escriben** la base. Validar o cambiar rubro es cosa del CLI (`validar`, `reclasificar`).
+- SQLite como fuente de verdad. `aeat-hub dashboard` sirve el HTML en `127.0.0.1`: pulsa una factura para ver qué se compró, abre el PDF, corrige NIF/importes, valida o devuelve a revisión. El Excel es una exportación opcional.
 - 100 % local. Las facturas reales **no van a git**.
 
 El primer expediente semilla es un **alquiler en Valladolid** (luz, agua, internet,
@@ -72,9 +72,10 @@ uv run aeat-hub ingest --actividad CI-VA-001
 uv run aeat-hub pendientes --actividad CI-VA-001
 uv run aeat-hub reclasificar 1 Ventanas   # nombre de rubro; mueve el fichero
 uv run aeat-hub validar 2                 # el modelo acertó; cierra el asiento
+uv run aeat-hub reabrir 2                 # si Validar fue un error; vuelve a revisión
 uv run aeat-hub dashboard --actividad CI-VA-001 --year 2026
-# El HTML abre el libro del año (pestañas Revisar / Libro / Resumen) y regenera el Excel.
-# Tras validar o reclasificar, vuelve a generar el dashboard para ver la foto nueva.
+# Sirve el libro en http://127.0.0.1:8765 (Libro + Resumen). Ctrl+C para salir.
+# --no-serve solo escribe el HTML. --no-open no lanza el navegador.
 ```
 
 `12345678Z` es un NIF de ejemplo (dígito de control válido). Usa el tuyo solo en el data-dir.
