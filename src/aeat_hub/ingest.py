@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mimetypes
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import select
@@ -43,6 +44,50 @@ class IngestItem:
     detalle: str
     warnings: list[str] = field(default_factory=list)
     etapa_error: str | None = None
+
+
+def _descuadre_lineas(extract: InvoiceExtract) -> Decimal | None:
+    """Cuánto se aleja la suma de las líneas con importe del total de la factura."""
+    if extract.total is None:
+        return None
+    importes = [
+        linea.importe
+        for linea in extract.lineas
+        if linea.importe is not None and (linea.descripcion or linea.codigo)
+    ]
+    if not importes:
+        return extract.total
+    return abs(sum(importes, Decimal("0.00")) - extract.total)
+
+
+def _reintentar_si_no_cuadra(
+    path: Path,
+    ocr: OCRResult,
+    extract: InvoiceExtract,
+    notes: list[str],
+    *,
+    rapid: OCRProvider | None,
+) -> tuple[OCRResult, InvoiceExtract]:
+    """Si las líneas no suman el total, prueba el otro motor de imagen una vez."""
+    gap = _descuadre_lineas(extract)
+    if gap is None or gap <= Decimal("0.05") or rapid is not None:
+        return ocr, extract
+    alt_prefer = "rapid" if ocr.engine == "apple-vision" else "vision"
+    notes.append("La suma de las líneas no coincide con el total. Se reintenta la lectura.")
+    try:
+        alt = transcribe(path, prefer=alt_prefer, warnings=notes)
+    except Exception:
+        return ocr, extract
+    if not alt.text.strip() or alt.engine == ocr.engine:
+        notes.append("La segunda lectura no aporta otro texto.")
+        return ocr, extract
+    alt_extract = parse_invoice(alt.text, motor=alt.engine)
+    alt_gap = _descuadre_lineas(alt_extract)
+    if alt_gap is not None and alt_gap < gap:
+        notes.append(f"La segunda lectura ({alt.engine}) encaja mejor.")
+        return alt, alt_extract
+    notes.append("La segunda lectura no mejora el desglose. Se queda la primera.")
+    return ocr, extract
 
 
 def list_inbox(layout: DataLayout) -> list[Path]:
@@ -108,6 +153,7 @@ def ingest_file(
 
     with etapa("parsear", name):
         extract = parse_invoice(ocr.text, motor=ocr.engine)
+        ocr, extract = _reintentar_si_no_cuadra(path, ocr, extract, warnings, rapid=rapid)
         log_detalle(
             "parsear",
             "emisor=%s nif=%s numero=%s fecha=%s total=%s confianza=%.3f",

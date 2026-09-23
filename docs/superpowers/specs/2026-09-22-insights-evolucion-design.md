@@ -1,7 +1,7 @@
 # Insights: el año y después la Renta
 
 Fecha: 2026-09-22
-Estado: aprobado, pendiente de implementar
+Estado: implementado
 
 Sustituye, en `2026-09-21-insights-tab-design.md`, los gráficos, Destacados y las alertas que abrían el Libro. El renombre Resumen → Insights y el bloque Renta siguen vigentes. Los KPIs y las alertas ya no filtran el Libro.
 
