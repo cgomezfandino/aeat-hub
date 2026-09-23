@@ -11,7 +11,7 @@ exportación opcional.
 
 | Superficie | Sirve para | No sirve para |
 | --- | --- | --- |
-| Dashboard HTML | Ver el ejercicio, filtrar, abrir la ficha de cada factura (líneas compradas), editar con lápiz (confirmación + log), validar o devolver a revisión, exportar el recorte filtrado | Crear cuentas, reclasificar el rubro, presentar modelos |
+| Dashboard HTML | Ver el ejercicio (Libro e Insights), filtrar y ordenar, abrir la ficha, editar cabecera y líneas (confirmación + log), borrado recuperable, validar, exportar el recorte | Crear cuentas, presentar modelos |
 | CLI | Ingest, pendientes, `validar`, `reabrir`, `reclasificar` (por nombre), `cuenta alta`, `factura numero` | Interfaz de revisión continua |
 | Excel | Libro por rubro + hoja `Casillas_IRPF` (totales anuales del inmueble) | Presentar el modelo 100 / 303; cortes trimestrales |
 
@@ -21,8 +21,7 @@ capital inmobiliario). Los rubros se leen y se escriben por **nombre corto**
 
 ## Fuera de alcance ahora
 
-- Servidor local o app que escriba SQLite desde el navegador.
-- Multi-usuario, cuentas, SaaS.
+- App multi-usuario, cuentas y SaaS. El dashboard local sí escribe SQLite (validar, ficha, títulos del expediente).
 - Presentación telemática (modelos 100, 130, 303, 390, 347).
 - Unlimited-OCR como motor por defecto.
 - APIs cloud de facturas (Azure Document Intelligence, FacturaHub, etc.).
@@ -55,16 +54,29 @@ El mismo titular puede tener varios expedientes. El ingest siempre lleva
 
 No mezclar gastos del piso con ads, dominio o Stripe de una web.
 
+## Dónde quedó el 23 sep 2026
+
+Ramas: solo `develop` y `main`. El corte de Insights y del desglose OCR está
+en las dos (`develop` en el merge de la PR #3, `main` en la PR #4). Un solo
+directorio de trabajo, en `develop`, limpio.
+
+El libro del alquiler vive en el data-dir local, fuera de git. El lote de
+bricolaje de 2026 está reingestado y pendiente de validar. Insights lee el
+año (frase, doce meses, emisor) y admite un rango de fechas; la Renta sigue
+siendo el ejercicio entero. La ficha marca huecos de calidad. Si las líneas
+no cuadran con el total, el ingest prueba el otro motor de imagen una vez.
+
 ## Siguiente bloque natural
 
-1. Ingerir el lote real de septiembre del alquiler (luz, agua, internet,
-   comunidad, seguros, hogar, rentas) y ajustar palabras clave.
-2. Corregir a mano un número de factura mal leído: `aeat-hub factura numero` (hecho en CLI). La edición en el HTML sigue pendiente.
-3. Revisión que **grabe** en SQLite (servidor local mínimo: validar y
-   cambiar rubro desde el HTML, sin copiar el CLI).
-4. Cortes T1–T4 como filtro de dashboard/Excel sobre el libro anual.
-5. Libro de actividad económica para las dos webs + borrador 303 (totales,
-   sin envío).
+1. Ingerir el resto del alquiler (luz, agua, internet, comunidad, seguros,
+   rentas) y ajustar palabras clave. No mezclar con gastos de las webs.
+2. Revisar el NIF de emisor al validar: a veces se guarda el del titular.
+3. El número de factura se corrige por CLI (`aeat-hub factura numero`). En
+   el HTML todavía no.
+4. Cortes T1–T4 como filtro del libro anual (Insights ya tiene un rango
+   libre, no los trimestres con nombre).
+5. Libro de actividad económica para las webs + borrador 303 (totales, sin
+   envío).
 6. Amortización y proyectos de mejora.
 7. Ampliar el set de oro de `aeat-hub eval` (hoy: 2 tickets Leroy + sintético).
 
