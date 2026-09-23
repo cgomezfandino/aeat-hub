@@ -94,3 +94,20 @@ def test_auto_con_rapid_inyectado_no_salta_a_vision(tmp_path: Path):
     result = transcribe(image, prefer="auto", rapid=FakeRapid())
     assert result.engine == "rapidocr"
     assert result.text == "foto ocr"
+
+
+def test_descuadre_lineas_senala_el_importe_que_falta():
+    from decimal import Decimal
+
+    from aeat_hub.extract.schema import InvoiceExtract, InvoiceLine
+    from aeat_hub.ingest import _descuadre_lineas
+
+    extract = InvoiceExtract(
+        total=Decimal("13.86"),
+        lineas=[
+            InvoiceLine(descripcion="A", importe=Decimal("5.14")),
+            InvoiceLine(descripcion="B", importe=Decimal("4.11")),
+            InvoiceLine(descripcion="C", importe=Decimal("3.15")),
+        ],
+    )
+    assert _descuadre_lineas(extract) == Decimal("1.46")

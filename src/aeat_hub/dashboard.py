@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 from html import escape
+import json
 from pathlib import Path
 
 from sqlalchemy import select
@@ -22,10 +23,25 @@ from aeat_hub.fiscal.accounts import (
 )
 from aeat_hub.fiscal.irpf import INDEX_CI, casilla_clave, summarize_irpf
 from aeat_hub.fiscal.money import format_euro, q2
+from aeat_hub.fiscal.nif import is_placeholder_nif, is_valid_nif, normalize_nif
 from aeat_hub.models import Actividad, Asiento, Cambio, Cuenta, Inmueble, Titular
 from aeat_hub.paths import DataLayout
 
 MESES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+MESES_LARGO = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
 ZERO = Decimal("0.00")
 
 REGIMEN_LABEL = {
@@ -91,6 +107,7 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
             inmuebles,
             n_docs=_n_docs(row, n_docs_map),
             er_estado=er_map.get(row.factura_id or 0, ""),
+            titular_nif=titular.nif if titular else "",
         )
         for row in rows
     ]
@@ -115,7 +132,6 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         "mejoras": mejoras,
         "resultado": ingresos - gastos,
         "por_mes": por_mes,
-        "por_mes_acc": _cumulative(por_mes),
         "por_naturaleza": _by_nature(
             vivos, extra_casillas, nombres, actividad.regimen
         ),
@@ -127,7 +143,6 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
             1 for item in asientos if not item["validado"] and item["estado"] != "duplicado"
         ),
         "cola_revision": _cola_revision(asientos),
-        "insights": _insights(asientos, ingresos, gastos, mejoras, actividad.codigo),
         "irpf": irpf,
         "xlsx_name": "",
         "rubros": sorted(
@@ -149,7 +164,6 @@ def render_dashboard(data: dict) -> str:
         '<main class="wrap panels">\n'
         f"{_panel_libro(data)}\n"
         f"{_panel_insights(data)}\n"
-        f"{_footer(data)}\n"
         "</main>\n"
         f"{_site_footer()}\n"
         f"{_edit_dialog(data)}\n"
@@ -170,12 +184,13 @@ def collect_asiento_ficha(session: Session, asiento: Asiento, *, dashboard_name:
             item.id: item.alias
             for item in session.scalars(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
         }
-    view = _asiento_view(asiento, nombres, extra, inmuebles)
+    titular = session.get(Titular, actividad.titular_id) if actividad is not None else None
+    view = _asiento_view(
+        asiento, nombres, extra, inmuebles, titular_nif=titular.nif if titular else ""
+    )
     lineas = lineas_de_asiento(asiento)
     suma = _suma_importes(lineas)
-    n_precio = sum(1 for item in lineas if item.get("importe"))
     lineas_ok = _cuadra_con_total(suma, asiento.total)
-    desglose = _desglose_calidad(suma, asiento.total, len(lineas), n_precio)
     logs = session.scalars(
         select(Cambio).where(Cambio.asiento_id == asiento.id).order_by(Cambio.id.desc())
     ).all()
@@ -206,15 +221,25 @@ def collect_asiento_ficha(session: Session, asiento: Asiento, *, dashboard_name:
 def render_asiento_page(data: dict) -> str:
     lineas = data["lineas"]
     n_lineas = int(data.get("n_lineas") or len(lineas))
-    n_precio = sum(1 for item in lineas if item.get("importe"))
-    desglose = _desglose_calidad(
-        data.get("lineas_suma"), data.get("total"), n_lineas, n_precio
+    score = _criterios_html(
+        criterios_calidad(
+            numero=data.get("numero"),
+            fecha=data.get("fecha_label"),
+            emisor=data.get("emisor"),
+            nif=data.get("nif"),
+            base=data.get("base"),
+            iva=data.get("iva"),
+            total=data.get("total"),
+            rubro=data.get("cuenta_nombre"),
+            lineas=lineas,
+            titular_nif=data.get("titular_nif") or "",
+        ),
+        total=data.get("total"),
     )
     if lineas:
         rows = _lineas_rows_html(lineas)
     else:
         rows = '<tr><td colspan="9">Sin líneas extraídas. Abre el PDF y contrasta el total a mano.</td></tr>'
-    score = _desglose_score_html(desglose)
     logs = data["cambios"]
     nombres = {
         "lineas": "Líneas",
@@ -541,12 +566,6 @@ def _ficha_lines_script() -> str:
     if (headingCount) {
       headingCount.textContent = rows.length === 1 ? "1 elemento" : `${rows.length} elementos`;
     }
-    const scoreText = document.getElementById("ficha-score-text");
-    if (scoreText) {
-      scoreText.textContent = nTotal
-        ? `Suma de ${nTotal} importes ${euro(round2(total))}.`
-        : "Ningún importe en las líneas que cuentan.";
-    }
     const count = document.getElementById("kpi-elementos");
     if (count) {
       let unidades = 0;
@@ -558,6 +577,63 @@ def _ficha_lines_script() -> str:
       }
       const whole = Math.abs(unidades - Math.round(unidades)) < 0.0005;
       count.textContent = whole ? String(Math.round(unidades)) : String(Math.round(unidades * 1000) / 1000);
+    }
+    paintQuality(rows, total, nTotal);
+  };
+  const paintQuality = (rows, lineTotal, nTotal) => {
+    const root = document.getElementById("ficha-score");
+    const list = document.getElementById("ficha-score-list");
+    if (!root || !list) return;
+    const join = (items) => items.slice(0, 3).join(", ") + (items.length > 3 ? ` y ${items.length - 3} más` : "");
+    const names = [];
+    const noConcept = [];
+    const noMoney = [];
+    rows.forEach((tr, idx) => {
+      const desc = (tr.querySelector("[data-f=descripcion]")?.value || "").trim();
+      const code = (tr.querySelector("[data-f=codigo]")?.value || "").trim();
+      const name = desc || `línea ${idx + 1}`;
+      if (!code) names.push(name);
+      if (!desc) noConcept.push(`línea ${idx + 1}`);
+      if (num(tr, "importe") == null) noMoney.push(name);
+    });
+    const set = (id, ok, detail) => {
+      const li = list.querySelector(`[data-check="${id}"]`);
+      if (!li) return;
+      li.dataset.ok = ok ? "1" : "0";
+      li.classList.toggle("is-ok", ok);
+      li.classList.toggle("is-bad", !ok);
+      const em = li.querySelector("em");
+      if (ok) em?.remove();
+      else if (em) em.textContent = detail;
+      else li.insertAdjacentHTML("beforeend", `<em></em>`), li.querySelector("em").textContent = detail;
+    };
+    const empty = rows.length === 0;
+    set("ids", !empty && names.length === 0, empty ? "No hay líneas, así que no hay ids de artículo." : `Falta el id en ${join(names)}.`);
+    set("conceptos", !empty && noConcept.length === 0, empty ? "No hay líneas, así que no hay conceptos." : `Falta el concepto en ${join(noConcept)}.`);
+    set("importes", !empty && noMoney.length === 0, empty ? "No hay líneas, así que no hay importes." : `Falta el importe en ${join(noMoney)}.`);
+    const book = root.dataset.total === undefined || root.dataset.total === "" ? null : Number(root.dataset.total);
+    const suma = round2(lineTotal);
+    const cuadra = !empty && book != null && nTotal > 0 && Math.abs(suma - book) <= 0.02;
+    const delta = book == null ? null : round2(Math.abs(suma - book));
+    set(
+      "suma",
+      cuadra,
+      book == null || empty
+        ? "No hay importes que contrastar con el total del libro."
+        : `Suma de ${nTotal} importes ${euro(suma)} ≠ total del libro ${euro(book)} (diferencia ${euro(delta)}). Puede faltar un artículo, o un importe se ha mezclado con otra línea.`
+    );
+    const items = [...list.querySelectorAll("[data-check]")];
+    const okN = items.filter((li) => li.dataset.ok === "1").length;
+    const pct = items.length ? Math.round((100 * okN) / items.length) : 0;
+    const all = items.length > 0 && okN === items.length;
+    const label = document.getElementById("ficha-score-label");
+    const pctEl = document.getElementById("ficha-score-pct");
+    const chip = document.getElementById("ficha-score-chip");
+    if (label) label.textContent = all ? "Lista" : "Revisar";
+    if (pctEl) pctEl.textContent = `${pct} %`;
+    if (chip) {
+      chip.classList.remove("q-ok", "q-warn", "q-bad", "q-muted");
+      chip.classList.add(all ? "q-ok" : pct >= 80 ? "q-warn" : "q-bad");
     }
   };
   const pencil = (n) => `<button type="button" class="row-edit line-edit-btn" title="Editar línea" aria-label="Editar línea ${n}">`
@@ -865,8 +941,11 @@ def _ficha_filter_script() -> str:
     else if (!opts.keepPage) page = 1;
     page = Math.min(Math.max(1, page), pages);
     const start = (page - 1) * PAGE_SIZE;
+    rows.forEach((tr) => tr.classList.remove("is-band"));
     matched.forEach((tr, index) => {
-      tr.hidden = index < start || index >= start + PAGE_SIZE;
+      const onPage = index >= start && index < start + PAGE_SIZE;
+      tr.hidden = !onPage;
+      tr.classList.toggle("is-band", onPage && (index - start) % 2 === 1);
     });
     paintPager(pages, matched.length);
     syncFunnels();
@@ -1012,6 +1091,7 @@ def _asiento_view(
     *,
     n_docs: int = 0,
     er_estado: str = "",
+    titular_nif: str = "",
 ) -> dict:
     codigo = asiento.cuenta_codigo or ""
     cuenta_nombre = nombres.get(codigo, "Sin clasificar")
@@ -1027,6 +1107,23 @@ def _asiento_view(
             doc_path = path.as_uri()
         doc_name = documento.nombre_original
     total = q2(asiento.total)
+    lineas = lineas_de_asiento(asiento)
+    faltas = [
+        item["detail"]
+        for item in criterios_calidad(
+            numero=asiento.numero_factura,
+            fecha=asiento.fecha.strftime("%d/%m/%Y") if asiento.fecha else "",
+            emisor=asiento.emisor,
+            nif=asiento.nif_emisor,
+            base=asiento.base,
+            iva=asiento.iva_cuota,
+            total=total,
+            rubro=cuenta_nombre if codigo else "",
+            lineas=lineas,
+            titular_nif=titular_nif,
+        )
+        if not item["ok"]
+    ]
     conf_ocr = q2(documento.confianza) if documento is not None else None
     conf_class = q2(asiento.confianza_clasificacion)
     baja = (not asiento.validado) and (
@@ -1072,13 +1169,9 @@ def _asiento_view(
         "cmd_validar": f"aeat-hub validar {asiento.id}",
         "n_docs": n_docs,
         "er_estado": er_estado,
-        "n_articulos": _n_articulos(asiento),
+        "n_articulos": articulos_label(lineas),
+        "calidad_faltas": faltas,
     }
-
-
-def _n_articulos(asiento: Asiento) -> str:
-    """Suma de unidades de las líneas con nombre. Sin cantidad guardada, cada línea vale 1."""
-    return articulos_label(lineas_de_asiento(asiento))
 
 
 def _conf_pct(value: Decimal | None) -> int | None:
@@ -1123,64 +1216,148 @@ def _elementos_label(n: int) -> str:
     return "1 elemento" if n == 1 else f"{n} elementos"
 
 
-def _desglose_calidad(suma, total, n_lineas: int, n_con_importe: int | None = None) -> dict:
-    if n_lineas == 0:
-        return {
-            "tone": "muted",
-            "label": "Sin desglose",
-            "score": None,
-            "text": "No hay líneas extraídas para contrastar con el total del libro.",
-        }
-    if suma is None or total is None:
-        return {
-            "tone": "muted",
-            "label": "Sin desglose",
-            "score": None,
-            "text": "El OCR vio conceptos, pero no el importe de cada uno. Contrasta el total a mano.",
-        }
-    suma_q = q2(suma)
-    total_q = q2(total)
-    if _cuadra_con_total(suma_q, total_q):
-        extra = ""
-        if n_con_importe is not None and n_lineas > n_con_importe:
-            extra = (
-                f" {n_lineas - n_con_importe} conceptos siguen sin precio propio; "
-                "la suma usa los importes de línea recuperados."
-            )
-        return {
-            "tone": "ok",
-            "label": "Cuadra",
-            "score": 100,
-            "text": (
-                f"Suma de {n_con_importe or n_lineas} importes {format_euro(suma_q)} "
-                f"= total del libro {format_euro(total_q)}.{extra}"
+def _hueco(value: object) -> bool:
+    return str(value or "").strip() in {"", "—", "-"}
+
+
+def _lista_corta(items: list[str]) -> str:
+    head = ", ".join(items[:3])
+    extra = len(items) - 3
+    if extra > 0:
+        return f"{head} y {extra} más"
+    return head
+
+
+def criterios_calidad(
+    *,
+    numero: object,
+    fecha: object,
+    emisor: object,
+    nif: object,
+    base: object,
+    iva: object,
+    total: object,
+    rubro: object,
+    lineas: list[dict],
+    titular_nif: str = "",
+) -> list[dict]:
+    """Mínimo para fiarse de un asiento. Solo el detalle de lo que falta."""
+    checks: list[dict] = []
+
+    def add(key: str, ok: bool, label: str, detail: str) -> None:
+        checks.append({"id": key, "ok": ok, "label": label, "detail": "" if ok else detail})
+
+    add("numero", not _hueco(numero), "Número", "Falta el número de factura.")
+    add("fecha", not _hueco(fecha), "Fecha", "Falta la fecha de compra.")
+    add("emisor", not _hueco(emisor), "Emisor", "Falta el nombre del emisor.")
+    nif_txt = str(nif or "").strip()
+    if _hueco(nif_txt):
+        add("nif", False, "NIF", "Falta el NIF del emisor.")
+    elif not is_valid_nif(nif_txt):
+        add("nif", False, "NIF", "El NIF del emisor no tiene un formato válido.")
+    elif (
+        titular_nif
+        and not is_placeholder_nif(titular_nif)
+        and normalize_nif(nif_txt) == normalize_nif(titular_nif)
+    ):
+        add("nif", False, "NIF", "El NIF es el del titular, no el del emisor.")
+    else:
+        add("nif", True, "NIF", "")
+    add("base", base is not None and not _hueco(base), "Base", "Falta la base imponible.")
+    add("iva", iva is not None and not _hueco(iva), "IVA", "Falta la cuota de IVA.")
+    add("total", total is not None and not _hueco(total), "Total", "Falta el total de la factura.")
+    add(
+        "rubro",
+        str(rubro or "").strip() not in {"", "—", "Sin clasificar"},
+        "Rubro",
+        "El rubro sigue sin clasificar.",
+    )
+    base_q = q2(base) if base is not None else None
+    iva_q = q2(iva) if iva is not None else None
+    total_q = q2(total) if total is not None else None
+    if base_q is not None and iva_q is not None and total_q is not None:
+        add(
+            "desglose",
+            abs(base_q + iva_q - total_q) <= Decimal("0.02"),
+            "Base+IVA",
+            "Base más IVA no da el total de la factura.",
+        )
+
+    activas = [item for item in lineas if not item.get("eliminada")]
+    if not activas:
+        add("ids", False, "Ids", "No hay líneas, así que no hay ids de artículo.")
+        add("conceptos", False, "Conceptos", "No hay líneas, así que no hay conceptos.")
+        add("importes", False, "Importes", "No hay líneas, así que no hay importes.")
+        add("suma", False, "Suma", "No hay importes que contrastar con el total del libro.")
+        return checks
+
+    sin_id: list[str] = []
+    sin_concepto: list[str] = []
+    sin_importe: list[str] = []
+    for idx, item in enumerate(activas, start=1):
+        nombre = str(item.get("descripcion") or "").strip() or f"línea {idx}"
+        if _hueco(item.get("codigo")):
+            sin_id.append(nombre)
+        if _hueco(item.get("descripcion")):
+            sin_concepto.append(f"línea {idx}")
+        if parse_money_field(item.get("importe")) is None:
+            sin_importe.append(nombre)
+    add("ids", not sin_id, "Ids", f"Falta el id en {_lista_corta(sin_id)}.")
+    add("conceptos", not sin_concepto, "Conceptos", f"Falta el concepto en {_lista_corta(sin_concepto)}.")
+    add("importes", not sin_importe, "Importes", f"Falta el importe en {_lista_corta(sin_importe)}.")
+    suma = _suma_importes(activas)
+    n = sum(1 for item in activas if parse_money_field(item.get("importe")) is not None)
+    if _cuadra_con_total(suma, total_q):
+        add("suma", True, "Suma", "")
+        checks[-1]["title"] = (
+            f"Suma de {_elementos_label(n or len(activas))} {format_euro(suma)} "
+            f"= total del libro {format_euro(total_q)}."
+        )
+    elif suma is None or total_q is None:
+        add("suma", False, "Suma", "Falta el total de la factura o el importe de las líneas.")
+    else:
+        delta = abs(q2(suma) - total_q)
+        add(
+            "suma",
+            False,
+            "Suma",
+            (
+                f"Suma de {_elementos_label(n or len(activas))} {format_euro(suma)} ≠ "
+                f"total del libro {format_euro(total_q)} (diferencia {format_euro(delta)}). "
+                "Puede faltar un artículo, o un importe se ha mezclado con otra línea."
             ),
-        }
-    delta = abs(suma_q - total_q)
-    denom = abs(float(total_q))
-    score = 0 if not denom else max(0, int(round(100 * (1 - float(delta) / denom))))
-    tone = "warn" if score >= 80 else "bad"
-    return {
-        "tone": tone,
-        "label": "No cuadra",
-        "score": score,
-        "text": (
-            f"Suma de {_elementos_label(n_lineas)} {format_euro(suma_q)} ≠ "
-            f"total del libro {format_euro(total_q)} (diferencia {format_euro(delta)})."
-        ),
-    }
+        )
+    return checks
 
 
-def _desglose_score_html(desglose: dict) -> str:
-    score = ""
-    if desglose["score"] is not None:
-        score = f'<span class="q-score">{desglose["score"]} %</span>'
+def _criterios_html(checks: list[dict], *, total: object = None) -> str:
+    ok_n = sum(1 for item in checks if item["ok"])
+    pct = int(round(100 * ok_n / len(checks))) if checks else 0
+    if checks and ok_n == len(checks):
+        tone, label = "ok", "Lista"
+    elif pct >= 80:
+        tone, label = "warn", "Revisar"
+    else:
+        tone, label = "bad", "Revisar"
+    items = []
+    for item in checks:
+        state = "is-ok" if item["ok"] else "is-bad"
+        detail = f"<em>{escape(item['detail'])}</em>" if item["detail"] else ""
+        title = f' title="{escape(item["title"])}"' if item.get("title") else ""
+        items.append(
+            f'<li data-check="{escape(item["id"])}" data-ok="{"1" if item["ok"] else "0"}" '
+            f'class="{state}"{title}><span>{escape(item["label"])}</span>{detail}</li>'
+        )
+    quantized = q2(total) if total is not None else None
+    total_attr = f' data-total="{quantized:.2f}"' if quantized is not None else ""
     return (
-        f'<div class="ficha-score">'
-        f'<span class="q-chip q-{escape(desglose["tone"])}">'
+        f'<div class="ficha-score" id="ficha-score"{total_attr}>'
+        f'<span class="q-chip q-{tone}" id="ficha-score-chip">'
         f'<i class="q-dot" aria-hidden="true"></i>'
-        f'<span>{escape(desglose["label"])}</span>{score}</span>'
-        f'<p id="ficha-score-text">{escape(desglose["text"])}</p></div>'
+        f'<span id="ficha-score-label">{label}</span>'
+        f'<span class="q-score" id="ficha-score-pct">{pct} %</span></span>'
+        f'<ul class="q-checks" id="ficha-score-list">{"".join(items)}</ul>'
+        "</div>"
     )
 
 
@@ -1351,112 +1528,6 @@ def _cola_revision(asientos: list[dict]) -> list[dict]:
     return sorted(items, key=sort_key)
 
 
-def _cumulative(series: list[dict]) -> list[dict]:
-    gastos = ingresos = ZERO
-    rows = []
-    for item in series:
-        gastos += item["gastos"]
-        ingresos += item["ingresos"]
-        rows.append(
-            {
-                "mes": item["mes"],
-                "gastos": gastos,
-                "ingresos": ingresos,
-                "neto": ingresos - gastos,
-            }
-        )
-    return rows
-
-
-def _insights(
-    asientos: list[dict],
-    ingresos: Decimal,
-    gastos: Decimal,
-    mejoras: Decimal,
-    codigo: str,
-) -> list[dict]:
-    items: list[dict] = []
-    vivos = [item for item in asientos if item["estado"] != "duplicado"]
-    gastos_rows = [item for item in vivos if item["tipo"] == TIPO_GASTO]
-    top = max(gastos_rows, key=lambda item: item["total"] or ZERO, default=None)
-    if top and (top["total"] or ZERO) > ZERO:
-        items.append(
-            {
-                "kind": "kpi",
-                "tone": "gasto",
-                "titulo": "Mayor gasto",
-                "valor": format_euro(top["total"]),
-                "detalle": f"{top['emisor']} · {top['fecha_label']}",
-            }
-        )
-    mix: dict[str, Decimal] = defaultdict(lambda: ZERO)
-    for item in gastos_rows:
-        mix[item["cuenta_nombre"]] += item["total"] or ZERO
-    if gastos > ZERO and mix:
-        label, amount = max(mix.items(), key=lambda pair: pair[1])
-        pct = int(round((amount / gastos) * 100))
-        items.append(
-            {
-                "kind": "kpi",
-                "tone": "gasto",
-                "titulo": "Mix de gastos",
-                "valor": f"{pct} %",
-                "detalle": label,
-                "pct": pct,
-            }
-        )
-    if ingresos <= ZERO:
-        items.append(
-            {
-                "kind": "alerta",
-                "titulo": "Sin rentas en el ejercicio",
-                "detalle": f"Suelta el recibo en inbox y: aeat-hub ingest --actividad {codigo}",
-                "filter": "ingreso",
-            }
-        )
-    if mejoras > ZERO:
-        items.append(
-            {
-                "kind": "kpi",
-                "tone": "mejora",
-                "titulo": "Mejoras capitalizadas",
-                "valor": format_euro(mejoras),
-                "detalle": "No restan del rendimiento de este año.",
-            }
-        )
-    dupes = sum(1 for item in asientos if item["estado"] == "duplicado")
-    if dupes:
-        items.append(
-            {
-                "kind": "alerta",
-                "titulo": f"{dupes} duplicado(s)",
-                "detalle": "No entran en los totales. Revisa antes de declarar.",
-                "filter": "duplicado",
-            }
-        )
-    baja = sum(1 for item in asientos if item.get("baja"))
-    if baja:
-        items.append(
-            {
-                "kind": "alerta",
-                "titulo": f"{baja} asiento(s) con baja confianza",
-                "detalle": "El modelo no está seguro. Ábrelos, corrige si hace falta y valida para no reprocesarlos.",
-                "filter": "baja",
-            }
-        )
-    validados = sum(1 for item in asientos if item.get("validado"))
-    if validados:
-        items.append(
-            {
-                "kind": "kpi",
-                "tone": "ok",
-                "titulo": "Validados por ti",
-                "valor": str(validados),
-                "detalle": "Bloqueados: reparse/OCR no pisan fecha, emisor, importes ni rubro.",
-            }
-        )
-    return items
-
 
 def _sum_tipo(rows: list[Asiento], tipo: str) -> Decimal:
     total = ZERO
@@ -1478,9 +1549,91 @@ def _by_month(rows: list[Asiento]) -> list[dict]:
         elif row.tipo == TIPO_GASTO:
             slot["gastos"] += amount
     return [
-        {"mes": MESES[idx - 1], "gastos": buckets[idx]["gastos"], "ingresos": buckets[idx]["ingresos"]}
+        {
+            "mes": MESES[idx - 1],
+            "mes_largo": MESES_LARGO[idx - 1],
+            "gastos": buckets[idx]["gastos"],
+            "ingresos": buckets[idx]["ingresos"],
+        }
         for idx in range(1, 13)
     ]
+
+
+def _etiqueta_emisor(label: str) -> tuple[str, str]:
+    text = label.strip() or "Sin emisor"
+    if len(text) <= 32:
+        return text, text
+    return text[:31] + "…", text
+
+
+def _rank_emisores(asientos: list[dict]) -> tuple[list[dict], Decimal]:
+    buckets: dict[str, dict] = {}
+    total = ZERO
+    for item in asientos:
+        if item["estado"] == "duplicado" or item["tipo"] != TIPO_GASTO:
+            continue
+        amount = q2(item["total"]) or ZERO
+        if amount <= ZERO:
+            continue
+        raw = str(item.get("emisor") or "").strip()
+        key = raw.casefold() or "sin emisor"
+        slot = buckets.get(key)
+        if slot is None:
+            buckets[key] = {"label": raw or "Sin emisor", "total": amount}
+        else:
+            slot["total"] += amount
+        total += amount
+    ranked = sorted(buckets.values(), key=lambda row: (-row["total"], row["label"].casefold()))
+    return ranked, total
+
+
+def _emisores_para_grafico(asientos: list[dict]) -> list[dict]:
+    ranked, _total = _rank_emisores(asientos)
+    if len(ranked) <= 6:
+        return ranked
+    resto = sum((row["total"] for row in ranked[6:]), ZERO)
+    return [*ranked[:6], {"label": "Resto", "total": resto}]
+
+
+def _frase_anio(asientos: list[dict], por_mes: list[dict]) -> str:
+    ranked, total = _rank_emisores(asientos)
+    if total <= ZERO or not ranked:
+        return ""
+    top = ranked[0]
+    share = int(round(float(top["total"] / total * 100)))
+    if share >= 50:
+        shown, _full = _etiqueta_emisor(top["label"])
+        return f"{shown} concentra el {share} % del gasto ({format_euro(top['total'])})."
+    peak = max(por_mes, key=lambda item: item["gastos"])
+    if peak["gastos"] > ZERO:
+        month_share = int(round(float(peak["gastos"] / total * 100)))
+        if month_share >= 40:
+            return (
+                f"El gasto se concentra en {peak['mes_largo']}: "
+                f"{format_euro(peak['gastos'])}, el {month_share} % del año."
+            )
+        last = next(item for item in reversed(por_mes) if item["gastos"] > ZERO)
+        return f"Hasta {last['mes_largo']} van {format_euro(total)} en gasto."
+    return ""
+
+
+def _aviso_linea(data: dict) -> str:
+    bits: list[str] = []
+    pendientes = int(data.get("n_pendientes") or 0)
+    if pendientes:
+        bits.append("1 asiento por revisar" if pendientes == 1 else f"{pendientes} asientos por revisar")
+    if (data.get("ingresos") or ZERO) <= ZERO:
+        bits.append("ejercicio sin ingresos")
+    duplicados = int(data.get("n_duplicados") or 0)
+    if duplicados:
+        bits.append(
+            "1 duplicado fuera de los totales"
+            if duplicados == 1
+            else f"{duplicados} duplicados fuera de los totales"
+        )
+    if not bits:
+        return ""
+    return f'<p class="insight-aviso">{escape(" · ".join(bits))}</p>'
 
 
 def _by_nature(
@@ -1569,33 +1722,31 @@ def _kpis(data: dict) -> str:
     return f"""
 <section class="kpis" aria-label="Resumen del ejercicio">
   <div class="wrap kpi-grid">
-    {_kpi_btn("Gastos del ejercicio", data["gastos"], "gasto", "gasto")}
-    {_kpi_btn("Ingresos", data["ingresos"], "ingreso", "ingreso")}
-    {_kpi_btn("Mejoras (inversión)", data["mejoras"], "mejora", "mejora")}
-    {_kpi_btn("Rendimiento neto", data["resultado"], "neto", "all", scroll="#charts")}
-    {_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], "pendiente")}
+    {_kpi_btn("Gastos del ejercicio", data["gastos"], "gasto")}
+    {_kpi_btn("Ingresos", data["ingresos"], "ingreso")}
+    {_kpi_btn("Mejoras (inversión)", data["mejoras"], "mejora")}
+    {_kpi_btn("Rendimiento neto", data["resultado"], "neto")}
+    {_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"])}
   </div>
   {mejora_note}
 </section>
 """
 
 
-def _kpi_btn(label: str, value: Decimal, kind: str, filter_key: str, *, scroll: str = "#ledger") -> str:
+def _kpi_btn(label: str, value: Decimal, kind: str) -> str:
     return (
-        f'<button type="button" class="kpi kpi-{kind} kpi-btn" data-filter="{filter_key}" '
-        f'data-scroll="{scroll}" aria-pressed="false">'
+        f'<div class="kpi kpi-{kind}">'
         f"<span>{escape(label)}</span>"
-        f"<strong>{escape(format_euro(value))}</strong></button>"
+        f"<strong>{escape(format_euro(value))}</strong></div>"
     )
 
 
-def _kpi_btn_count(label: str, pendientes: int, total: int, filter_key: str) -> str:
+def _kpi_btn_count(label: str, pendientes: int, total: int) -> str:
     return (
-        f'<button type="button" class="kpi kpi-count kpi-btn" data-filter="{filter_key}" '
-        f'data-scroll="#ledger" aria-pressed="false">'
+        f'<div class="kpi kpi-count">'
         f"<span>{escape(label)}</span>"
         f"<strong>{pendientes}</strong>"
-        f"<em>de {total} asientos</em></button>"
+        f"<em>de {total} asientos</em></div>"
     )
 
 
@@ -1604,10 +1755,15 @@ def _quality_pct_label(pct: int | None) -> str:
 
 
 def _quality_cell(item: dict, *, prefix: str) -> str:
+    faltas = item.get("calidad_faltas") or []
     if item["validado"]:
         tone = "ok"
         label = "Validado"
         hint = "Bloqueado: reparse y OCR no pisan fecha, emisor, importes ni rubro."
+    elif faltas:
+        tone = "warn"
+        label = "Revisar"
+        hint = "En la ficha: " + " ".join(faltas[:4])
     elif item["baja"]:
         tone = "warn"
         label = "Revisar"
@@ -1618,7 +1774,7 @@ def _quality_cell(item: dict, *, prefix: str) -> str:
     else:
         tone = "ok"
         label = "Aceptable"
-        hint = "Confianza ≥ 80 %. Revisa si algo no cuadra y valida para bloquearlo."
+        hint = "Número, fecha, emisor, NIF, importes, ids y suma están rellenos."
     ocr = _quality_pct_label(item["conf_ocr_pct"])
     clasificacion = _quality_pct_label(item["conf_class_pct"])
     rubro = item["cuenta_nombre"]
@@ -1652,7 +1808,7 @@ def _panel_libro(data: dict) -> str:
     body = _ledger(data)
     return (
         '<div class="panel" role="tabpanel" id="panel-libro" data-panel="libro" '
-        f'aria-labelledby="tab-libro">{body}</div>'
+        f'aria-labelledby="tab-libro">{body}{_footer(data)}</div>'
     )
 
 
@@ -1668,70 +1824,173 @@ def _panel_insights(data: dict) -> str:
   aria-labelledby="tab-insights">
   <p class="panel-lead">Arriba, cómo va el ejercicio. Abajo, el borrador de la Renta.</p>
   <div class="kpi-grid">
-    {_kpi_btn("Gastos", data["gastos"], "gasto", "gasto")}
-    {_kpi_btn("Ingresos", data["ingresos"], "ingreso", "ingreso")}
-    {_kpi_btn("Mejoras", data["mejoras"], "mejora", "mejora")}
-    {_kpi_btn("Neto", data["resultado"], "neto", "all", scroll="#charts")}
-    {_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], "pendiente")}
+    {_kpi_btn("Gastos", data["gastos"], "gasto")}
+    {_kpi_btn("Ingresos", data["ingresos"], "ingreso")}
+    {_kpi_btn("Mejoras", data["mejoras"], "mejora")}
+    {_kpi_btn("Neto", data["resultado"], "neto")}
+    {_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"])}
   </div>
   {mejora_note}
+  {_aviso_linea(data)}
   {_insights_html(data)}
   {_irpf_html(data)}
 </section>
 """
 
 
+def _insight_rows_json(asientos: list[dict]) -> str:
+    rows = []
+    for item in asientos:
+        if item.get("estado") == "duplicado":
+            continue
+        if item.get("tipo") not in {TIPO_GASTO, TIPO_INGRESO}:
+            continue
+        emisor = item.get("emisor") or ""
+        if emisor == "—":
+            emisor = ""
+        rows.append(
+            {
+                "fecha": item.get("fecha") or "",
+                "emisor": emisor,
+                "total": float(q2(item.get("total")) or 0),
+                "tipo": item.get("tipo") or "",
+            }
+        )
+    return json.dumps(rows, ensure_ascii=True).replace("<", "\\u003c")
+
+
 def _insights_html(data: dict) -> str:
-    kpis = [item for item in data["insights"] if item["kind"] == "kpi"]
-    alerts = [item for item in data["insights"] if item["kind"] == "alerta"]
-    sats = "".join(_evo_kpi(item) for item in kpis)
-    alert_bits = []
-    for item in alerts:
-        filt = escape(item.get("filter") or "")
-        alert_bits.append(
-            f'<button type="button" class="evo-alert" data-filter="{filt}" data-scroll="#ledger">'
-            f"<strong>{escape(item['titulo'])}</strong>"
-            f"<p>{escape(item['detalle'])}</p></button>"
-        )
-    alerts_html = ""
-    if alert_bits:
-        alerts_html = (
-            '<h3 class="insight-sub">Atención</h3>'
-            f'<div class="evo-alerts">{"".join(alert_bits)}</div>'
-        )
-    sats_wrap = ""
-    if sats:
-        sats_wrap = f'<h3 class="insight-sub">Destacados</h3><div class="evo-sats">{sats}</div>'
+    frase = _frase_anio(data["asientos"], data["por_mes"])
+    frase_html = (
+        f'<p class="insight-frase" id="insight-frase">{escape(frase)}</p>' if frase else
+        '<p class="insight-frase" id="insight-frase" hidden></p>'
+    )
     return f"""
 <section class="insights insight-block" id="insights" aria-labelledby="insight-operativo">
   <div class="review-head">
     <h2 id="insight-operativo">Operativo</h2>
-    <p>Evolución del ejercicio. Las alertas abren el libro ya filtrado.</p>
+    <p>Evolución de gastos e ingresos del ejercicio.</p>
   </div>
-  <h3 class="insight-sub">Evolución</h3>
+  <div class="insight-range" id="insight-range">
+    <span class="insight-range-year">Ejercicio {data["year"]}</span>
+    <button type="button" class="ghost" id="insight-range-all">Año completo</button>
+    <label>Desde <input id="insight-desde" type="date"></label>
+    <label>Hasta <input id="insight-hasta" type="date"></label>
+    <label>Nombre <input id="insight-range-name" type="text" maxlength="40" placeholder="Agosto" autocomplete="off"></label>
+    <button type="button" class="ghost" id="insight-range-save">Guardar rango</button>
+    <div class="insight-presets" id="insight-presets"></div>
+  </div>
+  {frase_html}
   {_charts(data)}
-  {sats_wrap}
-  {alerts_html}
+  <template id="insight-rows">{_insight_rows_json(data["asientos"])}</template>
 </section>
 """
 
 
-def _evo_kpi(item: dict) -> str:
-    tone = escape(item.get("tone") or "neto")
-    bar = ""
-    pct = item.get("pct")
-    if pct is not None:
-        bar = (
-            f'<div class="evo-track" aria-hidden="true">'
-            f'<i class="gas" style="width:{int(pct)}%"></i></div>'
-        )
-    return (
-        f'<article class="evo-kpi evo-kpi-{tone}">'
-        f'<span class="evo-label">{escape(item["titulo"])}</span>'
-        f"<strong>{escape(item['valor'])}</strong>"
-        f'<div class="evo-kpi-foot">{bar}<p>{escape(item["detalle"])}</p></div>'
-        "</article>"
+def _charts(data: dict) -> str:
+    return f"""
+<section class="charts" id="charts" aria-label="Gráficos">
+  <figure>
+    <figcaption>Gasto por mes</figcaption>
+    <div class="chart-scroll" id="insight-month">{_svg_months(data["por_mes"])}</div>
+  </figure>
+  <figure>
+    <figcaption>Por emisor</figcaption>
+    <div id="insight-emisor">{_svg_emisores(_emisores_para_grafico(data["asientos"]))}</div>
+  </figure>
+</section>
+"""
+
+
+def _svg_months(series: list[dict]) -> str:
+    width, height = 640, 280
+    pad_l, pad_r, pad_t, pad_b = 56, 16, 36, 40
+    inner_w = width - pad_l - pad_r
+    inner_h = height - pad_t - pad_b
+    show_income = any(item["ingresos"] > ZERO for item in series)
+    peak = max(
+        (max(item["gastos"], item["ingresos"] if show_income else ZERO) for item in series),
+        default=ZERO,
     )
+    peak = peak if peak > 0 else Decimal("1")
+    slot = inner_w / 12
+    bar_w = min(slot * (0.34 if show_income else 0.55), 28)
+    ticks = [
+        (ZERO, pad_t + inner_h),
+        (peak / 2, pad_t + inner_h / 2),
+        (peak, pad_t),
+    ]
+    parts = [
+        f'<svg viewBox="0 0 {width} {height}" role="img" '
+        'aria-label="Gasto de cada mes del año">'
+    ]
+    for value, y in ticks:
+        parts.append(
+            f'<line class="grid" x1="{pad_l}" y1="{y:.1f}" x2="{width - pad_r}" y2="{y:.1f}"/>'
+            f'<text class="tick" x="{pad_l - 8}" y="{y + 4:.1f}">{escape(_compact(value))}</text>'
+        )
+    for idx, item in enumerate(series):
+        pair = bar_w * (2 if show_income else 1) + (4 if show_income else 0)
+        x0 = pad_l + slot * idx + (slot - pair) / 2
+        h_g = float(item["gastos"] / peak) * inner_h
+        y_g = pad_t + inner_h - h_g
+        if h_g >= 0.5:
+            parts.append(
+                f'<rect class="bar-g" x="{x0:.1f}" y="{y_g:.1f}" width="{bar_w:.1f}" height="{h_g:.1f}" rx="3">'
+                f"<title>{escape(item['mes_largo'])} gastos {escape(format_euro(item['gastos']))}</title></rect>"
+            )
+            parts.append(
+                f'<text class="bar-label" x="{x0 + bar_w / 2:.1f}" y="{max(y_g - 6, 12):.1f}">'
+                f"{escape(_compact(item['gastos']))}</text>"
+            )
+        if show_income and item["ingresos"] > ZERO:
+            h_i = float(item["ingresos"] / peak) * inner_h
+            x_i = x0 + bar_w + 4
+            y_i = pad_t + inner_h - h_i
+            parts.append(
+                f'<rect class="bar-i" x="{x_i:.1f}" y="{y_i:.1f}" width="{bar_w:.1f}" height="{h_i:.1f}" rx="3">'
+                f"<title>{escape(item['mes_largo'])} ingresos {escape(format_euro(item['ingresos']))}</title></rect>"
+            )
+            parts.append(
+                f'<text class="bar-label" x="{x_i + bar_w / 2:.1f}" y="{max(y_i - 6, 12):.1f}">'
+                f"{escape(_compact(item['ingresos']))}</text>"
+            )
+        label_x = pad_l + slot * idx + slot / 2
+        parts.append(
+            f'<text class="axis" x="{label_x:.1f}" y="{height - 14}">{item["mes"]}</text>'
+        )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _svg_emisores(series: list[dict]) -> str:
+    if not series:
+        return '<p class="empty">Aún no hay gasto que repartir por emisor.</p>'
+    width = 640
+    row_h = 58
+    pad_l, pad_r = 18, 16
+    height = 16 + row_h * len(series)
+    peak = max((item["total"] for item in series), default=Decimal("1"))
+    grand = sum((item["total"] for item in series), ZERO) or Decimal("1")
+    inner_w = width - pad_l - pad_r
+    parts = [
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="Gasto por emisor">'
+    ]
+    for idx, item in enumerate(series):
+        y = 8 + idx * row_h
+        bar = float(item["total"] / peak) * inner_w if peak else 0
+        pct = int(round(float(item["total"] / grand * 100)))
+        shown, full = _etiqueta_emisor(item["label"])
+        parts.append(
+            f'<text class="axis left" x="{pad_l}" y="{y + 14}">'
+            f"<title>{escape(full)}</title>{escape(shown)}</text>"
+            f'<rect class="bar-g" x="{pad_l}" y="{y + 22}" width="{max(bar, 8):.1f}" height="16" rx="4">'
+            f"<title>{escape(full)} {escape(format_euro(item['total']))} ({pct} %)</title></rect>"
+            f'<text class="tick right" x="{pad_l}" y="{y + 52}">'
+            f"{escape(format_euro(item['total']))} · {pct} %</text>"
+        )
+    parts.append("</svg>")
+    return "".join(parts)
 
 
 def _irpf_html(data: dict) -> str:
@@ -1814,123 +2073,6 @@ def _footer(data: dict) -> str:
 </footer>
 """
 
-
-def _charts(data: dict) -> str:
-    return f"""
-<section class="charts" id="charts" aria-label="Gráficos">
-  <figure>
-    <figcaption>Por mes
-      <span class="swatch g">gastos</span>
-      <span class="swatch i">ingresos</span>
-    </figcaption>
-    <div class="chart-scroll">{_svg_months(data["por_mes"])}</div>
-  </figure>
-  <figure>
-    <figcaption>Por rubro
-      <span class="swatch g">gasto</span>
-      <span class="swatch i">ingreso</span>
-      <span class="swatch m">mejora</span>
-    </figcaption>
-    {_svg_nature(data["por_naturaleza"])}
-  </figure>
-</section>
-"""
-
-
-def _svg_months(series: list[dict]) -> str:
-    active = [
-        item for item in series if item["gastos"] > ZERO or item["ingresos"] > ZERO
-    ]
-    if not active:
-        return '<p class="empty">Sin movimientos mensuales todavía.</p>'
-    series = active
-    width, height = 640, 280
-    pad_l, pad_r, pad_t, pad_b = 56, 16, 28, 40
-    inner_w = width - pad_l - pad_r
-    inner_h = height - pad_t - pad_b
-    peak = max(
-        (max(item["gastos"], item["ingresos"]) for item in series),
-        default=ZERO,
-    )
-    peak = peak if peak > 0 else Decimal("1")
-    slot = inner_w / max(len(series), 1)
-    bar_w = min(slot * 0.34, 46)
-    ticks = [
-        (ZERO, pad_t + inner_h),
-        (peak / 2, pad_t + inner_h / 2),
-        (peak, pad_t),
-    ]
-    parts = [
-        f'<svg viewBox="0 0 {width} {height}" role="img" '
-        'aria-label="Gastos e ingresos de cada mes con movimiento">'
-    ]
-    for value, y in ticks:
-        parts.append(
-            f'<line class="grid" x1="{pad_l}" y1="{y:.1f}" x2="{width - pad_r}" y2="{y:.1f}"/>'
-            f'<text class="tick" x="{pad_l - 8}" y="{y + 4:.1f}">{escape(_compact(value))}</text>'
-        )
-    for idx, item in enumerate(series):
-        x0 = pad_l + slot * idx + (slot - bar_w * 2 - 4) / 2
-        h_g = float(item["gastos"] / peak) * inner_h
-        h_i = float(item["ingresos"] / peak) * inner_h
-        y_g = pad_t + inner_h - h_g
-        y_i = pad_t + inner_h - h_i
-        if h_g >= 0.5:
-            parts.append(
-                f'<rect class="bar-g" x="{x0:.1f}" y="{y_g:.1f}" width="{bar_w:.1f}" height="{h_g:.1f}" rx="3">'
-                f'<title>{item["mes"]} gastos {format_euro(item["gastos"])}</title></rect>'
-            )
-            parts.append(
-                f'<text class="bar-label" x="{x0 + bar_w / 2:.1f}" y="{y_g - 6:.1f}">'
-                f"{escape(_compact(item['gastos']))}</text>"
-            )
-        if h_i >= 0.5:
-            parts.append(
-                f'<rect class="bar-i" x="{x0 + bar_w + 4:.1f}" y="{y_i:.1f}" width="{bar_w:.1f}" height="{h_i:.1f}" rx="3">'
-                f'<title>{item["mes"]} ingresos {format_euro(item["ingresos"])}</title></rect>'
-            )
-            parts.append(
-                f'<text class="bar-label" x="{x0 + bar_w + 4 + bar_w / 2:.1f}" y="{y_i - 6:.1f}">'
-                f"{escape(_compact(item['ingresos']))}</text>"
-            )
-        parts.append(
-            f'<text class="axis" x="{x0 + bar_w + 2:.1f}" y="{height - 14}">{item["mes"]}</text>'
-        )
-    parts.append("</svg>")
-    return "".join(parts)
-
-
-def _svg_nature(series: list[dict]) -> str:
-    if not series:
-        return '<p class="empty">Aún no hay importes que agrupar.</p>'
-    width = 640
-    row_h = 58
-    pad_l, pad_r = 18, 16
-    height = 16 + row_h * len(series)
-    peak = max((item["total"] for item in series), default=Decimal("1"))
-    grand = sum((item["total"] for item in series), ZERO) or Decimal("1")
-    inner_w = width - pad_l - pad_r
-    parts = [
-        f'<svg viewBox="0 0 {width} {height}" role="img" '
-        'aria-label="Importes por rubro">'
-    ]
-    for idx, item in enumerate(series):
-        y = 8 + idx * row_h
-        bar = float(item["total"] / peak) * inner_w if peak else 0
-        kind = {"gasto": "bar-g", "ingreso": "bar-i", "mejora": "bar-m"}.get(item["tipo"], "bar-g")
-        pct = int(round(float(item["total"] / grand * 100)))
-        label = item["label"]
-        shown = label if len(label) <= 28 else f"{label[:27]}…"
-        parts.append(
-            f'<text class="axis left" x="{pad_l}" y="{y + 14}">'
-            f"<title>{escape(label)}</title>{escape(shown)}</text>"
-            f'<rect class="{kind}" x="{pad_l}" y="{y + 22}" width="{max(bar, 8):.1f}" height="16" rx="4">'
-            f'<title>{escape(item["label"])} {format_euro(item["total"])} ({pct} %)</title></rect>'
-            f'<text class="tick right" x="{pad_l}" y="{y + 52}">'
-            f'{escape(format_euro(item["total"]))} · {pct} %</text>'
-        )
-    parts.append("</svg>")
-    return "".join(parts)
 
 
 def _compact(value: Decimal) -> str:
@@ -2601,8 +2743,7 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   padding: 14px 14px 12px;
   text-align: left;
   width: 100%;
-  cursor: pointer;
-  transition: transform .12s ease, box-shadow .12s ease;
+  cursor: default;
 }
 .kpi span, .kpi-btn span { display: block; margin: 0; font-size: 12px; color: var(--muted); }
 .kpi strong, .kpi-btn strong {
@@ -2707,70 +2848,54 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   text-transform: uppercase;
   color: var(--muted);
 }
+.insight-aviso {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.insight-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: end;
+  margin: 12px 0 4px;
+}
+.insight-range-year { font-size: 13px; padding-bottom: 8px; }
+.insight-range label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.insight-range input {
+  font: inherit;
+  color: var(--ink);
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.insight-presets { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+.insight-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.insight-preset.is-on { border-color: var(--ink); background: var(--paper); }
+.insight-frase {
+  margin: 14px 0 4px;
+  font: 600 22px/1.3 Palatino, "Iowan Old Style", serif;
+}
 .chart-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
 .chart-scroll svg { min-width: 640px; }
-.evo-sats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
-}
-.evo-label {
-  display: block;
-  margin: 0;
-  font-size: 11px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.evo-kpi {
-  border: 1px solid var(--line);
-  border-top-width: 3px;
-  padding: 14px 14px 12px;
-  background: #fff;
-  display: flex;
-  flex-direction: column;
-}
-.evo-kpi strong {
-  display: block;
-  margin-top: 8px;
-  font: 600 26px/1 "Iowan Old Style", Palatino, serif;
-  font-variant-numeric: tabular-nums;
-}
-.evo-kpi p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
-.evo-kpi-foot { margin-top: auto; padding-top: 12px; }
-.evo-kpi-gasto { border-top-color: var(--gasto); }
-.evo-kpi-mejora { border-top-color: var(--mejora); }
-.evo-kpi-ok { border-top-color: var(--ingreso); }
-.evo-kpi-neto { border-top-color: var(--neto); }
-.evo-track {
-  height: 8px;
-  background: var(--paper);
-  margin-top: 12px;
-  overflow: hidden;
-}
-.evo-track i { display: block; height: 100%; }
-.evo-track i.ing { background: var(--ingreso); }
-.evo-track i.gas { background: var(--gasto); }
-.evo-alerts { display: grid; gap: 8px; margin-top: 12px; }
-.evo-alert {
-  display: block;
-  width: 100%;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--warn);
-  background: #fff;
-  padding: 10px 12px;
-}
-.evo-alert:hover { border-color: var(--warn); }
-.evo-alert strong { display: block; font-size: 13px; }
-.evo-alert p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
 .irpf-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
 .irpf-kpis article { border: 1px solid var(--line); padding: 10px 12px; background: #fff; }
 .irpf-kpis span { display: block; font-size: 12px; color: var(--muted); }
@@ -2826,7 +2951,7 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 tbody tr.flash { background: rgba(163, 91, 18, .12); }
 .charts {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.3fr 0.7fr;
   gap: 12px;
   margin: 16px 0 0;
 }
@@ -3252,16 +3377,43 @@ a.row-go:hover { text-decoration: underline; }
 }
 .ficha-score {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 8px;
   margin: 0 0 12px;
   padding: 10px 12px;
   background: #fff;
   border: 1px solid var(--line);
 }
 .ficha-score .q-chip { cursor: default; }
-.ficha-score p { margin: 0; font-size: 13px; color: var(--muted); }
+.q-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  width: 100%;
+}
+.q-checks li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+.q-checks li.is-ok span::before { content: "· "; color: var(--ingreso); }
+.q-checks li.is-bad {
+  flex-basis: 100%;
+  color: var(--ink);
+  border-color: #e4c2b8;
+  background: #fbf6f3;
+}
+.q-checks li.is-bad span { color: var(--gasto); font-weight: 600; }
+.q-checks em { font-style: normal; }
 .q-score { font-weight: 600; font-variant-numeric: tabular-nums; }
 .q-chip.q-muted .q-dot { background: var(--muted); }
 .ficha-lines { max-height: min(70vh, 720px); }
@@ -3340,8 +3492,8 @@ tbody td.col-sticky {
   background: #fff;
   box-shadow: 1px 0 0 var(--line);
 }
+tbody tr.is-band td.col-sticky { background: #f6f1e8; }
 tbody tr:hover td.col-sticky { background: #faf6ef; }
-tbody tr:target td.col-sticky { background: #fff6eb; }
 thead th.col-estado {
   right: 0;
   z-index: 4;
@@ -3354,8 +3506,8 @@ tbody td.cell-estado {
   background: #fff;
   box-shadow: -8px 0 8px -8px rgba(28, 24, 20, .16);
 }
+tbody tr.is-band td.cell-estado { background: #f6f1e8; }
 tbody tr:hover td.cell-estado { background: #faf6ef; }
-tbody tr:target td.cell-estado { background: #fff6eb; }
 th, td {
   text-align: left;
   padding: 10px 8px;
@@ -3548,8 +3700,14 @@ thead th.col-estado .th-head { justify-content: flex-start; }
 thead th.cell-doc .th-head { justify-content: center; }
 thead th.col-sticky { text-align: left; }
 tbody td.col-sticky { text-align: center; }
-tbody tr:hover { background: rgba(28, 24, 20, .03); }
-tbody tr:target { background: rgba(163, 91, 18, .08); }
+tbody tr.is-band { background: #f6f1e8; }
+tbody tr:hover { background: #faf6ef; }
+#ficha-lines-editor tr.is-editing,
+#ficha-lines-editor tr.is-editing td.col-sticky,
+#ficha-lines-editor tr.is-editing td.cell-estado { background: #fff6eb; }
+#ficha-lines-editor.show-deleted tr.is-deleted,
+#ficha-lines-editor.show-deleted tr.is-deleted td.col-sticky,
+#ficha-lines-editor.show-deleted tr.is-deleted td.cell-estado { background: #f3efe8; }
 th {
   color: var(--muted);
   font-weight: 600;
@@ -3595,7 +3753,7 @@ th {
   .mast-h1 #mast-kicker, h1 span { font-size: 18px; }
   .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kpi-grid > :last-child { grid-column: 1 / -1; }
-  .irpf-kpis, .evo-sats, .charts { grid-template-columns: 1fr 1fr; display: grid; }
+  .irpf-kpis, .charts { grid-template-columns: 1fr 1fr; display: grid; }
   .charts figure:last-child { grid-column: auto; }
   .ledger { padding: 12px 12px 8px; }
   .ledger-table { min-width: 980px; font-size: 12px; }
@@ -3611,9 +3769,9 @@ th {
   .meta, .mast-strip, .panel-lead { font-size: 13px; }
   .kpis { padding: 14px 0 4px; }
   .kpi, .kpi-btn { padding: 12px; }
-  .kpi strong, .kpi-btn strong, .evo-kpi strong { font-size: 22px; }
+  .kpi strong, .kpi-btn strong { font-size: 22px; }
   .kpi-grid, .libro-kpis { grid-template-columns: 1fr 1fr; gap: 8px; }
-  .irpf-kpis, .evo-sats, .charts { grid-template-columns: 1fr; display: grid; }
+  .irpf-kpis, .charts { grid-template-columns: 1fr; display: grid; }
   .tabs-row { gap: 0; }
   .tab { flex: 1 1 auto; text-align: center; padding: 14px 10px 12px; }
   .ledger-status { gap: 8px; }
@@ -3674,7 +3832,7 @@ th {
   body { background: #fff; min-height: 0; display: block; }
   .foot, .site-foot { margin-top: 24px; padding-top: 16px; padding-bottom: 16px; }
   .kpi-btn, .ghost, .cmd-btn, .review, .tabs, .funnel, .filter-pop, .export-btn { display: none; }
-  .mast, .kpi, .evo-kpi, figure, .ledger { break-inside: avoid; }
+  .mast, .kpi, figure, .ledger { break-inside: avoid; }
   .table-wrap { max-height: none; }
 }
 """
@@ -3917,6 +4075,7 @@ _JS = r"""
       if (countsInBook(row)) totalLibro += amount;
       const show = matchesRow(row);
       row.dataset.match = show ? "1" : "0";
+      row.classList.remove("is-band");
       if (!show) {
         row.hidden = true;
         continue;
@@ -3935,7 +4094,9 @@ _JS = r"""
     libroPage = Math.min(Math.max(1, libroPage), pageCount);
     const start = (libroPage - 1) * PAGE_SIZE;
     matched.forEach((row, index) => {
-      row.hidden = index < start || index >= start + PAGE_SIZE;
+      const onPage = index >= start && index < start + PAGE_SIZE;
+      row.hidden = !onPage;
+      row.classList.toggle("is-band", onPage && (index - start) % 2 === 1);
     });
     paintLibroPager(matched.length);
     syncFunnels();
@@ -4021,12 +4182,6 @@ _JS = r"""
   };
 
   for (const button of kpiButtons) {
-    button.addEventListener("click", () => {
-      showPanel("libro");
-      setFilter(button.dataset.filter, button.dataset.scroll || "#ledger");
-    });
-  }
-  for (const button of document.querySelectorAll(".evo-alert[data-filter]")) {
     button.addEventListener("click", () => {
       showPanel("libro");
       setFilter(button.dataset.filter, button.dataset.scroll || "#ledger");
@@ -4682,5 +4837,240 @@ _JS = r"""
       toast("No se pudo guardar. Abre el dashboard con `aeat-hub dashboard` (servidor local).");
     }
   });
+
+  try {
+  const insightBox = document.getElementById("insight-rows");
+  const insightMonth = document.getElementById("insight-month");
+  const insightEmisor = document.getElementById("insight-emisor");
+  const insightFrase = document.getElementById("insight-frase");
+  if (insightBox && insightMonth && insightEmisor && insightFrase) {
+    const source = JSON.parse(insightBox.content?.textContent || insightBox.innerHTML || "[]");
+    const month0 = insightMonth.innerHTML;
+    const emisor0 = insightEmisor.innerHTML;
+    const frase0 = insightFrase.textContent;
+    const corto = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+    const largo = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+    const desdeEl = document.getElementById("insight-desde");
+    const hastaEl = document.getElementById("insight-hasta");
+    const nameEl = document.getElementById("insight-range-name");
+    const presetsEl = document.getElementById("insight-presets");
+    const storeKey = `aeat-hub-rangos:${document.body.dataset.actividad}:${document.body.dataset.year}`;
+    const esc = (value) => String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+    const compact = (value) => (
+      value >= 1000
+        ? `${(value / 1000).toFixed(1).replace(".", ",")}k`
+        : formatEuro(value).replace(/\s*€/, "")
+    );
+    const loadPresets = () => {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(storeKey) || "[]");
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    };
+    const savePresets = (items) => localStorage.setItem(storeKey, JSON.stringify(items));
+    const inRange = (row, desde, hasta) => {
+      if (!desde && !hasta) return true;
+      if (!row.fecha) return false;
+      if (desde && row.fecha < desde) return false;
+      if (hasta && row.fecha > hasta) return false;
+      return true;
+    };
+    const svgMonths = (rows) => {
+      const gastos = Array.from({ length: 12 }, () => 0);
+      const ingresos = Array.from({ length: 12 }, () => 0);
+      for (const row of rows) {
+        const month = Number((row.fecha || "").slice(5, 7)) - 1;
+        if (month < 0 || month > 11) continue;
+        if (row.tipo === "gasto") gastos[month] += row.total;
+        if (row.tipo === "ingreso") ingresos[month] += row.total;
+      }
+      const showIncome = ingresos.some((value) => value > 0);
+      const peak = Math.max(1, ...gastos, ...(showIncome ? ingresos : [0]));
+      const width = 640;
+      const height = 280;
+      const padL = 56;
+      const padT = 36;
+      const innerW = width - padL - 16;
+      const innerH = height - padT - 40;
+      const slot = innerW / 12;
+      const barW = Math.min(slot * (showIncome ? 0.34 : 0.55), 28);
+      let body = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Gasto de cada mes del año">`;
+      [0, peak / 2, peak].forEach((value, index) => {
+        const y = padT + innerH - (value / peak) * innerH;
+        body += `<line class="grid" x1="${padL}" y1="${y.toFixed(1)}" x2="${width - 16}" y2="${y.toFixed(1)}"/>`;
+        body += `<text class="tick" x="${padL - 8}" y="${(y + 4).toFixed(1)}">${compact(value)}</text>`;
+      });
+      corto.forEach((label, index) => {
+        const pair = barW * (showIncome ? 2 : 1) + (showIncome ? 4 : 0);
+        const x0 = padL + slot * index + (slot - pair) / 2;
+        const draw = (amount, x, klass, kind) => {
+          if (amount <= 0) return;
+          const h = (amount / peak) * innerH;
+          const y = padT + innerH - h;
+          body += `<rect class="${klass}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="3"><title>${esc(largo[index])} ${kind} ${esc(formatEuro(amount))}</title></rect>`;
+          body += `<text class="bar-label" x="${(x + barW / 2).toFixed(1)}" y="${Math.max(y - 6, 12).toFixed(1)}">${compact(amount)}</text>`;
+        };
+        draw(gastos[index], x0, "bar-g", "gastos");
+        if (showIncome) draw(ingresos[index], x0 + barW + 4, "bar-i", "ingresos");
+        body += `<text class="axis" x="${(padL + slot * index + slot / 2).toFixed(1)}" y="${height - 14}">${label}</text>`;
+      });
+      body += "</svg>";
+      return body;
+    };
+    const svgEmisores = (rows) => {
+      const map = new Map();
+      for (const row of rows) {
+        if (row.tipo !== "gasto" || row.total <= 0) continue;
+        const raw = (row.emisor || "").trim();
+        const key = raw.toLocaleLowerCase("es") || "sin emisor";
+        const cur = map.get(key) || { label: raw || "Sin emisor", total: 0 };
+        cur.total += row.total;
+        map.set(key, cur);
+      }
+      let ranked = [...map.values()].sort((a, b) => b.total - a.total || a.label.localeCompare(b.label, "es"));
+      if (!ranked.length) return '<p class="empty">Aún no hay gasto que repartir por emisor.</p>';
+      if (ranked.length > 6) {
+        const resto = ranked.slice(6).reduce((sum, item) => sum + item.total, 0);
+        ranked = ranked.slice(0, 6).concat([{ label: "Resto", total: resto }]);
+      }
+      const peak = Math.max(...ranked.map((item) => item.total));
+      const grand = ranked.reduce((sum, item) => sum + item.total, 0) || 1;
+      const width = 640;
+      const rowH = 58;
+      const height = 16 + rowH * ranked.length;
+      let body = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Gasto por emisor">`;
+      ranked.forEach((item, index) => {
+        const y = 8 + index * rowH;
+        const bar = (item.total / peak) * (width - 34);
+        const pct = Math.round(100 * item.total / grand);
+        const full = item.label;
+        const shown = full.length > 32 ? `${full.slice(0, 31)}…` : full;
+        body += `<text class="axis left" x="18" y="${y + 14}"><title>${esc(full)}</title>${esc(shown)}</text>`;
+        body += `<rect class="bar-g" x="18" y="${y + 22}" width="${Math.max(bar, 8).toFixed(1)}" height="16" rx="4"><title>${esc(full)} ${esc(formatEuro(item.total))} (${pct} %)</title></rect>`;
+        body += `<text class="tick right" x="18" y="${y + 52}">${esc(formatEuro(item.total))} · ${pct} %</text>`;
+      });
+      body += "</svg>";
+      return body;
+    };
+    const fraseDe = (rows) => {
+      const gastos = rows.filter((row) => row.tipo === "gasto" && row.total > 0);
+      const total = gastos.reduce((sum, row) => sum + row.total, 0);
+      if (total <= 0) return "Sin gasto en este rango.";
+      const map = new Map();
+      for (const row of gastos) {
+        const raw = (row.emisor || "").trim();
+        const key = raw.toLocaleLowerCase("es") || "sin emisor";
+        const cur = map.get(key) || { label: raw || "Sin emisor", total: 0 };
+        cur.total += row.total;
+        map.set(key, cur);
+      }
+      const ranked = [...map.values()].sort((a, b) => b.total - a.total || a.label.localeCompare(b.label, "es"));
+      const top = ranked[0];
+      const share = Math.round(100 * top.total / total);
+      const shown = top.label.length > 32 ? `${top.label.slice(0, 31)}…` : top.label;
+      if (share >= 50) return `${shown} concentra el ${share} % del gasto (${formatEuro(top.total)}).`;
+      const byMonth = Array.from({ length: 12 }, () => 0);
+      for (const row of gastos) {
+        const month = Number((row.fecha || "").slice(5, 7)) - 1;
+        if (month >= 0 && month < 12) byMonth[month] += row.total;
+      }
+      let peak = 0;
+      byMonth.forEach((value, index) => { if (value > byMonth[peak]) peak = index; });
+      const monthShare = Math.round(100 * byMonth[peak] / total);
+      if (byMonth[peak] > 0 && monthShare >= 40) {
+        return `El gasto se concentra en ${largo[peak]}: ${formatEuro(byMonth[peak])}, el ${monthShare} % del año.`;
+      }
+      let last = 0;
+      byMonth.forEach((value, index) => { if (value > 0) last = index; });
+      return `Hasta ${largo[last]} van ${formatEuro(total)} en gasto.`;
+    };
+    const paintPresets = (activeName) => {
+      if (!presetsEl) return;
+      presetsEl.replaceChildren();
+      for (const preset of loadPresets()) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "insight-preset" + (preset.name === activeName ? " is-on" : "");
+        button.textContent = preset.name;
+        button.addEventListener("click", () => {
+          if (desdeEl) desdeEl.value = preset.desde || "";
+          if (hastaEl) hastaEl.value = preset.hasta || "";
+          applyRange(preset.name);
+        });
+        const drop = document.createElement("button");
+        drop.type = "button";
+        drop.className = "insight-preset";
+        drop.textContent = "×";
+        drop.setAttribute("aria-label", `Quitar rango ${preset.name}`);
+        drop.addEventListener("click", (event) => {
+          event.stopPropagation();
+          savePresets(loadPresets().filter((item) => item.name !== preset.name));
+          paintPresets("");
+        });
+        presetsEl.appendChild(button);
+        presetsEl.appendChild(drop);
+      }
+    };
+    const applyRange = (activeName = "") => {
+      const desde = desdeEl?.value || "";
+      const hasta = hastaEl?.value || "";
+      if (desde && hasta && desde > hasta) {
+        toast("La fecha desde es posterior a hasta.");
+        return;
+      }
+      if (!desde && !hasta) {
+        insightMonth.innerHTML = month0;
+        insightEmisor.innerHTML = emisor0;
+        insightFrase.textContent = frase0;
+        insightFrase.hidden = !frase0;
+        paintPresets("");
+        return;
+      }
+      const rows = source.filter((row) => inRange(row, desde, hasta));
+      insightMonth.innerHTML = svgMonths(rows);
+      insightEmisor.innerHTML = svgEmisores(rows);
+      insightFrase.hidden = false;
+      insightFrase.textContent = fraseDe(rows);
+      paintPresets(activeName);
+    };
+    document.getElementById("insight-range-all")?.addEventListener("click", () => {
+      if (desdeEl) desdeEl.value = "";
+      if (hastaEl) hastaEl.value = "";
+      applyRange();
+    });
+    desdeEl?.addEventListener("change", () => applyRange());
+    hastaEl?.addEventListener("change", () => applyRange());
+    desdeEl?.addEventListener("input", () => applyRange());
+    hastaEl?.addEventListener("input", () => applyRange());
+    document.getElementById("insight-range-save")?.addEventListener("click", () => {
+      const name = (nameEl?.value || "").trim();
+      const desde = desdeEl?.value || "";
+      const hasta = hastaEl?.value || "";
+      if (!name) {
+        toast("Pon un nombre al rango.");
+        return;
+      }
+      if (!desde && !hasta) {
+        toast("Indica desde, hasta, o las dos.");
+        return;
+      }
+      const next = loadPresets().filter((item) => item.name !== name);
+      next.push({ name, desde, hasta });
+      savePresets(next);
+      if (nameEl) nameEl.value = "";
+      applyRange(name);
+    });
+    paintPresets("");
+  }
+  } catch (err) {
+    const frase = document.getElementById("insight-frase");
+    if (frase) frase.dataset.error = err.message;
+  }
 })();
 """

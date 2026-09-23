@@ -1,7 +1,7 @@
 # Tab Insights (antes Resumen)
 
 Fecha: 2026-09-21
-Estado: implementado
+Estado: el renombre a Insights está hecho. Gráficos, Destacados y alertas clicables quedan sustituidos por `2026-09-22-insights-evolucion-design.md`.
 
 ## Objetivo
 

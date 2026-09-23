@@ -313,6 +313,107 @@ Total TII (EUR)
     assert extract.base == Decimal("11.45")
 
 
+def test_importe_tti_no_se_queda_en_el_descuento_si_el_encabezado_parte_la_linea():
+    texto = """
+LEROY MERLIN ARROYO
+FACTURA 064-0009-R194007
+Designacion y Referencia articulo
+1
+SIERRA DE CALAR PRACYL400W
+91177661
+1
+UNID.
+13,22
+4,27
+Total SI
+(EUR)
+8,95
+21.00
+Importe
+TTI (EUR)
+10,83
+10,83
+2
+2H SIER MAD RECT C.GRUE MODT 3-30 DEXTER
+82303474
+3
+UNID.
+2,22
+0,72
+1,50
+21.00
+1,82
+5,46
+Total SI (EUR)
+25,99
+Total IVA
+5,46
+Total TTI (EUR)
+31,45
+"""
+    extract = parse_invoice(texto)
+    assert [(linea.codigo, linea.importe) for linea in extract.lineas] == [
+        ("91177661", Decimal("10.83")),
+        ("82303474", Decimal("5.46")),
+    ]
+
+
+def test_pilas_no_se_confunde_con_razon_social():
+    texto = """
+LEROY MERLIN ARROYO
+FACTURA 064-0009-720394
+Designacion y Referencia articulo
+PRIMACOLA C-20 PAVIMENTOS VINILICOS 1KG
+17921323
+UNID.
+4,25
+21.00
+5,14
+5,14
+MARCO DOBLE NILOE BLANCO
+15841434
+UNID.
+1,21
+21.00
+1,46
+1,46
+8+4 PILAS ALCALINAS LR03 AAA LEXMAN L1
+85207734
+UNID.
+3,40
+21.00
+4,11
+4,11
+TIJERA ELECTRICISTA DEXTER
+83684269
+UNID.
+2,60
+21.00
+3,15
+3,15
+Total SI (EUR)
+11,45
+Total IVA
+2,41
+Total TTI (EUR)
+13,86
+"""
+    extract = parse_invoice(texto)
+    assert [linea.descripcion for linea in extract.lineas] == [
+        "PRIMACOLA C-20 PAVIMENTOS VINILICOS 1KG",
+        "MARCO DOBLE NILOE BLANCO",
+        "8+4 PILAS ALCALINAS LR03 AAA LEXMAN L1",
+        "TIJERA ELECTRICISTA DEXTER",
+    ]
+    assert [linea.importe for linea in extract.lineas] == [
+        Decimal("5.14"),
+        Decimal("1.46"),
+        Decimal("4.11"),
+        Decimal("3.15"),
+    ]
+    assert extract.lineas[1].base == Decimal("1.21")
+
+
 def test_codigo_con_punto_final_lleva_el_importe_de_la_linea():
     texto = """
 OBRAMAT
