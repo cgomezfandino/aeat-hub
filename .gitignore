@@ -66,3 +66,6 @@ hf_cache/
 
 # Copias locales de git worktree (nunca al repo)
 .worktrees/
+
+# Sesiones locales de bocetos (llevan la clave de la sesión)
+.superpowers/

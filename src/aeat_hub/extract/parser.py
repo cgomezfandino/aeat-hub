@@ -40,7 +40,11 @@ TOTAL_IVA_RE = re.compile(r"total\s*iva\b", re.IGNORECASE)
 
 NUMERO_BASURA = {"NIF", "CIF", "IVA", "EUR", "DE", "LA", "EL", "NUMERO", "NÚMERO"}
 COMPANY_HINT = re.compile(
-    r"(s\.?\s?a\.?u?|s\.?\s?l\.?|sociedad|comunidad|merlin|iberdrola|endesa|naturgy|obrama|bricoman)",
+    r"(?<![A-Za-zÁÉÍÓÚÜÑáéíóúüñ])(?:"
+    r"s\.?\s?a\.?(?:\s?u\.?)?"
+    r"|s\.?\s?l\.?(?:\s?u\.?)?"
+    r"|sociedad|comunidad|merlin|iberdrola|endesa|naturgy|obrama|bricoman"
+    r")(?![A-Za-zÁÉÍÓÚÜÑáéíóúüñ])",
     re.IGNORECASE,
 )
 SKIP_EMISOR = re.compile(
@@ -597,7 +601,11 @@ def _precios_en_bloque(lines: list[str], items: list[InvoiceLine]) -> list[Decim
                 break
         captured: list[Decimal] = []
         for line in lines[start + 1 : end]:
-            if re.search(r"modos de pago|\btotal\s+(?:si|tti|tii|iva)\b", line, re.IGNORECASE):
+            if re.search(
+                r"modos de pago|total\s+(?:si|tti|tii|til|iva)\s*(?:\(|/)",
+                line,
+                re.IGNORECASE,
+            ):
                 break
             if not _is_amount_only(line):
                 continue

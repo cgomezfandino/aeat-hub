@@ -3,7 +3,13 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from aeat_hub.dashboard import collect_asiento_ficha, collect_dashboard, render_asiento_page, write_dashboard
+from aeat_hub.dashboard import (
+    _emisores_para_grafico,
+    collect_asiento_ficha,
+    collect_dashboard,
+    render_asiento_page,
+    write_dashboard,
+)
 from aeat_hub.models import Actividad, Asiento
 
 
@@ -141,11 +147,26 @@ def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     assert 'aria-label="Filtrar Resta del año"' in html
     assert ">Operativo</h2>" in html
     assert ">Renta</h2>" in html
-    assert 'class="evo-alert" data-filter="baja"' in html
-    assert 'class="evo-alert" data-filter="duplicado"' in html
+    assert "concentra el" in html
+    assert "IBERDROLA DEMO concentra el 61 % del gasto" in html
+    assert 'id="insight-desde"' in html
+    assert 'id="insight-hasta"' in html
+    assert 'id="insight-range-save"' in html
+    assert "Año completo" in html
+    assert 'id="insight-rows"' in html
+    assert 'class="evo-alert"' not in html
     assert "chart-scroll" in html
-    assert "Por mes" in html
-    assert "Por rubro" in html
+    assert "Gasto por mes" in html
+    assert "Por emisor" in html
+    assert "Por rubro" not in html
+    assert "Destacados" not in html
+    assert 'aria-label="Gasto de cada mes del año"' in html
+    meses = html.split('aria-label="Gasto de cada mes del año"', 1)[1].split("</svg>", 1)[0]
+    assert ">ene</text>" in meses
+    assert ">dic</text>" in meses
+    emisores = html.split('aria-label="Gasto por emisor"', 1)[1].split("</svg>", 1)[0]
+    assert emisores.index("IBERDROLA DEMO") < emisores.index("LEROY MERLIN ARROYO")
+    assert "IBERDROLA DUPLICADA" not in emisores
     assert "Acumulado del año" not in html
     assert "evo-hero" not in html
     assert 'href="/doc/' not in html or "Abrir" in html
@@ -297,7 +318,8 @@ def test_ficha_asiento_tiene_volver_y_compra(session):
     assert "Sin líneas extraídas" in html
     assert "0 elementos" in html
     assert '<dt>Elementos</dt><dd id="kpi-elementos">0</dd>' in html
-    assert "Sin desglose" in html
+    assert 'data-check="ids" data-ok="0"' in html
+    assert "No hay líneas, así que no hay ids de artículo." in html
     assert "total del libro" in html
     assert "No es software oficial de la AEAT" not in html
     assert 'class="site-foot"' in html
@@ -422,9 +444,11 @@ def test_ficha_desglose_cuadra_con_total_del_libro():
     )
     assert "2 elementos" in html
     assert '<dt>Elementos</dt><dd id="kpi-elementos">2</dd>' in html
-    assert "Cuadra" in html
+    assert "Lista" in html
     assert "100 %" in html
     assert "total del libro" in html
+    assert 'data-check="ids"' in html
+    assert 'data-check="nif"' in html
     assert 'class="line-view"' in html
     assert 'class="line-edit" disabled' in html
     assert 'aria-label="Editar línea 1"' in html
@@ -463,6 +487,48 @@ def test_ficha_desglose_no_cuadra_con_total_del_libro():
         )
     )
     assert "1 elemento" in html
-    assert "No cuadra" in html
+    assert "Revisar" in html
     assert "diferencia" in html
+    assert "Puede faltar un artículo" in html
     assert "31,45 €" in html
+    assert 'data-check="suma" data-ok="0"' in html
+
+
+def test_ficha_senala_el_id_que_falta():
+    lineas = [
+        {
+            "posicion": 1,
+            "codigo": "",
+            "descripcion": "Sierra",
+            "base": Decimal("10.00"),
+            "iva_cuota": Decimal("2.10"),
+            "importe": Decimal("12.10"),
+        }
+    ]
+    html = render_asiento_page(
+        _ficha_payload(
+            lineas=lineas,
+            n_lineas=1,
+            lineas_suma=Decimal("12.10"),
+            total=Decimal("12.10"),
+        )
+    )
+    assert 'data-check="ids" data-ok="0"' in html
+    assert "Falta el id en Sierra" in html
+    assert 'id="ficha-score-label">Revisar' in html
+
+
+def test_emisores_de_gasto_dejan_el_resto_al_final():
+    rows = [
+        {
+            "estado": "confirmado",
+            "tipo": "gasto",
+            "emisor": f"Casa {idx}",
+            "total": Decimal(20 - idx),
+        }
+        for idx in range(7)
+    ]
+    chart = _emisores_para_grafico(rows)
+    assert [item["label"] for item in chart[:-1]] == [f"Casa {idx}" for idx in range(6)]
+    assert chart[-1]["label"] == "Resto"
+    assert chart[-1]["total"] == Decimal("14")
