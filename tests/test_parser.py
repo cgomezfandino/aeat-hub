@@ -586,3 +586,52 @@ C.I.F. B84406289
     assert "BRICOMAN" in (extract.emisor or "").upper()
     assert all("mayorazgo" not in (linea.descripcion or "").lower() for linea in extract.lineas)
     assert all("salas" not in (linea.descripcion or "").lower() for linea in extract.lineas)
+
+
+def test_desglose_sin_importes_se_descarta():
+    """El texto legal y las direcciones del emisor no son artículos."""
+    from aeat_hub.extract.parser import parse_invoice
+
+    texto = """IKEA IBÉRICA S.A.
+NIF: A28812618
+Factura nº: ESCINV-1
+Fecha: 09/09/2026
+Base imponible: 142,89 €
+IVA 21%: 30,01 €
+Total factura: 172,90 €
+INFORMACION BASICA
+DATOS PERSONALES
+PROTECCION DATOS
+Carlos Eduardo Gomez Fandino
+Direccion de envio
+ISMAR NATALIA RAMIREZ HERNANDEZ
+Acceso, rectificacion, supresion, oposicion
+reclamacion ante la Agencia Española de Proteccion de Datos
+Inter IKEA Systems B.V. 2026
+"""
+    extract = parse_invoice(texto)
+    assert extract.total == __import__("decimal").Decimal("172.90")
+    assert extract.lineas == []
+
+
+def test_desglose_con_importe_incoherente_se_descarta():
+    """Caso IKEA real: cupones y direcciones con un importe espurio."""
+    from aeat_hub.extract.parser import parse_invoice
+
+    texto = """IKEA IBÉRICA S.A.
+NIF: A28812618
+Factura nº: ESCINV-1
+Fecha: 09/09/2026
+Base imponible: 142,89 €
+IVA 21%: 30,01 €
+Total factura: 172,90 €
+ENHET patas estructura 23.5 antracita
+Save with IKEA Family in delivery 10,00 €
+INFORMACION BASICA
+PROTECCION DATOS
+Carlos Eduardo Gomez Fandino
+Inter IKEA Systems B.V. 2026
+"""
+    extract = parse_invoice(texto)
+    assert extract.total == __import__("decimal").Decimal("172.90")
+    assert extract.lineas == []

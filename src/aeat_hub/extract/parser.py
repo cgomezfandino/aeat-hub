@@ -756,6 +756,8 @@ def _find_lineas(
         for item, ref in zip(items, refs, strict=True):
             item.codigo = ref
 
+    items = _descartar_desglose_incoherente(items, total=total, base=base)
+
     for idx, item in enumerate(items):
         if item.posicion is None:
             item.posicion = idx + 1
@@ -766,6 +768,36 @@ def _find_lineas(
         iva_tipo=iva_tipo,
         lines=lines,
     )
+
+
+def _descartar_desglose_incoherente(
+    items: list[InvoiceLine],
+    *,
+    total: Decimal | None,
+    base: Decimal | None,
+) -> list[InvoiceLine]:
+    """Un desglose que no encaja con la factura es ruido del OCR, no artículos.
+
+    Caso típico: PDFs de IKEA con páginas legales y direcciones que la
+    heurística confunde con líneas. Se descarta cuando los importes detectados
+    no cuadran con el total o la base, o cuando es una pared de texto sin
+    ningún importe. Un desglose corto sin importes (tipo Leroy, nombres de
+    artículo a listón) se conserva.
+    """
+    if not items:
+        return items
+    con_importe = [item for item in items if item.importe is not None]
+    sin_importe = [item for item in items if item.importe is None]
+    if not con_importe:
+        return items if len(items) <= 6 else []
+    if not sin_importe:
+        return items
+    suma = sum((item.importe for item in con_importe), Decimal("0.00"))
+    compatible = total is None or (
+        abs(suma - total) <= Decimal("0.05")
+        or (base is not None and abs(suma - base) <= Decimal("0.05"))
+    )
+    return items if compatible else []
 
 
 def _find_emisor(lines: list[str], nif_emisor: str | None) -> str | None:
