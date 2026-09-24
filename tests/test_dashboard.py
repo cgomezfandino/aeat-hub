@@ -665,7 +665,20 @@ def test_ficha_dialogo_duplicado_con_sugerencias(session, layout):
     data = collect_asiento_ficha(session, asiento, dashboard_name="dashboard_CI-VA-001_2026.html")
     html = render_asiento_page(data)
     assert 'id="ficha-dup-dialog"' in html
-    assert "Coincidencias evidentes encontradas" in html
-    assert f'value="{gemelo.id}"' in html
+    assert 'id="dup-candidato"' in html
     assert "importe ±3 días" in html
     assert "window.prompt" not in html
+
+    # el candidato mejor posicionado va de primero y preseleccionado
+    assert f'<option value="{gemelo.id}" selected' in html
+    assert '<option value="manual"' in html
+
+    # si la app ya lo tenía señalado (sospechoso del barrido), ese primero
+    asiento.duplicado_de_id = gemelo.id
+    asiento.duplicado_nivel = 3
+    session.commit()
+    data = collect_asiento_ficha(session, asiento, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html = render_asiento_page(data)
+    assert data["duplicado_conocido"] == gemelo.id
+    assert "ya señalado por la app" in html
+    assert f'<option value="{gemelo.id}" selected' in html

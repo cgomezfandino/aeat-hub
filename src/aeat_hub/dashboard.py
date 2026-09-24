@@ -218,6 +218,18 @@ def collect_asiento_ficha(session: Session, asiento: Asiento, *, dashboard_name:
         if asiento.estado != "duplicado"
         else []
     )
+    duplicado_conocido = None
+    if asiento.estado != "duplicado":
+        if asiento.duplicado_de_id:
+            duplicado_conocido = asiento.duplicado_de_id
+        else:
+            duplicado_conocido = session.scalar(
+                select(Asiento.id).where(
+                    Asiento.duplicado_de_id == asiento.id,
+                    Asiento.estado != "duplicado",
+                    Asiento.id != asiento.id,
+                )
+            )
     back = f"/{dashboard_name}" if dashboard_name else "/"
     back = f"{back}#asiento-{asiento.id}"
     return {
@@ -231,6 +243,7 @@ def collect_asiento_ficha(session: Session, asiento: Asiento, *, dashboard_name:
         "lineas_ok": lineas_ok,
         "dashboard_href": back,
         "duplicados_sugeridos": sugeridos,
+        "duplicado_conocido": duplicado_conocido,
         "cambios": [
             {
                 "campo": item.campo,
@@ -327,33 +340,45 @@ def render_asiento_page(data: dict) -> str:
             "</div>"
         )
     sugeridos = data.get("duplicados_sugeridos") or []
-    if sugeridos:
-        opciones = "".join(
-            '<label class="filter-opt dup-opt">'
-            f'<input type="radio" name="dup-candidato" value="{item["id"]}">'
-            f'<span>#{item["id"]} · {escape(item["emisor"])} · {escape(item["numero"])} · '
-            f'{escape(item["fecha"])} · {escape(format_euro(item["total"]))} '
-            f"<em>— {escape(item['motivo'])}</em></span></label>"
-            for item in sugeridos
+    conocido = data.get("duplicado_conocido")
+    opciones_dup: list[tuple[str, str]] = []
+    if conocido is not None:
+        meta = next((i for i in sugeridos if i["id"] == conocido), None)
+        etiqueta = f"#{conocido}"
+        if meta:
+            etiqueta += (
+                f" · {meta['emisor']} · {meta['numero']} · {meta['fecha']}"
+                f" · {format_euro(meta['total'])}"
+            )
+        opciones_dup.append(
+            (str(conocido), f"{etiqueta} — ya señalado por la app")
         )
-        hint_sug = "Coincidencias evidentes encontradas:"
-    else:
-        opciones = (
-            '<p class="filter-empty">Sin coincidencias evidentes. Indica el id a mano.</p>'
+    for item in sugeridos:
+        if conocido is not None and item["id"] == conocido:
+            continue
+        opciones_dup.append(
+            (
+                str(item["id"]),
+                f"#{item['id']} · {item['emisor']} · {item['numero']} · "
+                f"{item['fecha']} · {format_euro(item['total'])} — {item['motivo']}",
+            )
         )
-        hint_sug = "Comprobados mismo NIF o emisor + importe ±3 días, y imagen casi idéntica."
+    html_opciones = "".join(
+        f'<option value="{escape(value)}"{" selected" if idx == 0 else ""}>'
+        f"{escape(label)}</option>"
+        for idx, (value, label) in enumerate(opciones_dup)
+    )
+    solo_manual = not opciones_dup
     dup_dialog = (
         '<dialog class="edit-dialog" id="ficha-dup-dialog" aria-labelledby="ficha-dup-title">'
         f'<h2 id="ficha-dup-title">Marcar duplicado del asiento #{data["id"]}</h2>'
         '<p class="hint">Elige el asiento bueno: este queda como duplicado y sale de los totales. '
         "Puedes deshacerlo después.</p>"
-        f"<p class=\"hint\"><strong>{hint_sug}</strong></p>"
-        f'<div class="dup-lista">{opciones}'
-        '<label class="filter-opt dup-opt">'
-        '<input type="radio" name="dup-candidato" value="manual">'
-        "<span>Otro id</span> "
-        '<input id="dup-manual" type="number" min="1" placeholder="Id" class="dup-manual">'
-        "</label></div>"
+        '<label class="dup-campo">Asiento bueno'
+        f'<select id="dup-candidato" class="dup-select">{html_opciones}'
+        f'<option value="manual"{" selected" if solo_manual else ""}>Otro id…</option></select></label>'
+        f'<label class="dup-campo" id="dup-manual-wrap"{" hidden" if not solo_manual else ""}>Otro id'
+        '<input id="dup-manual" type="number" min="1" placeholder="Id" class="dup-manual"></label>'
         '<div class="edit-actions">'
         '<button type="button" class="ghost" id="ficha-dup-cancel">Cancelar</button>'
         '<button type="button" class="export-btn" id="ficha-dup-ok" disabled>Fusionar</button>'
@@ -468,26 +493,23 @@ def render_asiento_page(data: dict) -> str:
         "  const dialog = document.getElementById(\"ficha-dup-dialog\");\n"
         "  const okBtn = document.getElementById(\"ficha-dup-ok\");\n"
         "  const manualEl = document.getElementById(\"dup-manual\");\n"
+        "  const selectEl = document.getElementById(\"dup-candidato\");\n"
+        "  const manualWrap = document.getElementById(\"dup-manual-wrap\");\n"
         "  const elegido = () => {\n"
-        "    const sel = dialog?.querySelector(\"input[name='dup-candidato']:checked\");\n"
-        "    if (!sel) return \"\";\n"
-        "    return sel.value === \"manual\" ? (manualEl?.value || \"\").trim() : sel.value;\n"
+        "    if (!selectEl) return \"\";\n"
+        "    return selectEl.value === \"manual\" ? (manualEl?.value || \"\").trim() : selectEl.value;\n"
         "  };\n"
         "  const syncOk = () => {\n"
+        "    const manual = selectEl?.value === \"manual\";\n"
+        "    if (manualWrap) manualWrap.hidden = !manual;\n"
         "    const value = elegido();\n"
-        "    const valido = /^\\d+$/.test(value) && value !== id;\n"
-        "    if (okBtn) okBtn.disabled = !valido;\n"
-        "    if (manualEl) manualEl.disabled = !dialog?.querySelector(\"input[name='dup-candidato'][value='manual']\").checked;\n"
+        "    if (okBtn) okBtn.disabled = !/^\\d+$/.test(value) || value === id;\n"
         "  };\n"
-        "  dialog?.addEventListener(\"change\", syncOk);\n"
+        "  selectEl?.addEventListener(\"change\", syncOk);\n"
         "  manualEl?.addEventListener(\"input\", syncOk);\n"
         "  document.getElementById(\"ficha-dup-marcar\")?.addEventListener(\"click\", () => {\n"
-        "    if (!dialog?.querySelector(\"input[name='dup-candidato']:checked\")) {\n"
-        "      const manual = dialog?.querySelector(\"input[name='dup-candidato'][value='manual']\");\n"
-        "      if (manual) manual.checked = true;\n"
-        "    }\n"
         "    syncOk();\n"
-        "    manualEl && !manualEl.disabled && manualEl.focus();\n"
+        "    if (manualWrap && !manualWrap.hidden) manualEl?.focus();\n"
         "    dialog?.showModal();\n"
         "  });\n"
         "  document.getElementById(\"ficha-dup-cancel\")?.addEventListener(\"click\", () => dialog?.close());\n"
@@ -3126,11 +3148,12 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .filter-trims { display: flex; gap: 6px; }
 .ficha-dup { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .ficha-dup .hint { margin: 0; }
-.dup-lista { display: grid; gap: 6px; margin: 10px 0; max-height: 45vh; overflow-y: auto; }
-.dup-opt { align-items: center; }
-.dup-opt em { color: var(--muted); font-style: normal; font-size: 12px; }
-.dup-manual { width: 90px; font: inherit; padding: 4px 8px; border: 1px solid var(--line); margin-left: 6px; }
-.dup-manual:disabled { opacity: .5; }
+.dup-campo { display: grid; gap: 4px; margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+.dup-select, .dup-manual {
+  font: inherit; color: var(--ink);
+  padding: 6px 8px; border: 1px solid var(--line); background: #fff;
+}
+.dup-select:disabled, .dup-manual:disabled { opacity: .5; }
 .filter-trim {
   border: 1px solid var(--line);
   background: #fff;

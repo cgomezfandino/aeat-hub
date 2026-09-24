@@ -225,6 +225,12 @@ def candidatos_duplicado(session: Session, asiento: Asiento) -> list[dict]:
                     "motivo": motivo,
                 }
             )
+    _PRIORIDAD = {
+        "mismo NIF + importe ±3 días": 0,
+        "mismo emisor + importe ±3 días": 1,
+        "imagen casi idéntica (phash)": 2,
+    }
+    out.sort(key=lambda item: (_PRIORIDAD.get(item["motivo"], 3), item["id"]))
     return out
 
 
