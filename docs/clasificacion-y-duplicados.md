@@ -75,6 +75,8 @@ Las facturas futuras de ese NIF en esa actividad se clasifican solas. Los asient
 
 El phash se calcula **antes** de insertar el documento, para no compararse consigo mismo.
 
+Con número parseado, el nivel 3 no marca `duplicado` directamente: la misma compra puede aparecer con número de factura y de servicio (caso IKEA: `ESCINV…` frente a `ESSIM…`, misma fecha e importe). En ese caso el asiento queda **sospechoso**: `estado=pendiente` con `duplicado_nivel=3` y `duplicado_de_id` apuntando al gemelo, para revisión humana. Sin número, el nivel 3 sigue marcando `duplicado` a secas.
+
 Los tres niveles se listan (2 y 3 en `aeat-hub duplicados`) y salen en el dashboard (filtro de tabla) y en la hoja Excel `Duplicados`. No se silencian.
 
 ## Entity resolution (factura canónica)

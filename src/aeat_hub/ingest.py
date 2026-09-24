@@ -263,10 +263,13 @@ def ingest_file(
         )
         if conflicto:
             asiento.estado = "pendiente"
-        elif extract.numero_norm or extract.numero:
-            _apply_duplicate_and_state(asiento, None, classification.confianza)
         else:
-            _apply_duplicate_and_state(asiento, dup, classification.confianza)
+            _apply_duplicate_and_state(
+                asiento,
+                dup,
+                classification.confianza,
+                con_numero=bool(extract.numero_norm or extract.numero),
+            )
         session.add(asiento)
         session.flush()
         replace_lineas(session, asiento, extract.lineas)
@@ -281,8 +284,9 @@ def ingest_file(
     detalle = classification.cuenta_codigo or "sin cuenta"
     if conflicto:
         detalle = f"conflicto factura {factura.id} (mismo número, total distinto)"
-    elif dup and not (extract.numero_norm or extract.numero):
-        detalle = f"duplicado nivel {dup.nivel} ({dup.motivo}) → asiento {dup.asiento_id}"
+    elif dup:
+        etiqueta = "duplicado" if asiento.estado == "duplicado" else "sospechoso"
+        detalle = f"{etiqueta} nivel {dup.nivel} ({dup.motivo}) → asiento {dup.asiento_id}"
     return IngestItem(stored, asiento.id, asiento.estado, detalle, warnings)
 
 
@@ -356,11 +360,23 @@ def _etapa_from_exc(exc: BaseException) -> str:
     return text[:80] if text else exc.__class__.__name__
 
 
-def _apply_duplicate_and_state(asiento: Asiento, dup: DuplicateHit | None, confianza) -> None:
+def _apply_duplicate_and_state(
+    asiento: Asiento,
+    dup: DuplicateHit | None,
+    confianza,
+    *,
+    con_numero: bool = False,
+) -> None:
     if dup:
-        asiento.estado = "duplicado"
         asiento.duplicado_de_id = dup.asiento_id
         asiento.duplicado_nivel = dup.nivel
+        if not con_numero or dup.nivel <= 2:
+            asiento.estado = "duplicado"
+        else:
+            # Con número distinto no se marca duplicado sin más: la misma
+            # compra puede aparecer con número de factura y de servicio.
+            # Queda pendiente como sospechoso para revisión humana.
+            asiento.estado = "pendiente"
         return
     if asiento.cuenta_codigo and confianza >= 0.8:
         asiento.estado = "confirmado"

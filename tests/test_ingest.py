@@ -205,3 +205,38 @@ def test_reparse_refresca_las_lineas_de_la_tabla(session, layout):
     assert n == 1
     descripciones = [i["descripcion"] for i in lineas_de_asiento(asiento)]
     assert "EDITADA" not in descripciones
+
+
+def test_ingest_misma_factura_con_numero_distinto_queda_sospechoso(session, layout):
+    """El caso IKEA real: misma compra con número de factura y de servicio."""
+    from aeat_hub.ingest import _apply_duplicate_and_state
+
+    pdf1 = write_pdf(layout.inbox / "factura.pdf", FACTURA_LUZ)
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    item1 = ingest_file(session, layout, pdf1, actividad, rapid=FakeRapid())
+    session.commit()
+    assert item1.estado == "confirmado"
+
+    variante = FACTURA_LUZ.replace("F2026-000123", "SERV-2026-555")
+    pdf2 = write_pdf(layout.inbox / "servicio.pdf", variante)
+    item2 = ingest_file(session, layout, pdf2, actividad, rapid=FakeRapid())
+    session.commit()
+
+    # NIF+total+fecha coinciden (nivel 3) y hay número parseado: sospechoso,
+    # no duplicado automático.
+    assert item2.estado == "pendiente"
+    asiento2 = session.get(Asiento, item2.asiento_id)
+    assert asiento2.duplicado_nivel == 3
+    assert asiento2.duplicado_de_id == item1.asiento_id
+
+    # sin número parseado, el nivel 3 sigue marcando duplicado directamente
+    from decimal import Decimal as _D
+
+    from aeat_hub.ingest import DuplicateHit
+
+    row = Asiento(actividad_id=actividad.id, tipo="gasto", estado="pendiente")
+    _apply_duplicate_and_state(
+        row, DuplicateHit(3, 99, None, "mismo NIF+importe±3 días"), _D("0.9"), con_numero=False
+    )
+    assert row.estado == "duplicado"
+    assert row.duplicado_de_id == 99

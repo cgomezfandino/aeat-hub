@@ -111,10 +111,15 @@ Por orden de interés, con su porqué:
 3. **Tres nociones de duplicado** que se solapan: SHA de fichero, niveles 1–3
    del asiento (`duplicado_de_id`/`duplicado_nivel`) y conflicto ER. La fusión
    ER marca `duplicado_nivel=2` mezclando conceptos.
-4. **Dedupe asimétrico con número.** Con número parseado, los niveles 2–3 se
-   ignoran y todo depende de ER: la misma factura con el número leído distinto
-   por OCR produce dos asientos sin aviso (vía manual: `factura numero`). Sin
-   número, NIF+total±3 días marca compras repetidas legítimas como duplicado.
+4. **Dedupe asimétrico con número.** *Resuelto el mismo día, en la tercera
+   tanda:* con número parseado, los niveles 3 (NIF+importe±3 días,
+   emisor+importe±3 días, phash) ya no se ignoran — marcan el asiento como
+   **sospechoso** (`pendiente` + `duplicado_nivel=3` + `duplicado_de_id`) en
+   vez de saltárselos. Lo destapó un duplicado real de IKEA (factura
+   `ESCINV…` y servicio `ESSIM…`, misma fecha e importe, números distintos)
+   que el pipeline dejó pasar. Sin número, el nivel 3 sigue marcando
+   `duplicado` directamente. Compras legítimas repetidas quedan en la cola de
+   revisión, no fuera de los totales.
 5. **`Relacion` sin FK ni cascadas.** Bordes polimórficos sin integridad
    referencial; no hay borrado (el roadmap promete «borrado recuperable»).
 6. **`ProyectoMejora` es vaporware**: tabla y FK sin relationship ni uso.
