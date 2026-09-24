@@ -305,6 +305,20 @@ def render_asiento_page(data: dict) -> str:
             f'<a class="doc-open" href="/doc/{data["id"]}" target="_blank" rel="noopener">'
             f"{_FILE_SVG}<span>Abrir documento</span>{extra}</a>"
         )
+    if data.get("estado") == "duplicado":
+        dup = (
+            '<div class="ficha-dup">'
+            f'<p class="hint">Marcado como duplicado del asiento #{escape(str(data.get("duplicado_de_id") or "—"))}. '
+            "Fuera de los totales.</p>"
+            '<button type="button" class="ghost" id="ficha-dup-quitar">Quitar duplicado</button>'
+            "</div>"
+        )
+    else:
+        dup = (
+            '<div class="ficha-dup">'
+            '<button type="button" class="ghost" id="ficha-dup-marcar">Marcar duplicado de…</button>'
+            "</div>"
+        )
     return (
         "<!DOCTYPE html>\n"
         '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
@@ -326,6 +340,7 @@ def render_asiento_page(data: dict) -> str:
         f'<span class="pill {escape(data["estado"])}">{escape(data["estado_label"])}</span></p>\n'
         "</div>"
         f"{doc}"
+        f"{dup}"
         "</div>\n"
         '<div class="kpi-carousel" id="ficha-kpis">'
         '<dl class="ficha-grid">'
@@ -392,6 +407,34 @@ def render_asiento_page(data: dict) -> str:
         "const log = document.getElementById('ficha-log-dialog');"
         "document.getElementById('ficha-log')?.addEventListener('click', () => log?.showModal());"
         "document.getElementById('ficha-log-close')?.addEventListener('click', () => log?.close());"
+        "})();</script>\n"
+        '<script>(() => {\n'
+        "  const id = document.body.dataset.asiento;\n"
+        "  const postDup = async (body) => {\n"
+        "    try {\n"
+        "      const res = await fetch(`/api/asientos/${id}`, {\n"
+        "        method: \"POST\",\n"
+        "        headers: { \"Content-Type\": \"application/json\" },\n"
+        "        body: JSON.stringify(body),\n"
+        "      });\n"
+        "      const payload = await res.json().catch(() => ({}));\n"
+        "      if (!res.ok || payload.ok === false) throw new Error(payload.error || String(res.status));\n"
+        "      window.location.reload();\n"
+        "    } catch (err) {\n"
+        "      alert(\"No se pudo guardar: \" + err.message);\n"
+        "    }\n"
+        "  };\n"
+        "  document.getElementById(\"ficha-dup-marcar\")?.addEventListener(\"click\", () => {\n"
+        "    const gemelo = window.prompt(\"Id del asiento bueno (el duplicado apunta a él):\");\n"
+        "    if (!gemelo) return;\n"
+        "    const limpio = gemelo.trim();\n"
+        "    if (!/^\\d+$/.test(limpio)) { alert(\"Escribe el id numérico del asiento bueno.\"); return; }\n"
+        "    if (limpio === id) { alert(\"Un asiento no puede ser duplicado de sí mismo.\"); return; }\n"
+        "    postDup({ duplicado_de: limpio, confirmado: true });\n"
+        "  });\n"
+        "  document.getElementById(\"ficha-dup-quitar\")?.addEventListener(\"click\", () => {\n"
+        "    postDup({ quitar_duplicado: true, confirmado: true });\n"
+        "  });\n"
         "})();</script>\n"
         "</main>\n"
         f"{_site_footer()}\n"
@@ -1182,6 +1225,8 @@ def _asiento_view(
         "conf_class_pct": _conf_pct(conf_class),
         "validado": bool(asiento.validado),
         "baja": baja,
+        "duplicado_de_id": asiento.duplicado_de_id,
+        "duplicado_nivel": asiento.duplicado_nivel,
         "cmd_confirmar": (
             f'aeat-hub reclasificar {asiento.id} "{cuenta_nombre}"' if codigo else ""
         ),
@@ -3014,6 +3059,8 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .insight-preset.is-on { border-color: var(--ink); background: var(--paper); }
 .insight-trims { width: auto; }
 .filter-trims { display: flex; gap: 6px; }
+.ficha-dup { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.ficha-dup .hint { margin: 0; }
 .filter-trim {
   border: 1px solid var(--line);
   background: #fff;

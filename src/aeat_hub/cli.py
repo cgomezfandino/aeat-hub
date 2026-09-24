@@ -14,6 +14,7 @@ from sqlalchemy import select
 from aeat_hub import __version__
 from aeat_hub.classify import reabrir_asiento, reclassify, validar_asiento
 from aeat_hub.db import make_engine, session_factory, session_scope
+from aeat_hub.edits import AsientoNoEncontrado, desmarcar_duplicado, marcar_duplicado
 from aeat_hub.evals.gold import load_gold
 from aeat_hub.evals.runner import ENGINE_ORDER, list_engine_status, run_eval
 from aeat_hub.evals.suite import gold_path, load_suite
@@ -382,6 +383,45 @@ def _print_correccion(resultado: CorreccionNumero) -> None:
         )
         return
     console.print(f"Asiento {resultado.asiento.id} → número {resultado.numero}.")
+
+
+@app.command()
+def duplicado(
+    asiento_id: int = typer.Argument(..., help="Id del asiento duplicado"),
+    de_asiento: Optional[int] = typer.Argument(
+        None, help="Id del asiento bueno. Solo si no usas --quitar"
+    ),
+    quitar: bool = typer.Option(False, "--quitar", help="Desmarca el duplicado"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Marca un asiento como duplicado de otro (fusión manual) o lo desmarca."""
+    if not quitar and de_asiento is None:
+        raise typer.BadParameter("Indica el asiento bueno: aeat-hub duplicado 8 7")
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    with session_scope(factory) as session:
+        asiento = session.get(Asiento, asiento_id)
+        if asiento is None:
+            raise typer.BadParameter(f"No existe el asiento {asiento_id}")
+        try:
+            if quitar:
+                desmarcar_duplicado(session, asiento_id)
+                console.print(f"Asiento {asiento_id} vuelve a estar pendiente de revisión.")
+            else:
+                assert de_asiento is not None
+                marcar_duplicado(session, asiento_id, de_asiento)
+                console.print(
+                    f"Asiento {asiento_id} marcado duplicado del asiento {de_asiento}. "
+                    "Fuera de los totales; corre `aeat-hub ordenar` para reubicar el fichero."
+                )
+        except (ValueError, AsientoNoEncontrado) as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+        actividad = session.get(Actividad, asiento.actividad_id)
+        if actividad is not None:
+            n = ordenar_asientos(session, layout, actividad)
+            if n:
+                console.print(f"Reubicados {n} documentos.")
 
 
 @app.command()

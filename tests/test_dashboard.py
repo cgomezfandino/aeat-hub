@@ -604,3 +604,36 @@ def test_libro_tiene_botones_de_trimestre(session, layout):
     assert 'class="filter-trim" data-trim="4"' in html
     assert "trimBounds" in html
     assert 'aria-label="Trimestres del ejercicio"' in html
+
+
+def test_ficha_tiene_botones_de_duplicado(session, layout):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    asiento = session.scalars(select(Asiento).order_by(Asiento.id)).first()
+    data = collect_asiento_ficha(session, asiento, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html = render_asiento_page(data)
+    assert 'id="ficha-dup-marcar"' in html
+    assert "Marcar duplicado de…" in html
+    assert 'id="ficha-dup-quitar"' not in html
+
+    gemelo = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        cuenta_codigo="CI.GAS.LUZ",
+        fecha=date(2026, 3, 11),
+        ejercicio=2026,
+        emisor="IBERDROLA DEMO",
+        total=Decimal("48.40"),
+        estado="confirmado",
+    )
+    session.add(gemelo)
+    session.flush()
+    asiento.estado = "duplicado"
+    asiento.duplicado_de_id = gemelo.id
+    asiento.duplicado_nivel = 2
+    session.commit()
+    data = collect_asiento_ficha(session, asiento, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html = render_asiento_page(data)
+    assert 'id="ficha-dup-quitar"' in html
+    assert f"duplicado del asiento #{gemelo.id}" in html
+    assert data["duplicado_de_id"] == gemelo.id

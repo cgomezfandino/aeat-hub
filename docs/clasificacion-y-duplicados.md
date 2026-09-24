@@ -91,3 +91,5 @@ El duplicado de asiento es la red de seguridad **cuando no hay número**. Si el 
 El libro y el Excel cuentan asientos, no ficheros. El dashboard muestra un chip `N docs` si hay más de una evidencia.
 
 Corregir a mano un número mal leído: `aeat-hub factura numero <asiento> <número>`. El HTML sigue sin escribir.
+
+Para fusionar a mano un duplicado evidente sin cambiar el número: `aeat-hub duplicado <duplicado> <bueno>` (y `--quitar` para deshacer). Mueve las evidencias a la factura buena, marca nivel 2 con relación `misma_factura` de fuente `usuario`, lo anota en el historial `Cambio` y reubica el fichero. En la ficha del dashboard: botones **Marcar duplicado de…** / **Quitar duplicado**.

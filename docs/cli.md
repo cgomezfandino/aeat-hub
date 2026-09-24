@@ -133,6 +133,17 @@ uv run aeat-hub factura numero 12 F2026-000123
 uv run aeat-hub factura numero 12 010-000043-004-4843-NFS:055610
 ```
 
+### `duplicado`
+
+Fusión manual de un duplicado evidente (misma compra con número distinto, o sin número): marca un asiento como duplicado de otro y mueve sus evidencias a la misma factura. También lo desmarca.
+
+```bash
+uv run aeat-hub duplicado 8 7        # el 8 queda duplicado del 7
+uv run aeat-hub duplicado 8 --quitar # deshacer: vuelve a pendiente
+```
+
+En la ficha del dashboard hay el botón **Marcar duplicado de…** (y **Quitar duplicado** si ya lo es) que hace lo mismo sin salir del navegador.
+
 ### `ordenar`
 
 Reubica en disco documentos ya ingeridos (p. ej. si estaban en `processed/` de una versión anterior).

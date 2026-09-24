@@ -6,9 +6,9 @@ from threading import Thread
 from sqlalchemy import select
 
 from aeat_hub.db import make_engine, session_factory
-from aeat_hub.edits import backfill_lineas, lineas_de_asiento, patch_asiento
+from aeat_hub.edits import AsientoNoEncontrado, backfill_lineas, lineas_de_asiento, patch_asiento
 from aeat_hub.hub_http import bind_server
-from aeat_hub.models import Actividad, Asiento, Cambio, Documento, Factura, Linea
+from aeat_hub.models import Actividad, Asiento, Cambio, Documento, Factura, Linea, Relacion
 
 
 def _asiento(session, actividad, **kwargs):
@@ -399,3 +399,113 @@ def test_backfill_lineas_migra_el_json_historico(session):
     filas = list(session.scalars(select(Linea).where(Linea.asiento_id == row.id)))
     assert [f.descripcion for f in filas] == ["BROCA MADERA", "SIERRA"]
     assert backfill_lineas(session) == 0
+
+
+def _dos_asientos_gemelos(session, actividad):
+    bueno = _asiento(session, actividad)
+    gemelo = _asiento(session, actividad)
+    gemelo.numero_factura = "ESSIM-1"
+    session.commit()
+    return bueno, gemelo
+
+
+def test_marcar_duplicado_fusiona_y_registra(session):
+    from aeat_hub.edits import marcar_duplicado
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    bueno, gemelo = _dos_asientos_gemelos(session, actividad)
+    origen = marcar_duplicado(session, gemelo.id, bueno.id)
+    session.commit()
+
+    assert origen.estado == "duplicado"
+    assert origen.duplicado_de_id == bueno.id
+    assert origen.duplicado_nivel == 2
+    assert origen.factura_id == bueno.factura_id
+    assert origen.numero_factura == bueno.numero_factura
+    rel = session.scalars(
+        select(Relacion).where(Relacion.tipo == "misma_factura")
+    ).all()
+    assert any(r.origen_id != r.destino_id for r in rel)
+    logs = list(session.scalars(select(Cambio).where(Cambio.asiento_id == gemelo.id)))
+    assert any(item.campo == "estado" and item.despues == "duplicado" for item in logs)
+    assert any(item.campo == "duplicado_de_id" and item.despues == str(bueno.id) for item in logs)
+
+
+def test_marcar_duplicado_limpia_el_sospechoso_del_bueno(session):
+    from aeat_hub.edits import marcar_duplicado
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    bueno, gemelo = _dos_asientos_gemelos(session, actividad)
+    # el barrido retroactivo marcó a ambos mutuamente
+    bueno.duplicado_de_id = gemelo.id
+    bueno.duplicado_nivel = 3
+    session.commit()
+
+    marcar_duplicado(session, gemelo.id, bueno.id)
+    session.commit()
+
+    session.expire_all()
+    bueno = session.get(Asiento, bueno.id)
+    assert bueno.duplicado_de_id is None
+    assert bueno.duplicado_nivel is None
+
+
+def test_marcar_duplicado_validaciones(session):
+    from aeat_hub.edits import marcar_duplicado
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    bueno, gemelo = _dos_asientos_gemelos(session, actividad)
+    try:
+        marcar_duplicado(session, bueno.id, bueno.id)
+        raise AssertionError("debía rechazar el auto-duplicado")
+    except ValueError as exc:
+        assert "sí mismo" in str(exc)
+    try:
+        marcar_duplicado(session, 99999, bueno.id)
+        raise AssertionError("debía rechazar el asiento inexistente")
+    except AsientoNoEncontrado:
+        pass
+    marcar_duplicado(session, gemelo.id, bueno.id)
+    session.commit()
+    try:
+        marcar_duplicado(session, gemelo.id, bueno.id)
+        raise AssertionError("debía rechazar re-marcar")
+    except ValueError as exc:
+        assert "ya está marcado" in str(exc)
+
+
+def test_desmarcar_duplicado_devuelve_a_pendiente(session):
+    from aeat_hub.edits import desmarcar_duplicado, marcar_duplicado
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    bueno, gemelo = _dos_asientos_gemelos(session, actividad)
+    marcar_duplicado(session, gemelo.id, bueno.id)
+    session.commit()
+
+    origen = desmarcar_duplicado(session, gemelo.id)
+    session.commit()
+
+    assert origen.estado == "pendiente"
+    assert origen.duplicado_de_id is None
+    assert origen.duplicado_nivel is None
+    try:
+        desmarcar_duplicado(session, bueno.id)
+        raise AssertionError("debía rechazar un no-duplicado")
+    except ValueError as exc:
+        assert "no está marcado" in str(exc)
+
+
+def test_patch_asiento_duplicado_de_por_api(session):
+    from aeat_hub.edits import marcar_duplicado  # noqa: F401
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    bueno, gemelo = _dos_asientos_gemelos(session, actividad)
+    patched = patch_asiento(session, gemelo.id, {"duplicado_de": str(bueno.id)})
+    session.commit()
+    assert patched.estado == "duplicado"
+    assert patched.duplicado_de_id == bueno.id
+
+    reabierto = patch_asiento(session, gemelo.id, {"quitar_duplicado": True})
+    session.commit()
+    assert reabierto.estado == "pendiente"
+    assert reabierto.duplicado_de_id is None

@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aeat_hub.classify import _apply_cuenta, reabrir_asiento, validar_asiento
+from aeat_hub.er import _fusionar_en, add_relacion, backfill_asientos
 from aeat_hub.extract.ids import normalize_emisor
 from aeat_hub.extract.parser import parse_invoice
 from aeat_hub.extract.schema import InvoiceExtract, InvoiceLine
@@ -24,6 +25,83 @@ CAMPOS_IMPORTE = ("base", "iva_cuota", "total")
 
 class AsientoNoEncontrado(LookupError):
     pass
+
+
+def marcar_duplicado(session: Session, origen_id: int, destino_id: int) -> Asiento:
+    """Fusión manual evidente: origen queda duplicado de destino.
+
+    Mueve las evidencias a la factura del destino, marca el origen
+    (nivel 2, decisión humana) y deja la relación `misma_factura`.
+    """
+    if origen_id == destino_id:
+        raise ValueError("Un asiento no puede ser duplicado de sí mismo.")
+    origen = session.get(Asiento, origen_id)
+    destino = session.get(Asiento, destino_id)
+    if origen is None or destino is None:
+        raise AsientoNoEncontrado(origen_id if origen is None else destino_id)
+    if origen.actividad_id != destino.actividad_id:
+        raise ValueError("Los dos asientos no son del mismo expediente.")
+    if origen.estado == "duplicado":
+        raise ValueError(f"El asiento {origen.id} ya está marcado como duplicado.")
+    if destino.estado == "duplicado":
+        raise ValueError(
+            f"El asiento {destino.id} ya es un duplicado: marca el duplicado del asiento bueno."
+        )
+
+    if origen.factura_id is None or destino.factura_id is None:
+        backfill_asientos(session)
+    factura_origen = origen.factura
+    factura_destino = destino.factura
+    if factura_origen is None or factura_destino is None:
+        raise RuntimeError("Faltan factura canónica tras el backfill.")
+
+    _fusionar_en(
+        session,
+        origen_asiento=origen,
+        origen_factura=factura_origen,
+        destino_asiento=destino,
+        destino_factura=factura_destino,
+    )
+    add_relacion(
+        session,
+        origen_tipo="factura",
+        origen_id=factura_origen.id,
+        destino_tipo="factura",
+        destino_id=factura_destino.id,
+        tipo="misma_factura",
+        motivo="fusión manual de duplicado evidente",
+        fuente="usuario",
+    )
+    _registrar(session, origen, "estado", "pendiente", "duplicado")
+    _registrar(session, origen, "duplicado_de_id", "", str(destino.id))
+    if destino.duplicado_de_id == origen.id:
+        _registrar(session, destino, "duplicado_de_id", str(origen.id), "")
+        destino.duplicado_de_id = None
+        destino.duplicado_nivel = None
+    session.flush()
+    return origen
+
+
+def desmarcar_duplicado(session: Session, asiento_id: int) -> Asiento:
+    """Deshace un duplicado: vuelve a pendiente, sin enlace ni nivel."""
+    asiento = session.get(Asiento, asiento_id)
+    if asiento is None:
+        raise AsientoNoEncontrado(asiento_id)
+    if asiento.estado != "duplicado":
+        raise ValueError(f"El asiento {asiento_id} no está marcado como duplicado.")
+    _registrar(session, asiento, "estado", "duplicado", "pendiente")
+    _registrar(
+        session,
+        asiento,
+        "duplicado_de_id",
+        str(asiento.duplicado_de_id or ""),
+        "",
+    )
+    asiento.estado = "pendiente"
+    asiento.duplicado_de_id = None
+    asiento.duplicado_nivel = None
+    session.flush()
+    return asiento
 
 
 def parse_money_field(value: object) -> Decimal | None:
@@ -68,6 +146,14 @@ def patch_asiento(session: Session, asiento_id: int, payload: dict) -> Asiento:
     asiento = session.get(Asiento, asiento_id)
     if asiento is None:
         raise AsientoNoEncontrado(asiento_id)
+
+    if "duplicado_de" in payload:
+        raw = str(payload.get("duplicado_de") or "").strip()
+        if not raw.isdigit():
+            raise ValueError("Indica el id del asiento bueno (el duplicado apunta a él).")
+        return marcar_duplicado(session, asiento_id, int(raw))
+    if payload.get("quitar_duplicado"):
+        return desmarcar_duplicado(session, asiento_id)
 
     dirty = False
     if "nif_emisor" in payload and payload["nif_emisor"] is not None:
