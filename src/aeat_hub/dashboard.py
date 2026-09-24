@@ -156,6 +156,11 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         ),
         "asientos": asientos,
         "pendientes": [item for item in asientos if item["estado"] == "pendiente"],
+        "sospechosos": [
+            item
+            for item in asientos
+            if item["estado"] != "duplicado" and item.get("duplicado_nivel")
+        ],
         "n_baja": sum(1 for item in asientos if item["baja"]),
         "n_validados": sum(1 for item in asientos if item["validado"]),
         "n_sin_validar": sum(
@@ -182,6 +187,7 @@ def render_dashboard(data: dict) -> str:
         f"{_masthead(data)}\n"
         '<main class="wrap panels">\n'
         f"{_panel_libro(data)}\n"
+        f"{_panel_duplicados(data)}\n"
         f"{_panel_insights(data)}\n"
         "</main>\n"
         f"{_site_footer()}\n"
@@ -1884,6 +1890,10 @@ def _masthead(data: dict) -> str:
     badge = ""
     if data["cola_revision"]:
         badge = f'<span class="tab-badge">{len(data["cola_revision"])}</span>'
+    dup_badge = ""
+    n_dups_tab = int(data.get("n_duplicados") or 0) + len(data.get("sospechosos") or [])
+    if n_dups_tab:
+        dup_badge = f'<span class="tab-badge">{n_dups_tab}</span>'
     show_inmueble = "1" if (inmueble or data["regimen"] == REGIMEN_CI) else "0"
     return f"""
 <header class="mast">
@@ -1911,6 +1921,8 @@ def _masthead(data: dict) -> str:
     <div class="wrap tabs-row">
       <button type="button" class="tab" role="tab" id="tab-libro" data-panel="libro"
         aria-controls="panel-libro" aria-selected="false" tabindex="-1">Libro {badge}</button>
+      <button type="button" class="tab" role="tab" id="tab-duplicados" data-panel="duplicados"
+        aria-controls="panel-duplicados" aria-selected="false" tabindex="-1">Duplicados {dup_badge}</button>
       <button type="button" class="tab" role="tab" id="tab-insights" data-panel="insights"
         aria-controls="panel-insights" aria-selected="false" tabindex="-1">Insights</button>
     </div>
@@ -2018,6 +2030,79 @@ def _panel_libro(data: dict) -> str:
         '<div class="panel" role="tabpanel" id="panel-libro" data-panel="libro" '
         f'aria-labelledby="tab-libro">{body}{_footer(data)}</div>'
     )
+
+
+def _dup_fila(item: dict, gemelo_label: str) -> str:
+    return (
+        "<tr>"
+        f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
+        f"<td>{escape(item['emisor'])}</td>"
+        f"<td>{escape(item['numero'])}</td>"
+        f'<td>{escape(item["fecha_label"])}</td>'
+        f'<td class="num">{escape(format_euro(item["total"]))}</td>'
+        f'<td>{gemelo_label}</td>'
+        "</tr>"
+    )
+
+
+def _panel_duplicados(data: dict) -> str:
+    fusionados = [item for item in data["asientos"] if item["estado"] == "duplicado"]
+    sospechosos = data.get("sospechosos") or []
+
+    def _filas(rows: list[dict], prefix: str) -> str:
+        parts = []
+        for item in rows:
+            gemelo = item.get("duplicado_de_id")
+            if gemelo:
+                gemelo_label = f'<a href="/asiento/{gemelo}">#{gemelo}</a>'
+            elif item["estado"] != "duplicado":
+                apuntado = _gemelo_que_apunta(item["id"], data)
+                gemelo_label = (
+                    f'<a href="/asiento/{apuntado}">#{apuntado}</a>'
+                    if apuntado
+                    else "—"
+                )
+            else:
+                gemelo_label = "—"
+            parts.append(_dup_fila(item, gemelo_label))
+        if not parts:
+            return f'<tr><td colspan="6" class="muted">Nada aquí.</td></tr>'
+        return "".join(parts)
+
+    return f"""
+<div class="panel" role="tabpanel" id="panel-duplicados" data-panel="duplicados"
+  aria-labelledby="tab-duplicados">
+  <p class="panel-lead">La misma compra más de una vez. Fuera de los totales hasta que decidas.</p>
+  <section class="insight-block" aria-labelledby="dup-fusionados">
+    <div class="review-head">
+      <h2 id="dup-fusionados">Duplicados fusionados</h2>
+      <p>Marcados (por el modelo o por ti) y fuera de los totales. «Quitar duplicado» en su ficha para deshacer.</p>
+    </div>
+    <div class="table-wrap"><table class="irpf-table">
+      <thead><tr><th>Id</th><th>Emisor</th><th>Nº</th><th>Fecha</th><th class="num">Total</th><th>Gemelo</th></tr></thead>
+      <tbody>{_filas(fusionados, "dup")}</tbody>
+    </table></div>
+  </section>
+  <section class="insight-block" aria-labelledby="dup-sospechosos">
+    <div class="review-head">
+      <h2 id="dup-sospechosos">Sospechosos pendientes</h2>
+      <p>Mismo NIF o emisor + importe ±3 días, o imagen casi idéntica. Revisa y fusiona desde su ficha.</p>
+    </div>
+    <div class="table-wrap"><table class="irpf-table">
+      <thead><tr><th>Id</th><th>Emisor</th><th>Nº</th><th>Fecha</th><th class="num">Total</th><th>Gemelo</th></tr></thead>
+      <tbody>{_filas(sospechosos, "sos")}</tbody>
+    </table></div>
+  </section>
+  {_footer(data)}
+</div>
+"""
+
+
+def _gemelo_que_apunta(asiento_id: int, data: dict) -> int | None:
+    for item in data["asientos"]:
+        if item["estado"] != "duplicado" and item.get("duplicado_de_id") == asiento_id:
+            return item["id"]
+    return None
 
 
 def _panel_insights(data: dict) -> str:
@@ -2656,6 +2741,7 @@ def _ledger(data: dict) -> str:
     <p class="status" id="status" hidden></p>
     <button type="button" class="ghost" id="f-clear" hidden>Limpiar filtros</button>
     <div class="ledger-actions">
+      <button type="button" class="ghost" id="toggle-dups" aria-pressed="false">Mostrar duplicados ({data["n_duplicados"]})</button>
       <button type="button" class="ghost" id="cols-toggle" popovertarget="pop-cols"
         aria-expanded="false" aria-haspopup="dialog">Columnas</button>
     </div>
@@ -4179,6 +4265,20 @@ _JS = r"""
 
   const groupBoxes = (name) => [...document.querySelectorAll(`input[data-fg="${name}"]`)];
 
+  let showDups = false;
+  const nDups = rows.filter((row) => row.dataset.estado === "duplicado").length;
+  const paintToggleDups = () => {
+    const button = document.getElementById("toggle-dups");
+    if (!button) return;
+    button.textContent = showDups ? `Ocultar duplicados (${nDups})` : `Mostrar duplicados (${nDups})`;
+    button.setAttribute("aria-pressed", showDups ? "true" : "false");
+  };
+  document.getElementById("toggle-dups")?.addEventListener("click", () => {
+    showDups = !showDups;
+    paintToggleDups();
+    apply();
+  });
+
   const selectedValues = (name) => {
     const boxes = groupBoxes(name);
     if (!boxes.length) return null;
@@ -4228,6 +4328,7 @@ _JS = r"""
     if (!matchesGroup("factura", row.dataset.numero)) return false;
     if (!matchesGroup("rubro", row.dataset.cuenta)) return false;
     const estadoSel = selectedValues("estado");
+    if (!showDups && row.dataset.estado === "duplicado" && !estadoSel) return false;
     if (estadoSel && !estadoSel.has(row.dataset.tipo) && !estadoSel.has(row.dataset.estado)) return false;
     const confSel = selectedValues("confianza");
     if (confSel && !confSel.has(confianzaKey(row))) return false;

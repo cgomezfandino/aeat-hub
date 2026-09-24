@@ -682,3 +682,25 @@ def test_ficha_dialogo_duplicado_con_sugerencias(session, layout):
     assert data["duplicado_conocido"] == gemelo.id
     assert "ya señalado por la app" in html
     assert f'<option value="{gemelo.id}" selected' in html
+
+
+def test_pestanha_duplicados_y_toggle_del_libro(session, layout):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    dup = session.scalars(select(Asiento).where(Asiento.estado == "duplicado")).first()
+    session.commit()
+    data = collect_dashboard(session, actividad, 2026)
+    html = render_dashboard(data)
+
+    # pestaña con badge y panel propio
+    assert 'id="tab-duplicados"' in html
+    assert 'id="panel-duplicados"' in html
+    assert "Duplicados fusionados" in html
+    assert "Sospechosos pendientes" in html
+    assert f'href="/asiento/{dup.id}"' in html
+    assert "Nada aquí." in html  # la sección de sospechosos está vacía
+
+    # el Libro oculta duplicados por defecto con toggle explícito
+    assert 'id="toggle-dups"' in html
+    assert "Mostrar duplicados (1)" in html
+    assert "showDups = false" in html
