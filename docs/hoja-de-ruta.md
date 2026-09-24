@@ -13,7 +13,7 @@ exportación opcional.
 | --- | --- | --- |
 | Dashboard HTML | Ver el ejercicio (Libro e Insights), filtrar y ordenar, abrir la ficha, editar cabecera y líneas (confirmación + log), borrado recuperable, validar, exportar el recorte | Crear cuentas, presentar modelos |
 | CLI | Ingest, pendientes, `validar`, `reabrir`, `reclasificar` (por nombre), `cuenta alta`, `factura numero` | Interfaz de revisión continua |
-| Excel | Libro por rubro + hoja `Casillas_IRPF` (totales anuales del inmueble) | Presentar el modelo 100 / 303; cortes trimestrales |
+| Excel | Libro por rubro, hoja `Trimestres` (cortes T1–T4) y hoja `Casillas_IRPF` (totales anuales del inmueble) | Presentar el modelo 100 / 303 |
 
 El primer expediente semilla es el alquiler de Valladolid (`CI-VA-001`,
 capital inmobiliario). Los rubros se leen y se escriben por **nombre corto**
@@ -66,6 +66,19 @@ año (frase, doce meses, emisor) y admite un rango de fechas; la Renta sigue
 siendo el ejercicio entero. La ficha marca huecos de calidad. Si las líneas
 no cuadran con el total, el ingest prueba el otro motor de imagen una vez.
 
+El 24 sep cayó la revisión del modelo y del pipeline
+(`docs/revision-modelo-pipeline-2026-09.md`): la corrección de ficha ya no se
+pierde si el Excel está abierto, los ficheros huérfanos se rescatan a
+`rejected/error`, las facturas sin fecha avisan en Insights, el reparse
+sincroniza la factura y vuelven a funcionar (estaba roto silenciosamente).
+SQLite pasa a WAL. Insights gana KPIs coherentes con el rango, trimestres
+T1–T4 con nombre y tabla de IVA soportado por tipo.
+
+Esa misma tarde: el desglose vive en su propia tabla `lineas` (el JSON del
+documento queda como salida intacta del modelo; migración automática al
+arrancar) y los trimestres T1–T4 llegan al filtro de fecha del Libro y al
+Excel (hoja `Trimestres`).
+
 ## Siguiente bloque natural
 
 1. Ingerir el resto del alquiler (luz, agua, internet, comunidad, seguros,
@@ -73,10 +86,11 @@ no cuadran con el total, el ingest prueba el otro motor de imagen una vez.
 2. Revisar el NIF de emisor al validar: a veces se guarda el del titular.
 3. El número de factura se corrige por CLI (`aeat-hub factura numero`). En
    el HTML todavía no.
-4. Cortes T1–T4 como filtro del libro anual (Insights ya tiene un rango
-   libre, no los trimestres con nombre).
+4. ~~Cortes T1–T4~~ Hechos en Insights, en el filtro del Libro y en el Excel
+   (hoja `Trimestres`).
 5. Libro de actividad económica para las webs + borrador 303 (totales, sin
-   envío).
+   envío). La tabla de IVA soportado por tipo y la hoja `Trimestres` ya
+   apuntan al 303.
 6. Amortización y proyectos de mejora.
 7. Ampliar el set de oro de `aeat-hub eval` (hoy: 2 tickets Leroy + sintético).
 

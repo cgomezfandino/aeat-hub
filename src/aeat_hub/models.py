@@ -182,7 +182,7 @@ class Asiento(Base):
     ejercicio: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     emisor: Mapped[str | None] = mapped_column(String(200), nullable=True)
     nif_emisor: Mapped[str | None] = mapped_column(String(12), nullable=True, index=True)
-    numero_factura: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    numero_factura: Mapped[str | None] = mapped_column(String(120), nullable=True)
     descripcion: Mapped[str] = mapped_column(Text, default="")
     base: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     iva_tipo: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
@@ -201,6 +201,36 @@ class Asiento(Base):
     factura: Mapped[Factura | None] = relationship(back_populates="asientos")
     cuenta: Mapped[Cuenta | None] = relationship()
     cambios: Mapped[list[Cambio]] = relationship(back_populates="asiento")
+    lineas: Mapped[list[Linea]] = relationship(
+        back_populates="asiento",
+        order_by="Linea.posicion, Linea.id",
+        cascade="all, delete-orphan",
+    )
+
+
+class Linea(Base):
+    """Línea de desglose actual de un asiento.
+
+    Fuente de verdad editable; `Documento.json_extraido` guarda la salida
+    del modelo (OCR+parser) sin retoques humanos y `Extraccion` el histórico.
+    """
+
+    __tablename__ = "lineas"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asiento_id: Mapped[int] = mapped_column(ForeignKey("asientos.id"), index=True)
+    posicion: Mapped[int] = mapped_column(Integer, default=1)
+    codigo: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    descripcion: Mapped[str] = mapped_column(String(200), default="")
+    cantidad: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    base: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    iva_tipo: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    iva_cuota: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    importe: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    eliminada: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    asiento: Mapped[Asiento] = relationship(back_populates="lineas")
 
 
 class Cambio(Base):

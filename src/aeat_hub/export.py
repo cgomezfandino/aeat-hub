@@ -88,6 +88,7 @@ def export_xlsx(
         inmuebles,
         nombres,
     )
+    _write_trimestres(wb.create_sheet("Trimestres"), rows)
     _write_summary_rubro(wb.create_sheet("Resumen_rubro"), rows, nombres)
     _write_summary_inmueble(wb.create_sheet("Resumen_inmueble"), rows, inmuebles)
     if actividad.regimen == REGIMEN_CI:
@@ -139,6 +140,52 @@ def _write_sheet(
     for asiento in rows:
         payload = _as_row(asiento, actividad, inmuebles, nombres)
         ws.append([payload[key] for key, _label in SHEET_COLUMNS])
+    _autosize(ws)
+
+
+def _write_trimestres(ws, rows: list[Asiento]) -> None:
+    """Cortes T1–T4 sobre el libro anual: base del borrador 303 (sin presentación)."""
+    ws.title = "Trimestres"
+    ws.append(["Trimestre", "Gastos", "Ingresos", "Mejoras", "Neto", "IVA soportado"])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    trimestres = {
+        q: {"gasto": Decimal("0"), "ingreso": Decimal("0"), "mejora": Decimal("0"), "iva": Decimal("0")}
+        for q in (1, 2, 3, 4)
+    }
+    totales = {"gasto": Decimal("0"), "ingreso": Decimal("0"), "mejora": Decimal("0"), "iva": Decimal("0")}
+    for asiento in rows:
+        if asiento.estado == "duplicado" or asiento.fecha is None:
+            continue
+        slot = trimestres[min((asiento.fecha.month - 1) // 3 + 1, 4)]
+        if asiento.tipo in ("gasto", "ingreso", "mejora"):
+            slot[asiento.tipo] += asiento.total or Decimal("0")
+            totales[asiento.tipo] += asiento.total or Decimal("0")
+        if asiento.tipo in ("gasto", "mejora"):
+            slot["iva"] += asiento.iva_cuota or Decimal("0")
+            totales["iva"] += asiento.iva_cuota or Decimal("0")
+    for q in (1, 2, 3, 4):
+        slot = trimestres[q]
+        ws.append(
+            [
+                f"T{q}",
+                float(slot["gasto"]),
+                float(slot["ingreso"]),
+                float(slot["mejora"]),
+                float(slot["ingreso"] - slot["gasto"]),
+                float(slot["iva"]),
+            ]
+        )
+    ws.append(
+        [
+            "Año",
+            float(totales["gasto"]),
+            float(totales["ingreso"]),
+            float(totales["mejora"]),
+            float(totales["ingreso"] - totales["gasto"]),
+            float(totales["iva"]),
+        ]
+    )
     _autosize(ws)
 
 

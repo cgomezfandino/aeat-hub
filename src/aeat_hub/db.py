@@ -21,6 +21,10 @@ def make_engine(layout: DataLayout) -> Engine:
     def _enable_fk(dbapi_connection, _connection_record) -> None:  # noqa: ANN001
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        # WAL + busy_timeout para que el CLI y el servidor local convivan
+        # sin "database is locked".
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 
     return engine
@@ -59,6 +63,7 @@ def _migrate(engine: Engine) -> None:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE documentos ADD COLUMN paginas INTEGER NOT NULL DEFAULT 1"))
     _backfill_er(engine)
+    _backfill_lineas(engine)
 
 
 def _backfill_er(engine: Engine) -> None:
@@ -68,6 +73,16 @@ def _backfill_er(engine: Engine) -> None:
 
     with Session(engine) as session:
         if backfill_asientos(session):
+            session.commit()
+
+
+def _backfill_lineas(engine: Engine) -> None:
+    from sqlalchemy.orm import Session
+
+    from aeat_hub.edits import backfill_lineas
+
+    with Session(engine) as session:
+        if backfill_lineas(session):
             session.commit()
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -10,6 +9,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from aeat_hub.extract.ids import normalize_emisor, normalize_numero
 from aeat_hub.extract.schema import InvoiceExtract
 from aeat_hub.fiscal.nif import normalize_nif
 from aeat_hub.media import hamming_distance
@@ -30,7 +30,7 @@ def fiscal_key(nif: str | None, numero: str | None, fecha, total: Decimal | None
     if not nif or not numero or fecha is None or total is None:
         return None
     nif_n = normalize_nif(nif)
-    num_n = "".join(ch for ch in numero.upper() if ch.isalnum())
+    num_n = normalize_numero(numero) or ""
     cents = int(total * 100)
     return f"{nif_n}|{num_n}|{fecha.isoformat()}|{cents}"
 
@@ -117,7 +117,7 @@ def _suspicious_match(
 def _numero_key(numero: str | None, fecha, total: Decimal | None) -> str | None:
     if not numero or fecha is None or total is None:
         return None
-    num_n = "".join(ch for ch in numero.upper() if ch.isalnum())
+    num_n = normalize_numero(numero) or ""
     if len(num_n) < 4:
         return None
     cents = int(total * 100)
@@ -145,19 +145,14 @@ def _numero_fecha_total_match(
     return None
 
 
-def _norm_emisor(value: str | None) -> str:
-    text = re.sub(r"\s+", " ", (value or "").upper()).strip()
-    return text[:48]
-
-
 def _emisor_fecha_total_match(
     session: Session,
     actividad_id: int,
     extract: InvoiceExtract,
     exclude_asiento_id: int | None,
 ) -> DuplicateHit | None:
-    emisor = _norm_emisor(extract.emisor)
-    if len(emisor) < 6 or extract.total is None or extract.fecha is None:
+    emisor = normalize_emisor(extract.emisor)
+    if emisor is None or extract.total is None or extract.fecha is None:
         return None
     start = extract.fecha - timedelta(days=3)
     end = extract.fecha + timedelta(days=3)
@@ -171,7 +166,7 @@ def _emisor_fecha_total_match(
     for row in rows:
         if exclude_asiento_id and row.id == exclude_asiento_id:
             continue
-        if _norm_emisor(row.emisor) != emisor:
+        if normalize_emisor(row.emisor) != emisor:
             continue
         if row.fecha and start <= row.fecha <= end:
             return DuplicateHit(3, row.id, row.documento_id, "mismo emisor+importe±3 días")

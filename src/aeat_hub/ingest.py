@@ -12,7 +12,9 @@ from sqlalchemy.orm import Session
 
 from aeat_hub.classify import classify
 from aeat_hub.dedupe import DuplicateHit, find_duplicate, find_sha_duplicate
+from aeat_hub.edits import replace_lineas
 from aeat_hub.er import cluster_documento, save_extraccion
+from aeat_hub.extract.ids import normalize_emisor
 from aeat_hub.extract.parser import parse_invoice
 from aeat_hub.extract.schema import InvoiceExtract
 from aeat_hub.filing import place_file, relocate_asiento, relocate_documento
@@ -108,6 +110,7 @@ def ingest_file(
     ocr_prefer: str = "auto",
     from_inbox: bool = True,
     rapid: OCRProvider | None = None,
+    probe: dict[str, str] | None = None,
 ) -> IngestItem:
     name = path.name
     warnings: list[str] = []
@@ -117,6 +120,8 @@ def ingest_file(
 
     with etapa("hash", name):
         sha = sha256_file(path)
+        if probe is not None:
+            probe["sha"] = sha
         log_detalle("hash", "sha256=%s", sha)
 
     with etapa("duplicado-fichero", name):
@@ -213,7 +218,9 @@ def ingest_file(
             documento=documento,
             extract=extract,
         )
-        inmueble = session.scalar(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
+        inmueble = session.scalar(
+            select(Inmueble).where(Inmueble.actividad_id == actividad.id).order_by(Inmueble.id)
+        )
         if asiento_existente is not None:
             stored = relocate_documento(
                 session, layout, asiento_existente, documento, move=from_inbox
@@ -262,6 +269,7 @@ def ingest_file(
             _apply_duplicate_and_state(asiento, dup, classification.confianza)
         session.add(asiento)
         session.flush()
+        replace_lineas(session, asiento, extract.lineas)
         log_detalle("guardar", "documento=%s asiento=%s factura=%s estado=%s", documento.id, asiento.id, factura.id, asiento.estado)
 
     with etapa("archivar", name):
@@ -290,22 +298,30 @@ def ingest_inbox(
     files = list_inbox(layout)
     log_detalle("lote", "inbox=%s ficheros=%s", layout.inbox, [p.name for p in files])
     for path in files:
+        probe: dict[str, str] = {}
         try:
-            results.append(
-                ingest_file(
-                    session,
-                    layout,
-                    path,
-                    actividad,
-                    ocr_prefer=ocr_prefer,
-                    from_inbox=True,
-                    rapid=rapid,
-                )
+            item = ingest_file(
+                session,
+                layout,
+                path,
+                actividad,
+                ocr_prefer=ocr_prefer,
+                from_inbox=True,
+                rapid=rapid,
+                probe=probe,
             )
             session.commit()
         except Exception as exc:
             session.rollback()
-            stored = _quarantine(layout, path)
+            ya_movido = not path.exists()
+            stored = _quarantine(layout, path, probe.get("sha", ""))
+            if ya_movido:
+                log_detalle(
+                    "lote",
+                    "error tras archivar %s: fichero rescatado de archivo/ a %s",
+                    path.name,
+                    stored,
+                )
             results.append(
                 IngestItem(
                     stored,
@@ -316,13 +332,22 @@ def ingest_inbox(
                 )
             )
             log_detalle("lote", "sigue con el siguiente fichero tras error en %s", path.name)
+        else:
+            # El asiento solo cuenta como éxito cuando el commit ha persistido.
+            results.append(item)
     return results
 
 
-def _quarantine(layout: DataLayout, path: Path) -> Path:
+def _quarantine(layout: DataLayout, path: Path, sha: str = "") -> Path:
     dest = layout.rejected / "error" / path.name
     if path.exists():
         return place_file(path, dest, move=True)
+    if sha:
+        # El lote falló después de mover el fichero a archivo/ y el rollback
+        # no devuelve ficheros: hay que rescatarlo para que no quede huérfano.
+        for moved in sorted(layout.archivo.rglob(f"{sha[:12]}_*")):
+            if moved.is_file():
+                return place_file(moved, dest, move=True)
     return dest
 
 
@@ -359,6 +384,8 @@ def reparse_asientos(session: Session, actividad: Actividad) -> int:
         if documento is None or not (documento.texto_crudo or "").strip():
             continue
         extract = parse_invoice(documento.texto_crudo, motor=documento.motor_ocr)
+        factura = asiento.factura
+        divergencia = _divergencias_con_factura(asiento, factura)
         asiento.emisor = extract.emisor
         asiento.nif_emisor = extract.nif_emisor
         asiento.fecha = extract.fecha
@@ -369,8 +396,10 @@ def reparse_asientos(session: Session, actividad: Actividad) -> int:
         asiento.iva_cuota = extract.iva_cuota
         asiento.total = extract.total
         asiento.descripcion = _descripcion(extract, Path(documento.nombre_original))
+        _sync_factura_reparse(factura, extract, divergencia)
         documento.json_extraido = extract.model_dump_json()
         documento.confianza = extract.confianza
+        replace_lineas(session, asiento, extract.lineas)
         if asiento.estado != "duplicado":
             classification = classify(session, actividad, extract, documento.texto_crudo)
             asiento.cuenta_codigo = classification.cuenta_codigo
@@ -380,6 +409,33 @@ def reparse_asientos(session: Session, actividad: Actividad) -> int:
             _apply_duplicate_and_state(asiento, None, classification.confianza)
         updated += 1
     return updated
+
+
+_CAMPOS_REPARSE = ("emisor", "nif_emisor", "fecha", "base", "iva_tipo", "iva_cuota", "total")
+
+
+def _divergencias_con_factura(asiento: Asiento, factura) -> set[str]:
+    """Campos donde asiento y factura ya no coinciden: corrección humana."""
+    if factura is None:
+        return set()
+    return {
+        campo
+        for campo in _CAMPOS_REPARSE
+        if getattr(asiento, campo) != getattr(factura, campo)
+    }
+
+
+def _sync_factura_reparse(factura, extract: InvoiceExtract, divergencia: set[str]) -> None:
+    """Refresca la factura canónica con el reparse para que ER no compare contra
+    importes caducados. El número no se toca: la identidad de la factura la
+    gestiona `aeat-hub factura numero`, y los campos divergentes se respetan."""
+    if factura is None:
+        return
+    for campo in _CAMPOS_REPARSE:
+        if campo in divergencia:
+            continue
+        setattr(factura, campo, getattr(extract, campo))
+    factura.emisor_norm = normalize_emisor(factura.emisor)
 
 
 def _descripcion(extract: InvoiceExtract, path: Path) -> str:

@@ -70,3 +70,61 @@ def test_export_xlsx_crea_hojas(session, layout):
     assert any(row[0] == "Luz" for row in resumen[1:])
     irpf_rows = list(wb["Casillas_IRPF"].iter_rows(values_only=True))
     assert any(row and row[0] == "Rendimiento neto" for row in irpf_rows)
+
+
+def test_export_xlsx_hoja_trimestres(session, layout):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    session.add(
+        Asiento(
+            actividad_id=actividad.id,
+            tipo="gasto",
+            cuenta_codigo="CI.GAS.LUZ",
+            fecha=date(2026, 2, 10),
+            ejercicio=2026,
+            emisor="IBERDROLA DEMO",
+            total=Decimal("100.00"),
+            iva_cuota=Decimal("21.00"),
+            estado="confirmado",
+        )
+    )
+    session.add(
+        Asiento(
+            actividad_id=actividad.id,
+            tipo="gasto",
+            cuenta_codigo="CI.GAS.LUZ",
+            fecha=date(2026, 8, 1),
+            ejercicio=2026,
+            emisor="IBERDROLA DEMO",
+            total=Decimal("50.00"),
+            iva_cuota=Decimal("10.50"),
+            estado="confirmado",
+        )
+    )
+    session.add(
+        Asiento(
+            actividad_id=actividad.id,
+            tipo="ingreso",
+            cuenta_codigo="CI.ING.RENTA",
+            fecha=date(2026, 1, 5),
+            ejercicio=2026,
+            total=Decimal("700.00"),
+            estado="confirmado",
+        )
+    )
+    session.commit()
+    dest = export_xlsx(session, layout, actividad, 2026)
+    ws = load_workbook(dest)["Trimestres"]
+    filas = {row[0]: row for row in ws.iter_rows(min_row=2, values_only=True)}
+    assert set(filas) == {"T1", "T2", "T3", "T4", "Año"}
+    t1 = filas["T1"]
+    assert t1[1] == 100.0  # gasto en febrero
+    assert t1[2] == 700.0  # ingreso en enero
+    assert t1[3] == 0.0
+    assert t1[4] == 600.0  # neto
+    assert t1[5] == 21.0  # IVA soportado
+    t3 = filas["T3"]
+    assert t3[1] == 50.0
+    assert t3[5] == 10.5
+    anio = filas["Año"]
+    assert anio[1] == 150.0
+    assert anio[5] == 31.5

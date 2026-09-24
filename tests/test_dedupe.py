@@ -117,3 +117,50 @@ def test_duplicado_por_emisor_importe_ventana(session):
     hit = find_duplicate(session, actividad_id=actividad.id, extract=extract, phash=None)
     assert hit is not None
     assert hit.nivel == 3
+
+
+def test_dedupe_emisor_usa_la_normalizacion_unica(session):
+    """Un emisor de 61 caracteres que difiere al final ya no cruza por truncado."""
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    largo = "E" * 70
+    session.add(
+        Asiento(
+            actividad_id=actividad.id,
+            tipo="gasto",
+            fecha=date(2026, 9, 18),
+            ejercicio=2026,
+            emisor=largo,
+            total=Decimal("13.86"),
+            estado="confirmado",
+        )
+    )
+    session.flush()
+    extract = InvoiceExtract(
+        emisor=f"{largo}  ",
+        fecha=date(2026, 9, 19),
+        total=Decimal("13.86"),
+    )
+    hit = find_duplicate(session, actividad_id=actividad.id, extract=extract, phash=None)
+    assert hit is not None
+    assert hit.nivel == 3
+    assert "emisor" in hit.motivo
+
+    casi = "E" * 60
+    session.add(
+        Asiento(
+            actividad_id=actividad.id,
+            tipo="gasto",
+            fecha=date(2026, 9, 20),
+            ejercicio=2026,
+            emisor=f"{casi}X",
+            total=Decimal("99.00"),
+            estado="confirmado",
+        )
+    )
+    session.flush()
+    distinto = InvoiceExtract(
+        emisor=f"{casi}Y",
+        fecha=date(2026, 9, 21),
+        total=Decimal("99.00"),
+    )
+    assert find_duplicate(session, actividad_id=actividad.id, extract=distinto, phash=None) is None

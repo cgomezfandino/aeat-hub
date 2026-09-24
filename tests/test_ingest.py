@@ -1,9 +1,10 @@
 from pathlib import Path
+from decimal import Decimal
 
 from sqlalchemy import select
 
-from aeat_hub.ingest import ingest_file
-from aeat_hub.models import Actividad, Asiento, Documento
+from aeat_hub.ingest import _quarantine, ingest_file, ingest_inbox, reparse_asientos
+from aeat_hub.models import Actividad, Asiento, Documento, Factura
 from aeat_hub.ocr.base import OCRResult
 from aeat_hub.ocr.cascade import transcribe
 from aeat_hub.ocr.pdf_native import PdfNativeProvider
@@ -111,3 +112,96 @@ def test_descuadre_lineas_senala_el_importe_que_falta():
         ],
     )
     assert _descuadre_lineas(extract) == Decimal("1.46")
+
+
+def test_quarantine_rescata_fichero_movido_a_archivo(layout):
+    sha = "ab" * 32
+    stored = (
+        layout.archivo
+        / "CI-VA-001"
+        / "2026"
+        / "01"
+        / "gasto"
+        / "luz"
+        / f"{sha[:12]}_luz.pdf"
+    )
+    stored.parent.mkdir(parents=True, exist_ok=True)
+    stored.write_bytes(b"%PDF-1.4 demo")
+
+    dest = _quarantine(layout, layout.inbox / "luz.pdf", sha)
+
+    assert dest == layout.rejected / "error" / "luz.pdf"
+    assert dest.is_file()
+    assert not stored.exists()
+
+
+def test_ingest_lote_error_tras_archivar_rescata_fichero(session, layout, monkeypatch):
+    pdf = write_pdf(layout.inbox / "luz.pdf", FACTURA_LUZ)
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+
+    def commit_bloqueado():
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(session, "commit", commit_bloqueado)
+    items = ingest_inbox(session, layout, actividad, rapid=FakeRapid())
+    monkeypatch.undo()
+
+    assert len(items) == 1
+    assert items[0].estado == "error"
+    assert not pdf.exists()
+    assert (layout.rejected / "error" / "luz.pdf").is_file()
+    assert not list(layout.archivo.rglob("*.pdf"))
+    assert not session.scalars(select(Documento.id)).all()
+
+
+def test_reparse_sincroniza_factura_salvo_divergencias(session, layout):
+    pdf = write_pdf(layout.inbox / "luz.pdf", FACTURA_LUZ)
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    item = ingest_file(session, layout, pdf, actividad, rapid=FakeRapid())
+    session.commit()
+    asiento = session.get(Asiento, item.asiento_id)
+    factura = session.get(Factura, asiento.factura_id)
+    emisor_ocr = asiento.emisor
+    assert emisor_ocr
+
+    # emisor idéntico en ambos (sin divergencia) y total divergente:
+    # el reparse debe refrescar el primero y respetar el segundo.
+    asiento.emisor = "VIEJO SA"
+    factura.emisor = "VIEJO SA"
+    factura.total = Decimal("1.00")
+    session.commit()
+
+    n = reparse_asientos(session, actividad)
+    session.commit()
+
+    asiento = session.get(Asiento, item.asiento_id)
+    factura = session.get(Factura, asiento.factura_id)
+    assert n == 1
+    assert asiento.emisor == emisor_ocr
+    assert factura.emisor == emisor_ocr
+    assert factura.total == Decimal("1.00")
+
+
+def test_reparse_refresca_las_lineas_de_la_tabla(session, layout):
+    from aeat_hub.edits import lineas_de_asiento, patch_asiento
+
+    pdf = write_pdf(layout.inbox / "luz.pdf", FACTURA_LUZ)
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    item = ingest_file(session, layout, pdf, actividad, rapid=FakeRapid())
+    session.commit()
+    asiento = session.get(Asiento, item.asiento_id)
+
+    # edición humana de líneas sin validar (mantener_estado evita el validado)
+    patch_asiento(
+        session,
+        asiento.id,
+        {"lineas": [{"descripcion": "EDITADA", "importe": "1,00"}], "mantener_estado": True},
+    )
+    session.commit()
+    assert [i["descripcion"] for i in lineas_de_asiento(asiento)] == ["EDITADA"]
+
+    n = reparse_asientos(session, actividad)
+    session.commit()
+    assert n == 1
+    descripciones = [i["descripcion"] for i in lineas_de_asiento(asiento)]
+    assert "EDITADA" not in descripciones

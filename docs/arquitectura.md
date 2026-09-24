@@ -67,9 +67,10 @@ flowchart TD
 - **Titular:** persona física o jurídica (NIF).
 - **Actividad / expediente:** `capital_inmobiliario` o `actividad_economica`. Aquí se separa la “razón social / actividad” de cara a Hacienda.
 - **Inmueble:** solo capital inmobiliario (p. ej. vivienda en Valladolid).
-- **Documento:** el fichero raw (hash, OCR, ruta en disco).
+- **Documento:** el fichero raw (hash, OCR, ruta en disco). Su `json_extraido` guarda la salida del modelo tal cual, sin retoques humanos.
 - **Factura:** entidad canónica (emisor + número). Varios documentos pueden ser evidencia de una.
 - **Asiento:** el apunte contable/fiscal (un asiento por factura).
+- **Línea:** el desglose actual del asiento (artículos, importes, IVA por línea) en su propia tabla; la ficha edita aquí.
 - **Proyecto de mejora:** agrupará PVC + materiales + mano de obra (tabla lista; el CLI de proyectos aún no está).
 - **Regla aprendida:** `(actividad, NIF emisor) → cuenta` tras un `reclasificar`.
 

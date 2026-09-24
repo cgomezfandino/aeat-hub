@@ -6,9 +6,9 @@ from threading import Thread
 from sqlalchemy import select
 
 from aeat_hub.db import make_engine, session_factory
-from aeat_hub.edits import lineas_de_asiento, patch_asiento
+from aeat_hub.edits import backfill_lineas, lineas_de_asiento, patch_asiento
 from aeat_hub.hub_http import bind_server
-from aeat_hub.models import Actividad, Asiento, Cambio, Documento
+from aeat_hub.models import Actividad, Asiento, Cambio, Documento, Factura, Linea
 
 
 def _asiento(session, actividad, **kwargs):
@@ -82,6 +82,31 @@ def test_patch_desde_libro_cambia_emisor_y_fecha_sin_tocar_importes(session):
     assert patched.ejercicio == 2026
     assert patched.base == Decimal("25.99")
     assert patched.total == Decimal("31.45")
+
+
+def test_patch_base_sincroniza_iva_tipo_en_factura(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    factura = Factura(
+        actividad_id=actividad.id,
+        nif_emisor="B84818442",
+        emisor="LEROY DEMO",
+        emisor_norm="LEROY DEMO",
+        numero_norm="F1",
+        numero_visible="F-1",
+        fecha=date(2026, 9, 5),
+        base=Decimal("25.99"),
+        iva_tipo=Decimal("21.00"),
+        iva_cuota=Decimal("5.46"),
+        total=Decimal("31.45"),
+    )
+    session.add(factura)
+    session.flush()
+    row = _asiento(session, actividad, factura_id=factura.id)
+    patched = patch_asiento(session, row.id, {"base": "10,00"})
+    session.commit()
+    assert patched.iva_tipo == Decimal("54.60")
+    assert factura.base == Decimal("10.00")
+    assert factura.iva_tipo == Decimal("54.60")
 
 
 def test_patch_quita_linea_de_direccion_y_cambia_rubro(session):
@@ -299,3 +324,78 @@ def test_hub_personaliza_titulos_del_libro(session, layout):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def _asiento_con_doc(session, actividad, lineas_json):
+    doc = Documento(
+        sha256="c" * 64,
+        nombre_original="ticket.pdf",
+        ruta_almacenada="/tmp/ticket.pdf",
+        texto_crudo="OBRAMAT",
+        json_extraido=json.dumps({"lineas": lineas_json}),
+    )
+    session.add(doc)
+    session.flush()
+    row = _asiento(session, actividad, documento_id=doc.id)
+    session.commit()
+    return row, doc
+
+
+def test_lineas_viven_en_tabla_y_el_json_no_se_pisa(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    row, doc = _asiento_con_doc(
+        session,
+        actividad,
+        [
+            {"descripcion": "BROCA MADERA", "importe": "1.99"},
+            {"descripcion": "SIERRA", "importe": "9.00"},
+        ],
+    )
+    json_original = doc.json_extraido
+
+    # legado: sin filas en la tabla se lee del documento
+    assert [i["descripcion"] for i in lineas_de_asiento(row)] == ["BROCA MADERA", "SIERRA"]
+
+    patched = patch_asiento(
+        session, row.id, {"lineas": [{"descripcion": "SIERRA", "importe": "9.00"}]}
+    )
+    session.commit()
+
+    assert [i["descripcion"] for i in lineas_de_asiento(patched)] == ["SIERRA"]
+    filas = list(session.scalars(select(Linea).where(Linea.asiento_id == row.id)))
+    assert len(filas) == 1
+    assert filas[0].descripcion == "SIERRA"
+    assert filas[0].importe == Decimal("9.00")
+    # la salida del modelo queda intacta: la tabla es la fuente editable
+    assert doc.json_extraido == json_original
+    logs = list(session.scalars(select(Cambio).where(Cambio.asiento_id == row.id)))
+    assert any(item.campo == "lineas" and item.antes == "2 líneas" for item in logs)
+
+
+def test_lineas_editables_sin_documento(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    row = _asiento(session, actividad)
+    patched = patch_asiento(
+        session, row.id, {"lineas": [{"descripcion": "LACA SPRAY", "importe": "2,50"}]}
+    )
+    session.commit()
+    assert [i["descripcion"] for i in lineas_de_asiento(patched)] == ["LACA SPRAY"]
+    filas = list(session.scalars(select(Linea).where(Linea.asiento_id == row.id)))
+    assert len(filas) == 1
+
+
+def test_backfill_lineas_migra_el_json_historico(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    row, _doc = _asiento_con_doc(
+        session,
+        actividad,
+        [
+            {"descripcion": "BROCA MADERA", "importe": "1.99"},
+            {"descripcion": "SIERRA", "importe": "9.00"},
+        ],
+    )
+    assert backfill_lineas(session) == 1
+    session.commit()
+    filas = list(session.scalars(select(Linea).where(Linea.asiento_id == row.id)))
+    assert [f.descripcion for f in filas] == ["BROCA MADERA", "SIERRA"]
+    assert backfill_lineas(session) == 0

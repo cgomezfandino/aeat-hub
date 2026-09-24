@@ -115,6 +115,19 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
     irpf = (
         summarize_irpf(vivos, extra_casillas) if actividad.regimen == REGIMEN_CI else None
     )
+    sin_fecha = (
+        session.scalars(
+            select(Asiento)
+            .where(
+                Asiento.actividad_id == actividad.id,
+                Asiento.fecha.is_(None),
+                Asiento.estado != "duplicado",
+            )
+            .order_by(Asiento.id)
+        )
+        .all()
+    )
+    n_conflictos = len({fid for fid, estado in er_map.items() if estado == "conflicto"})
     return {
         "codigo": actividad.codigo,
         "nombre": actividad.nombre,
@@ -132,6 +145,11 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         "mejoras": mejoras,
         "resultado": ingresos - gastos,
         "por_mes": por_mes,
+        "iva_tipos": _iva_por_tipo(vivos),
+        "sin_fecha": [
+            {"id": row.id, "emisor": row.emisor or "sin emisor"} for row in sin_fecha
+        ],
+        "n_conflictos": n_conflictos,
         "por_naturaleza": _by_nature(
             vivos, extra_casillas, nombres, actividad.regimen
         ),
@@ -1143,6 +1161,7 @@ def _asiento_view(
         "numero": asiento.numero_factura or "—",
         "base": asiento.base,
         "iva": asiento.iva_cuota,
+        "iva_tipo": asiento.iva_tipo,
         "total": total,
         "total_num": float(total) if total is not None else 0.0,
         "cuenta": cuenta_nombre if codigo else "",
@@ -1566,6 +1585,46 @@ def _etiqueta_emisor(label: str) -> tuple[str, str]:
     return text[:31] + "…", text
 
 
+IVA_TIPOS_ORDEN = ("21", "10", "4", "0", "otros", "sin")
+IVA_TIPOS_LABEL = {
+    "21": "21 %",
+    "10": "10 %",
+    "4": "4 %",
+    "0": "0 %",
+    "otros": "Otros tipos",
+    "sin": "Sin tipo",
+}
+
+
+def _iva_key(tipo: Decimal | None) -> str:
+    if tipo is None:
+        return "sin"
+    for conocido in (Decimal("21"), Decimal("10"), Decimal("4"), Decimal("0")):
+        if tipo == conocido:
+            return str(int(conocido))
+    return "otros"
+
+
+def _iva_por_tipo(rows: list[Asiento]) -> list[dict]:
+    """IVA soportado de gastos y mejoras, agrupado por tipo (21/10/4/0)."""
+    buckets: dict[str, dict] = {}
+    for row in rows:
+        if row.tipo not in {TIPO_GASTO, TIPO_MEJORA}:
+            continue
+        slot = buckets.setdefault(
+            _iva_key(q2(row.iva_tipo)),
+            {"base": ZERO, "cuota": ZERO, "total": ZERO},
+        )
+        slot["base"] += q2(row.base) or ZERO
+        slot["cuota"] += q2(row.iva_cuota) or ZERO
+        slot["total"] += q2(row.total) or ZERO
+    return [
+        {"label": IVA_TIPOS_LABEL[key], **buckets[key]}
+        for key in IVA_TIPOS_ORDEN
+        if key in buckets
+    ]
+
+
 def _rank_emisores(asientos: list[dict]) -> tuple[list[dict], Decimal]:
     buckets: dict[str, dict] = {}
     total = ZERO
@@ -1631,9 +1690,25 @@ def _aviso_linea(data: dict) -> str:
             if duplicados == 1
             else f"{duplicados} duplicados fuera de los totales"
         )
+    conflictos = int(data.get("n_conflictos") or 0)
+    if conflictos:
+        bits.append(
+            "1 conflicto de agrupación (mismo número, total distinto)"
+            if conflictos == 1
+            else f"{conflictos} conflictos de agrupación (mismo número, total distinto)"
+        )
+    sin_fecha = data.get("sin_fecha") or []
+    if sin_fecha:
+        enlaces = " ".join(
+            f'<a href="/asiento/{item["id"]}">#{item["id"]}</a>' for item in sin_fecha[:5]
+        )
+        resto = f" y {len(sin_fecha) - 5} más" if len(sin_fecha) > 5 else ""
+        bits.append(
+            f'{len(sin_fecha)} sin fecha, fuera de todo ejercicio: {enlaces}{resto}'
+        )
     if not bits:
         return ""
-    return f'<p class="insight-aviso">{escape(" · ".join(bits))}</p>'
+    return f'<p class="insight-aviso">{" · ".join(bits)}</p>'
 
 
 def _by_nature(
@@ -1733,11 +1808,12 @@ def _kpis(data: dict) -> str:
 """
 
 
-def _kpi_btn(label: str, value: Decimal, kind: str) -> str:
+def _kpi_btn(label: str, value: Decimal, kind: str, *, kpi_id: str = "") -> str:
+    id_attr = f' id="{kpi_id}"' if kpi_id else ""
     return (
         f'<div class="kpi kpi-{kind}">'
         f"<span>{escape(label)}</span>"
-        f"<strong>{escape(format_euro(value))}</strong></div>"
+        f"<strong{id_attr}>{escape(format_euro(value))}</strong></div>"
     )
 
 
@@ -1824,12 +1900,13 @@ def _panel_insights(data: dict) -> str:
   aria-labelledby="tab-insights">
   <p class="panel-lead">Arriba, cómo va el ejercicio. Abajo, el borrador de la Renta.</p>
   <div class="kpi-grid">
-    {_kpi_btn("Gastos", data["gastos"], "gasto")}
-    {_kpi_btn("Ingresos", data["ingresos"], "ingreso")}
-    {_kpi_btn("Mejoras", data["mejoras"], "mejora")}
-    {_kpi_btn("Neto", data["resultado"], "neto")}
+    {_kpi_btn("Gastos", data["gastos"], "gasto", kpi_id="insight-kpi-gastos")}
+    {_kpi_btn("Ingresos", data["ingresos"], "ingreso", kpi_id="insight-kpi-ingresos")}
+    {_kpi_btn("Mejoras", data["mejoras"], "mejora", kpi_id="insight-kpi-mejoras")}
+    {_kpi_btn("Neto", data["resultado"], "neto", kpi_id="insight-kpi-neto")}
     {_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"])}
   </div>
+  <p class="hint" id="insight-kpi-hint" hidden>KPIs y tablas siguen el rango de fechas de abajo; la Renta usa el ejercicio completo.</p>
   {mejora_note}
   {_aviso_linea(data)}
   {_insights_html(data)}
@@ -1843,17 +1920,21 @@ def _insight_rows_json(asientos: list[dict]) -> str:
     for item in asientos:
         if item.get("estado") == "duplicado":
             continue
-        if item.get("tipo") not in {TIPO_GASTO, TIPO_INGRESO}:
+        if item.get("tipo") not in {TIPO_GASTO, TIPO_INGRESO, TIPO_MEJORA}:
             continue
         emisor = item.get("emisor") or ""
         if emisor == "—":
             emisor = ""
+        tipo_iva = item.get("iva_tipo")
         rows.append(
             {
                 "fecha": item.get("fecha") or "",
                 "emisor": emisor,
                 "total": float(q2(item.get("total")) or 0),
                 "tipo": item.get("tipo") or "",
+                "base": float(q2(item.get("base")) or 0),
+                "iva_cuota": float(q2(item.get("iva")) or 0),
+                "iva_tipo": float(tipo_iva) if tipo_iva is not None else None,
             }
         )
     return json.dumps(rows, ensure_ascii=True).replace("<", "\\u003c")
@@ -1878,10 +1959,12 @@ def _insights_html(data: dict) -> str:
     <label>Hasta <input id="insight-hasta" type="date"></label>
     <label>Nombre <input id="insight-range-name" type="text" maxlength="40" placeholder="Agosto" autocomplete="off"></label>
     <button type="button" class="ghost" id="insight-range-save">Guardar rango</button>
-    <div class="insight-presets" id="insight-presets"></div>
+    <div class="insight-presets insight-trims" id="insight-trims"></div>
+  <div class="insight-presets" id="insight-presets"></div>
   </div>
   {frase_html}
   {_charts(data)}
+  {_iva_html(data)}
   <template id="insight-rows">{_insight_rows_json(data["asientos"])}</template>
 </section>
 """
@@ -1898,6 +1981,41 @@ def _charts(data: dict) -> str:
     <figcaption>Por emisor</figcaption>
     <div id="insight-emisor">{_svg_emisores(_emisores_para_grafico(data["asientos"]))}</div>
   </figure>
+</section>
+"""
+
+
+def _iva_html(data: dict) -> str:
+    filas = data.get("iva_tipos") or []
+    if filas:
+        body = "".join(
+            f'<tr><td>{escape(item["label"])}</td>'
+            f'<td class="num">{escape(format_euro(item["base"]))}</td>'
+            f'<td class="num">{escape(format_euro(item["cuota"]))}</td>'
+            f'<td class="num">{escape(format_euro(item["total"]))}</td></tr>'
+            for item in filas
+        )
+    else:
+        body = '<tr class="iva-vacia"><td colspan="4">Sin IVA registrado.</td></tr>'
+    return f"""
+<section class="iva-block insight-block" id="iva-soportado" aria-labelledby="iva-titulo">
+  <div class="review-head">
+    <h2 id="iva-titulo">IVA soportado</h2>
+    <p>Base, cuota y total de gastos y mejoras por tipo de IVA. Apunta al borrador 303.</p>
+  </div>
+  <div class="table-wrap">
+    <table class="iva-tabla" id="iva-tabla">
+      <thead>
+        <tr>
+          <th scope="col"><span class="th-label">Tipo</span></th>
+          <th scope="col" class="num"><span class="th-label">Base</span></th>
+          <th scope="col" class="num"><span class="th-label">Cuota</span></th>
+          <th scope="col" class="num"><span class="th-label">Total</span></th>
+        </tr>
+      </thead>
+      <tbody>{body}</tbody>
+    </table>
+  </div>
 </section>
 """
 
@@ -2020,7 +2138,7 @@ def _irpf_html(data: dict) -> str:
 <section class="irpf insight-block" id="irpf" aria-labelledby="insight-renta">
   <div class="review-head">
     <h2 id="insight-renta">Renta</h2>
-    <p>Como iría en la Renta. Borrador para copiar a la declaración. Hacienda no recibe este HTML.</p>
+    <p>Como iría en la Renta con el <strong>ejercicio completo</strong>. Borrador para copiar a la declaración. Hacienda no recibe este HTML.</p>
   </div>
   <div class="irpf-kpis">
     <article><span>Ingresos íntegros</span><strong>{escape(format_euro(irpf["ingresos"]))}</strong></article>
@@ -2159,7 +2277,14 @@ def _filter_date_range() -> str:
 <label class="filter-field">Hasta
   <input id="f-hasta" type="date">
 </label>
-<p class="filter-hint">Un solo lado vale: desde esa fecha, o hasta esa fecha. Vacío = sin tope.</p>
+<div class="filter-trims" role="group" aria-label="Trimestres del ejercicio">
+  <button type="button" class="filter-trim" data-trim="1">T1</button>
+  <button type="button" class="filter-trim" data-trim="2">T2</button>
+  <button type="button" class="filter-trim" data-trim="3">T3</button>
+  <button type="button" class="filter-trim" data-trim="4">T4</button>
+</div>
+<p class="filter-hint">Un solo lado vale: desde esa fecha, o hasta esa fecha. Vacío = sin tope.
+T1–T4 rellenan el trimestre del ejercicio (pulsa otra vez para quitarlo).</p>
 """
 
 
@@ -2887,6 +3012,22 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   cursor: pointer;
 }
 .insight-preset.is-on { border-color: var(--ink); background: var(--paper); }
+.insight-trims { width: auto; }
+.filter-trims { display: flex; gap: 6px; }
+.filter-trim {
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.filter-trim.is-on { border-color: var(--ink); background: var(--paper); }
+.iva-tabla { width: 100%; border-collapse: collapse; background: #fff; }
+.iva-tabla th, .iva-tabla td { border: 1px solid var(--line); padding: 6px 10px; font-size: 13px; text-align: left; }
+.iva-tabla th { background: var(--paper); font-size: 12px; color: var(--muted); }
+.iva-tabla .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.iva-vacia td { color: var(--muted); font-style: italic; }
 .insight-frase {
   margin: 14px 0 4px;
   font: 600 22px/1.3 Palatino, "Iowan Old Style", serif;
@@ -4134,6 +4275,7 @@ _JS = r"""
     if (fMax) fMax.value = "";
     if (fDesde) fDesde.value = "";
     if (fHasta) fHasta.value = "";
+    for (const button of document.querySelectorAll(".filter-trim")) button.classList.remove("is-on");
     const irpfMin = document.getElementById("f-irpf-min");
     const irpfMax = document.getElementById("f-irpf-max");
     if (irpfMin) irpfMin.value = "";
@@ -4215,10 +4357,37 @@ _JS = r"""
   input?.addEventListener("input", apply);
   fMin?.addEventListener("input", apply);
   fMax?.addEventListener("input", apply);
-  fDesde?.addEventListener("input", apply);
-  fDesde?.addEventListener("change", apply);
-  fHasta?.addEventListener("input", apply);
-  fHasta?.addEventListener("change", apply);
+  const clearTrimMarks = () => {
+    for (const button of document.querySelectorAll(".filter-trim")) button.classList.remove("is-on");
+  };
+  fDesde?.addEventListener("input", () => { clearTrimMarks(); apply(); });
+  fDesde?.addEventListener("change", () => { clearTrimMarks(); apply(); });
+  fHasta?.addEventListener("input", () => { clearTrimMarks(); apply(); });
+  fHasta?.addEventListener("change", () => { clearTrimMarks(); apply(); });
+  const trimBounds = {
+    1: ["01-01", "03-31"],
+    2: ["04-01", "06-30"],
+    3: ["07-01", "09-30"],
+    4: ["10-01", "12-31"],
+  };
+  for (const button of document.querySelectorAll(".filter-trim")) {
+    button.addEventListener("click", () => {
+      const bounds = trimBounds[button.dataset.trim];
+      if (!bounds) return;
+      const anio = String(document.body.dataset.year || "");
+      if (button.classList.contains("is-on")) {
+        if (fDesde) fDesde.value = "";
+        if (fHasta) fHasta.value = "";
+        button.classList.remove("is-on");
+      } else {
+        if (fDesde) fDesde.value = `${anio}-${bounds[0]}`;
+        if (fHasta) fHasta.value = `${anio}-${bounds[1]}`;
+        clearTrimMarks();
+        button.classList.add("is-on");
+      }
+      apply();
+    });
+  }
   document.getElementById("f-irpf-min")?.addEventListener("input", apply);
   document.getElementById("f-irpf-max")?.addEventListener("input", apply);
   fClear?.addEventListener("click", clearAdvanced);
@@ -4848,6 +5017,76 @@ _JS = r"""
     const month0 = insightMonth.innerHTML;
     const emisor0 = insightEmisor.innerHTML;
     const frase0 = insightFrase.textContent;
+    const kpiHint = document.getElementById("insight-kpi-hint");
+    const kpiIds = { gasto: "insight-kpi-gastos", ingreso: "insight-kpi-ingresos", mejora: "insight-kpi-mejoras" };
+    const kpiEls = {};
+    const kpi0 = {};
+    Object.entries(kpiIds).forEach(([tipo, id]) => {
+      const el = document.getElementById(id);
+      if (el) { kpiEls[tipo] = el; kpi0[tipo] = el.textContent; }
+    });
+    const netoEl = document.getElementById("insight-kpi-neto");
+    const neto0 = netoEl ? netoEl.textContent : "";
+    const paintKpis = (rows) => {
+      const sums = { gasto: 0, ingreso: 0, mejora: 0 };
+      for (const row of rows) if (row.tipo in sums) sums[row.tipo] += row.total || 0;
+      for (const [tipo, el] of Object.entries(kpiEls)) el.textContent = formatEuro(sums[tipo]);
+      if (netoEl) netoEl.textContent = formatEuro(sums.ingreso - sums.gasto);
+    };
+    const restoreKpis = () => {
+      for (const [tipo, el] of Object.entries(kpiEls)) el.textContent = kpi0[tipo];
+      if (netoEl) netoEl.textContent = neto0;
+    };
+    const ivaBody = document.querySelector("#iva-tabla tbody");
+    const ivaOrder = ["21", "10", "4", "0", "otros", "sin"];
+    const ivaLabels = { "21": "21 %", "10": "10 %", "4": "4 %", "0": "0 %", otros: "Otros tipos", sin: "Sin tipo" };
+    const ivaKey = (tipo) => {
+      if (tipo === null || tipo === undefined) return "sin";
+      const key = String(Math.round(tipo));
+      return ["21", "10", "4", "0"].includes(key) ? key : "otros";
+    };
+    const paintIva = (rows) => {
+      if (!ivaBody) return;
+      const buckets = new Map();
+      for (const row of rows) {
+        if (row.tipo !== "gasto" && row.tipo !== "mejora") continue;
+        const key = ivaKey(row.iva_tipo);
+        const cur = buckets.get(key) || { label: ivaLabels[key], base: 0, cuota: 0, total: 0 };
+        cur.base += row.base || 0;
+        cur.cuota += row.iva_cuota || 0;
+        cur.total += row.total || 0;
+        buckets.set(key, cur);
+      }
+      const keys = ivaOrder.filter((key) => buckets.has(key));
+      if (!keys.length) {
+        ivaBody.innerHTML = '<tr class="iva-vacia"><td colspan="4">Sin IVA registrado en este rango.</td></tr>';
+        return;
+      }
+      ivaBody.innerHTML = keys.map((key) => {
+        const item = buckets.get(key);
+        return `<tr><td>${esc(item.label)}</td><td class="num">${esc(formatEuro(item.base))}</td><td class="num">${esc(formatEuro(item.cuota))}</td><td class="num">${esc(formatEuro(item.total))}</td></tr>`;
+      }).join("");
+    };
+    const trimsEl = document.getElementById("insight-trims");
+    const anio = String(document.body.dataset.year || "");
+    const trims = [["T1", "01-01", "03-31"], ["T2", "04-01", "06-30"], ["T3", "07-01", "09-30"], ["T4", "10-01", "12-31"]];
+    const paintTrims = (activeName) => {
+      if (!trimsEl) return;
+      trimsEl.replaceChildren();
+      for (const [name, desde, hasta] of trims) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "insight-preset" + (name === activeName ? " is-on" : "");
+        button.textContent = name;
+        button.setAttribute("aria-label", `Trimestre ${name.slice(1)} (${desde} → ${hasta})`);
+        button.addEventListener("click", () => {
+          if (desdeEl) desdeEl.value = `${anio}-${desde}`;
+          if (hastaEl) hastaEl.value = `${anio}-${hasta}`;
+          applyRange(name);
+        });
+        trimsEl.appendChild(button);
+      }
+    };
     const corto = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
     const largo = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
     const desdeEl = document.getElementById("insight-desde");
@@ -5024,11 +5263,15 @@ _JS = r"""
         toast("La fecha desde es posterior a hasta.");
         return;
       }
+      if (kpiHint) kpiHint.hidden = !desde && !hasta;
       if (!desde && !hasta) {
         insightMonth.innerHTML = month0;
         insightEmisor.innerHTML = emisor0;
         insightFrase.textContent = frase0;
         insightFrase.hidden = !frase0;
+        restoreKpis();
+        paintIva(source);
+        paintTrims("");
         paintPresets("");
         return;
       }
@@ -5037,6 +5280,9 @@ _JS = r"""
       insightEmisor.innerHTML = svgEmisores(rows);
       insightFrase.hidden = false;
       insightFrase.textContent = fraseDe(rows);
+      paintKpis(rows);
+      paintIva(rows);
+      paintTrims(activeName);
       paintPresets(activeName);
     };
     document.getElementById("insight-range-all")?.addEventListener("click", () => {
@@ -5066,6 +5312,7 @@ _JS = r"""
       if (nameEl) nameEl.value = "";
       applyRange(name);
     });
+    paintTrims("");
     paintPresets("");
   }
   } catch (err) {

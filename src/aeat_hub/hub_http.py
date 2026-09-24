@@ -22,6 +22,14 @@ from aeat_hub.paths import DataLayout
 from aeat_hub.services import patch_expediente
 
 
+def _regenerar_libro(session, layout: DataLayout, actividad: Actividad, year: int, body: dict) -> None:
+    """Regenera el libro tras un cambio ya salvado: nunca puede tumbar la corrección."""
+    try:
+        write_dashboard(session, layout, actividad, year)
+    except Exception as err:  # noqa: BLE001 - p. ej. el XLSX bloqueado por Excel
+        body["libro"] = f"no regenerado ({err})"
+
+
 class HubHandler(BaseHTTPRequestHandler):
     layout: DataLayout
     factory = None
@@ -88,13 +96,17 @@ class HubHandler(BaseHTTPRequestHandler):
             with session_scope(self.factory) as session:
                 asiento = patch_asiento(session, asiento_id, payload)
                 session.flush()
-                actividad = session.get(Actividad, asiento.actividad_id)
-                if actividad is not None and asiento.ejercicio:
-                    write_dashboard(session, self.layout, actividad, asiento.ejercicio)
+                session.commit()
                 body = _asiento_json(session, asiento)
                 body["ok"] = True
+                actividad = session.get(Actividad, asiento.actividad_id)
+                if actividad is not None and asiento.ejercicio:
+                    _regenerar_libro(session, self.layout, actividad, asiento.ejercicio, body)
         except AsientoNoEncontrado:
             self.send_error(404, "Asiento no encontrado")
+            return
+        except (ValueError, RuntimeError) as err:
+            self._send_json(400, {"ok": False, "error": str(err)})
             return
         self._send_json(200, body)
 
@@ -109,12 +121,14 @@ class HubHandler(BaseHTTPRequestHandler):
         try:
             with session_scope(self.factory) as session:
                 body = patch_expediente(session, codigo, payload)
+                session.flush()
+                session.commit()
                 actividad = session.scalar(select(Actividad).where(Actividad.codigo == codigo))
-                if actividad is not None and year:
-                    write_dashboard(session, self.layout, actividad, year)
                 body["ok"] = True
                 body["regimen_label"] = REGIMEN_LABEL.get(body.get("regimen", ""), body.get("regimen", ""))
-        except RuntimeError as err:
+                if actividad is not None and year:
+                    _regenerar_libro(session, self.layout, actividad, year, body)
+        except (RuntimeError, ValueError) as err:
             self._send_json(400, {"ok": False, "error": str(err)})
             return
         self._send_json(200, body)

@@ -69,3 +69,7 @@ hf_cache/
 
 # Sesiones locales de bocetos (llevan la clave de la sesión)
 .superpowers/
+
+# ZCode (sesiones locales de la herramienta)
+.zcode/
+.zcodeignore

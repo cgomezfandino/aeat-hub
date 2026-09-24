@@ -6,6 +6,7 @@ import json
 from datetime import date
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aeat_hub.classify import _apply_cuenta, reabrir_asiento, validar_asiento
@@ -14,7 +15,7 @@ from aeat_hub.extract.parser import parse_invoice
 from aeat_hub.extract.schema import InvoiceExtract, InvoiceLine
 from aeat_hub.fiscal.money import parse_amount, q2
 from aeat_hub.fiscal.nif import normalize_nif
-from aeat_hub.models import Actividad, Asiento, Cambio, Cuenta, Factura
+from aeat_hub.models import Actividad, Asiento, Cambio, Cuenta, Factura, Linea
 from aeat_hub.services import get_cuenta_por_nombre
 
 ZERO = Decimal("0.00")
@@ -125,6 +126,7 @@ def patch_asiento(session: Session, asiento_id: int, payload: dict) -> Asiento:
                 factura.base = asiento.base
             if "iva_cuota" in payload:
                 factura.iva_cuota = asiento.iva_cuota
+            if ("base" in payload or "iva_cuota" in payload) and asiento.iva_tipo is not None:
                 factura.iva_tipo = asiento.iva_tipo
             if "total" in payload:
                 factura.total = asiento.total
@@ -190,13 +192,6 @@ def _aplicar_rubro(session: Session, asiento: Asiento, raw: object) -> bool:
 
 
 def _guardar_lineas(session: Session, asiento: Asiento, payload: list) -> bool:
-    documento = asiento.documento
-    if documento is None:
-        return False
-    try:
-        extract = InvoiceExtract.model_validate_json(documento.json_extraido or "{}")
-    except (ValueError, TypeError, json.JSONDecodeError):
-        extract = InvoiceExtract()
     nuevas: list[InvoiceLine] = []
     for idx, item in enumerate(payload, start=1):
         if not isinstance(item, dict):
@@ -221,7 +216,7 @@ def _guardar_lineas(session: Session, asiento: Asiento, payload: list) -> bool:
                 importe=importe,
             )
         )
-    antes = _serialize_lineas(extract.lineas)
+    antes = lineas_de_asiento(asiento)
     despues = _serialize_lineas(nuevas)
     if antes == despues:
         return False
@@ -232,9 +227,63 @@ def _guardar_lineas(session: Session, asiento: Asiento, payload: list) -> bool:
         f"{len(antes)} líneas",
         f"{len(despues)} líneas",
     )
-    extract.lineas = nuevas
-    documento.json_extraido = extract.model_dump_json()
+    replace_lineas(session, asiento, nuevas)
     return True
+
+
+def replace_lineas(session: Session, asiento: Asiento, lineas: list[InvoiceLine]) -> None:
+    """Escribe las líneas del asiento en la tabla `lineas` (la fuente de verdad).
+
+    El JSON del documento no se toca: guarda la salida del modelo tal cual.
+    """
+    asiento.lineas.clear()
+    for idx, linea in enumerate(lineas, start=1):
+        desc = (linea.descripcion or "").strip()
+        codigo = (linea.codigo or "").strip() or None
+        importe = q2(linea.importe) if linea.importe is not None else None
+        if not desc and not codigo and importe is None:
+            continue
+        asiento.lineas.append(
+            Linea(
+                posicion=linea.posicion or idx,
+                codigo=codigo,
+                descripcion=desc[:200],
+                cantidad=linea.cantidad,
+                base=q2(linea.base) if linea.base is not None else None,
+                iva_tipo=q2(linea.iva_tipo) if linea.iva_tipo is not None else None,
+                iva_cuota=q2(linea.iva_cuota) if linea.iva_cuota is not None else None,
+                importe=importe,
+                eliminada=bool(linea.eliminada),
+            )
+        )
+    session.flush()
+
+
+def backfill_lineas(session: Session) -> int:
+    """Migra a la tabla `lineas` los desgloses que vivían en el JSON del documento."""
+    rows = session.scalars(
+        select(Asiento).where(Asiento.documento_id.is_not(None))
+    ).all()
+    if not rows:
+        return 0
+    tienen = set(
+        session.scalars(
+            select(Linea.asiento_id).where(Linea.asiento_id.in_([row.id for row in rows]))
+        )
+    )
+    created = 0
+    for asiento in rows:
+        if asiento.id in tienen:
+            continue
+        documento = asiento.documento
+        if documento is None:
+            continue
+        lineas = _lineas_de_documento(documento)
+        if not lineas:
+            continue
+        replace_lineas(session, asiento, lineas)
+        created += 1
+    return created
 
 
 def _totales_desde_lineas(session: Session, asiento: Asiento) -> None:
@@ -299,27 +348,50 @@ def _fmt_cantidad(value: Decimal | None) -> str | None:
 
 
 def lineas_de_asiento(asiento: Asiento) -> list[dict]:
-    """Líneas de rubro extraídas (JSON OCR) o heurística sobre el texto crudo."""
+    """Líneas actuales del asiento.
+
+    La tabla `lineas` manda; si aún no tiene filas (datos previos a la tabla),
+    se leen del documento como legado: JSON del extracto o heurística OCR.
+    """
+    rows = list(asiento.lineas)
+    if rows:
+        return [_linea_row_to_dict(row) for row in rows]
     documento = asiento.documento
     if documento is None:
         return []
-    items = _lineas_from_json(documento.json_extraido)
-    if items:
-        return items
+    return _serialize_lineas(_lineas_de_documento(documento))
+
+
+def _lineas_de_documento(documento) -> list[InvoiceLine]:
+    try:
+        extract = InvoiceExtract.model_validate_json(documento.json_extraido or "{}")
+        if extract.lineas:
+            return extract.lineas
+    except (ValueError, TypeError, json.JSONDecodeError):
+        pass
     text = (documento.texto_crudo or "").strip()
     if not text:
         return []
-    return _serialize_lineas(parse_invoice(text).lineas)
+    return parse_invoice(text).lineas
 
 
-def _lineas_from_json(raw: str | None) -> list[dict]:
-    if not raw or not raw.strip() or raw.strip() in {"{}", "null"}:
-        return []
-    try:
-        extract = InvoiceExtract.model_validate_json(raw)
-    except (ValueError, TypeError, json.JSONDecodeError):
-        return []
-    return _serialize_lineas(extract.lineas)
+def _linea_row_to_dict(row: Linea) -> dict:
+    importe = q2(row.importe) if row.importe is not None else None
+    base = q2(row.base) if row.base is not None else None
+    iva = q2(row.iva_cuota) if row.iva_cuota is not None else None
+    tipo = q2(row.iva_tipo) if row.iva_tipo is not None else None
+    cantidad = None if row.cantidad is None else _fmt_cantidad(row.cantidad)
+    return {
+        "descripcion": (row.descripcion or "").strip()[:200],
+        "codigo": (row.codigo or "").strip() or None,
+        "posicion": row.posicion,
+        "cantidad": cantidad,
+        "importe": None if importe is None else f"{importe:.2f}",
+        "base": None if base is None else f"{base:.2f}",
+        "iva_cuota": None if iva is None else f"{iva:.2f}",
+        "iva_tipo": None if tipo is None else f"{tipo:.2f}",
+        "eliminada": bool(row.eliminada),
+    }
 
 
 def _serialize_lineas(lineas: list[InvoiceLine]) -> list[dict]:

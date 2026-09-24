@@ -8,9 +8,10 @@ from aeat_hub.dashboard import (
     collect_asiento_ficha,
     collect_dashboard,
     render_asiento_page,
+    render_dashboard,
     write_dashboard,
 )
-from aeat_hub.models import Actividad, Asiento
+from aeat_hub.models import Actividad, Asiento, Factura
 
 
 def _seed_asientos(session, actividad):
@@ -532,3 +533,74 @@ def test_emisores_de_gasto_dejan_el_resto_al_final():
     assert [item["label"] for item in chart[:-1]] == [f"Casa {idx}" for idx in range(6)]
     assert chart[-1]["label"] == "Resto"
     assert chart[-1]["total"] == Decimal("14")
+
+
+def test_insights_kpis_iva_trimestres_y_avisos(session, layout):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    sin_fecha = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=None,
+        ejercicio=None,
+        emisor="SIN FECHA SL",
+        total=Decimal("10.00"),
+        estado="pendiente",
+    )
+    session.add(sin_fecha)
+    conflicto = Factura(
+        actividad_id=actividad.id,
+        numero_norm="X1",
+        numero_visible="X-1",
+        estado_er="conflicto",
+        base=Decimal("100.00"),
+        iva_tipo=Decimal("21.00"),
+        iva_cuota=Decimal("21.00"),
+        total=Decimal("121.00"),
+    )
+    session.add(conflicto)
+    session.flush()
+    session.add(
+        Asiento(
+            actividad_id=actividad.id,
+            tipo="gasto",
+            fecha=date(2026, 5, 5),
+            ejercicio=2026,
+            factura_id=conflicto.id,
+            emisor="CONFLICTO SL",
+            base=Decimal("100.00"),
+            iva_tipo=Decimal("21.00"),
+            iva_cuota=Decimal("21.00"),
+            total=Decimal("121.00"),
+            estado="pendiente",
+        )
+    )
+    session.commit()
+
+    data = collect_dashboard(session, actividad, 2026)
+    html = render_dashboard(data)
+
+    assert any(item["label"] == "21 %" for item in data["iva_tipos"])
+    assert "IVA soportado" in html
+    assert 'id="iva-tabla"' in html
+    assert 'id="insight-kpi-gastos"' in html
+    assert 'id="insight-kpi-hint"' in html
+    assert 'id="insight-trims"' in html
+    assert "[\"T1\", \"01-01\", \"03-31\"]" in html
+    assert '"iva_tipo": 21.0' in html
+    assert "ejercicio completo" in html
+    assert data["n_conflictos"] == 1
+    assert "conflicto de agrupación" in html
+    assert any(item["id"] == sin_fecha.id for item in data["sin_fecha"])
+    assert "sin fecha, fuera de todo ejercicio" in html
+    assert f'href="/asiento/{sin_fecha.id}"' in html
+
+
+def test_libro_tiene_botones_de_trimestre(session, layout):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert 'class="filter-trim" data-trim="1"' in html
+    assert 'class="filter-trim" data-trim="4"' in html
+    assert "trimBounds" in html
+    assert 'aria-label="Trimestres del ejercicio"' in html
