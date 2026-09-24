@@ -700,7 +700,8 @@ def test_pestanha_duplicados_y_toggle_del_libro(session, layout):
     assert f'href="/asiento/{dup.id}"' in html
     assert "Nada aquí." in html  # la sección de sospechosos está vacía
 
-    # el Libro oculta duplicados por defecto con toggle explícito
-    assert 'id="toggle-dups"' in html
-    assert "Mostrar duplicados (1)" in html
-    assert "showDups = false" in html
+    # el Libro oculta duplicados por defecto (la pestaña es su sitio);
+    # solo vuelven si se piden a mano desde el embudo de Estado
+    assert 'id="toggle-dups"' not in html
+    assert "Mostrar duplicados" not in html
+    assert 'row.dataset.estado === "duplicado" && !estadoSel' in html

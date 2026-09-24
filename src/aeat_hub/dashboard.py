@@ -2741,7 +2741,6 @@ def _ledger(data: dict) -> str:
     <p class="status" id="status" hidden></p>
     <button type="button" class="ghost" id="f-clear" hidden>Limpiar filtros</button>
     <div class="ledger-actions">
-      <button type="button" class="ghost" id="toggle-dups" aria-pressed="false">Mostrar duplicados ({data["n_duplicados"]})</button>
       <button type="button" class="ghost" id="cols-toggle" popovertarget="pop-cols"
         aria-expanded="false" aria-haspopup="dialog">Columnas</button>
     </div>
@@ -4265,20 +4264,6 @@ _JS = r"""
 
   const groupBoxes = (name) => [...document.querySelectorAll(`input[data-fg="${name}"]`)];
 
-  let showDups = false;
-  const nDups = rows.filter((row) => row.dataset.estado === "duplicado").length;
-  const paintToggleDups = () => {
-    const button = document.getElementById("toggle-dups");
-    if (!button) return;
-    button.textContent = showDups ? `Ocultar duplicados (${nDups})` : `Mostrar duplicados (${nDups})`;
-    button.setAttribute("aria-pressed", showDups ? "true" : "false");
-  };
-  document.getElementById("toggle-dups")?.addEventListener("click", () => {
-    showDups = !showDups;
-    paintToggleDups();
-    apply();
-  });
-
   const selectedValues = (name) => {
     const boxes = groupBoxes(name);
     if (!boxes.length) return null;
@@ -4328,7 +4313,9 @@ _JS = r"""
     if (!matchesGroup("factura", row.dataset.numero)) return false;
     if (!matchesGroup("rubro", row.dataset.cuenta)) return false;
     const estadoSel = selectedValues("estado");
-    if (!showDups && row.dataset.estado === "duplicado" && !estadoSel) return false;
+    // Los duplicados viven en su pestaña; solo se ven si se piden a mano
+    // desde el embudo de Estado.
+    if (row.dataset.estado === "duplicado" && !estadoSel) return false;
     if (estadoSel && !estadoSel.has(row.dataset.tipo) && !estadoSel.has(row.dataset.estado)) return false;
     const confSel = selectedValues("confianza");
     if (confSel && !confSel.has(confianzaKey(row))) return false;
