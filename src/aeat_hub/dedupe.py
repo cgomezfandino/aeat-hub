@@ -7,10 +7,11 @@ from datetime import timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from aeat_hub.extract.ids import normalize_emisor, normalize_numero
 from aeat_hub.extract.schema import InvoiceExtract
+from aeat_hub.fiscal.money import q2
 from aeat_hub.fiscal.nif import normalize_nif
 from aeat_hub.media import hamming_distance
 from aeat_hub.models import Asiento, Documento
@@ -188,4 +189,74 @@ def _phash_match(session: Session, phash: str, exclude_asiento_id: int | None) -
                 doc.id,
                 "imagen casi idéntica (phash)",
             )
+    return None
+
+
+def candidatos_duplicado(session: Session, asiento: Asiento) -> list[dict]:
+    """Gemelos evidentes de un asiento para la fusión manual.
+
+    Mismo NIF o mismo emisor + mismo importe con fecha ±3 días, o documento
+    casi idéntico por phash. Excluye duplicados confirmados y a sí mismo.
+    """
+    if asiento.estado == "duplicado":
+        return []
+    phash = asiento.documento.phash if asiento.documento else None
+    rows = session.scalars(
+        select(Asiento)
+        .where(
+            Asiento.actividad_id == asiento.actividad_id,
+            Asiento.id != asiento.id,
+            Asiento.estado != "duplicado",
+        )
+        .options(joinedload(Asiento.documento))
+        .order_by(Asiento.id)
+    ).all()
+    out: list[dict] = []
+    for row in rows:
+        motivo = _motivo_gemelo(asiento, row, phash)
+        if motivo:
+            out.append(
+                {
+                    "id": row.id,
+                    "emisor": row.emisor or "sin emisor",
+                    "numero": row.numero_factura or "—",
+                    "fecha": row.fecha.isoformat() if row.fecha else "—",
+                    "total": row.total,
+                    "motivo": motivo,
+                }
+            )
+    return out
+
+
+def _motivo_gemelo(asiento: Asiento, row: Asiento, phash: str | None) -> str | None:
+    gemelo_phash = bool(
+        phash
+        and row.documento
+        and row.documento.phash
+        and hamming_distance(phash, row.documento.phash) <= PHASH_THRESHOLD
+    )
+    importes_iguales = (
+        asiento.total is not None
+        and row.total is not None
+        and q2(asiento.total) == q2(row.total)
+    )
+    if gemelo_phash:
+        return "imagen casi idéntica (phash)"
+    if not importes_iguales:
+        return None
+    ventana = (
+        asiento.fecha is not None
+        and row.fecha is not None
+        and abs((asiento.fecha - row.fecha).days) <= 3
+    )
+    if not ventana:
+        return None
+    nif = asiento.nif_emisor and row.nif_emisor == asiento.nif_emisor
+    emisor = normalize_emisor(asiento.emisor) and (
+        normalize_emisor(asiento.emisor) == normalize_emisor(row.emisor)
+    )
+    if nif:
+        return "mismo NIF + importe ±3 días"
+    if emisor:
+        return "mismo emisor + importe ±3 días"
     return None

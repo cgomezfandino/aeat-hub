@@ -12,6 +12,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from aeat_hub.dedupe import candidatos_duplicado
 from aeat_hub.er import counts_por_factura, estados_er_por_factura
 from aeat_hub.edits import articulos_label, lineas_de_asiento, parse_money_field
 from aeat_hub.fiscal.accounts import (
@@ -212,6 +213,11 @@ def collect_asiento_ficha(session: Session, asiento: Asiento, *, dashboard_name:
     logs = session.scalars(
         select(Cambio).where(Cambio.asiento_id == asiento.id).order_by(Cambio.id.desc())
     ).all()
+    sugeridos = (
+        candidatos_duplicado(session, asiento)
+        if asiento.estado != "duplicado"
+        else []
+    )
     back = f"/{dashboard_name}" if dashboard_name else "/"
     back = f"{back}#asiento-{asiento.id}"
     return {
@@ -224,6 +230,7 @@ def collect_asiento_ficha(session: Session, asiento: Asiento, *, dashboard_name:
         "lineas_suma": suma,
         "lineas_ok": lineas_ok,
         "dashboard_href": back,
+        "duplicados_sugeridos": sugeridos,
         "cambios": [
             {
                 "campo": item.campo,
@@ -319,6 +326,39 @@ def render_asiento_page(data: dict) -> str:
             '<button type="button" class="ghost" id="ficha-dup-marcar">Marcar duplicado de…</button>'
             "</div>"
         )
+    sugeridos = data.get("duplicados_sugeridos") or []
+    if sugeridos:
+        opciones = "".join(
+            '<label class="filter-opt dup-opt">'
+            f'<input type="radio" name="dup-candidato" value="{item["id"]}">'
+            f'<span>#{item["id"]} · {escape(item["emisor"])} · {escape(item["numero"])} · '
+            f'{escape(item["fecha"])} · {escape(format_euro(item["total"]))} '
+            f"<em>— {escape(item['motivo'])}</em></span></label>"
+            for item in sugeridos
+        )
+        hint_sug = "Coincidencias evidentes encontradas:"
+    else:
+        opciones = (
+            '<p class="filter-empty">Sin coincidencias evidentes. Indica el id a mano.</p>'
+        )
+        hint_sug = "Comprobados mismo NIF o emisor + importe ±3 días, y imagen casi idéntica."
+    dup_dialog = (
+        '<dialog class="edit-dialog" id="ficha-dup-dialog" aria-labelledby="ficha-dup-title">'
+        f'<h2 id="ficha-dup-title">Marcar duplicado del asiento #{data["id"]}</h2>'
+        '<p class="hint">Elige el asiento bueno: este queda como duplicado y sale de los totales. '
+        "Puedes deshacerlo después.</p>"
+        f"<p class=\"hint\"><strong>{hint_sug}</strong></p>"
+        f'<div class="dup-lista">{opciones}'
+        '<label class="filter-opt dup-opt">'
+        '<input type="radio" name="dup-candidato" value="manual">'
+        "<span>Otro id</span> "
+        '<input id="dup-manual" type="number" min="1" placeholder="Id" class="dup-manual">'
+        "</label></div>"
+        '<div class="edit-actions">'
+        '<button type="button" class="ghost" id="ficha-dup-cancel">Cancelar</button>'
+        '<button type="button" class="export-btn" id="ficha-dup-ok" disabled>Fusionar</button>'
+        "</div></dialog>"
+    )
     return (
         "<!DOCTYPE html>\n"
         '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
@@ -396,6 +436,7 @@ def render_asiento_page(data: dict) -> str:
         '<button type="submit" class="ghost" value="cancel">Cancelar</button>'
         '<button type="submit" class="export-btn" id="app-confirm-ok" value="ok">Aceptar</button>'
         "</div></form></dialog>\n"
+        f"{dup_dialog}\n"
         f"{_ficha_lines_script()}\n"
         f"{_ficha_filter_script()}\n"
         '<dialog class="edit-dialog ficha-log-dialog" id="ficha-log-dialog" aria-labelledby="ficha-log-title">'
@@ -424,13 +465,37 @@ def render_asiento_page(data: dict) -> str:
         "      alert(\"No se pudo guardar: \" + err.message);\n"
         "    }\n"
         "  };\n"
+        "  const dialog = document.getElementById(\"ficha-dup-dialog\");\n"
+        "  const okBtn = document.getElementById(\"ficha-dup-ok\");\n"
+        "  const manualEl = document.getElementById(\"dup-manual\");\n"
+        "  const elegido = () => {\n"
+        "    const sel = dialog?.querySelector(\"input[name='dup-candidato']:checked\");\n"
+        "    if (!sel) return \"\";\n"
+        "    return sel.value === \"manual\" ? (manualEl?.value || \"\").trim() : sel.value;\n"
+        "  };\n"
+        "  const syncOk = () => {\n"
+        "    const value = elegido();\n"
+        "    const valido = /^\\d+$/.test(value) && value !== id;\n"
+        "    if (okBtn) okBtn.disabled = !valido;\n"
+        "    if (manualEl) manualEl.disabled = !dialog?.querySelector(\"input[name='dup-candidato'][value='manual']\").checked;\n"
+        "  };\n"
+        "  dialog?.addEventListener(\"change\", syncOk);\n"
+        "  manualEl?.addEventListener(\"input\", syncOk);\n"
         "  document.getElementById(\"ficha-dup-marcar\")?.addEventListener(\"click\", () => {\n"
-        "    const gemelo = window.prompt(\"Id del asiento bueno (el duplicado apunta a él):\");\n"
-        "    if (!gemelo) return;\n"
-        "    const limpio = gemelo.trim();\n"
-        "    if (!/^\\d+$/.test(limpio)) { alert(\"Escribe el id numérico del asiento bueno.\"); return; }\n"
-        "    if (limpio === id) { alert(\"Un asiento no puede ser duplicado de sí mismo.\"); return; }\n"
-        "    postDup({ duplicado_de: limpio, confirmado: true });\n"
+        "    if (!dialog?.querySelector(\"input[name='dup-candidato']:checked\")) {\n"
+        "      const manual = dialog?.querySelector(\"input[name='dup-candidato'][value='manual']\");\n"
+        "      if (manual) manual.checked = true;\n"
+        "    }\n"
+        "    syncOk();\n"
+        "    manualEl && !manualEl.disabled && manualEl.focus();\n"
+        "    dialog?.showModal();\n"
+        "  });\n"
+        "  document.getElementById(\"ficha-dup-cancel\")?.addEventListener(\"click\", () => dialog?.close());\n"
+        "  okBtn?.addEventListener(\"click\", () => {\n"
+        "    const value = elegido();\n"
+        "    if (!/^\\d+$/.test(value)) { alert(\"Escribe el id numérico del asiento bueno.\"); return; }\n"
+        "    if (value === id) { alert(\"Un asiento no puede ser duplicado de sí mismo.\"); return; }\n"
+        "    postDup({ duplicado_de: value, confirmado: true });\n"
         "  });\n"
         "  document.getElementById(\"ficha-dup-quitar\")?.addEventListener(\"click\", () => {\n"
         "    postDup({ quitar_duplicado: true, confirmado: true });\n"
@@ -3061,6 +3126,11 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .filter-trims { display: flex; gap: 6px; }
 .ficha-dup { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .ficha-dup .hint { margin: 0; }
+.dup-lista { display: grid; gap: 6px; margin: 10px 0; max-height: 45vh; overflow-y: auto; }
+.dup-opt { align-items: center; }
+.dup-opt em { color: var(--muted); font-style: normal; font-size: 12px; }
+.dup-manual { width: 90px; font: inherit; padding: 4px 8px; border: 1px solid var(--line); margin-left: 6px; }
+.dup-manual:disabled { opacity: .5; }
 .filter-trim {
   border: 1px solid var(--line);
   background: #fff;

@@ -637,3 +637,35 @@ def test_ficha_tiene_botones_de_duplicado(session, layout):
     assert 'id="ficha-dup-quitar"' in html
     assert f"duplicado del asiento #{gemelo.id}" in html
     assert data["duplicado_de_id"] == gemelo.id
+
+
+def test_ficha_dialogo_duplicado_con_sugerencias(session, layout):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    asiento = session.scalars(
+        select(Asiento).where(Asiento.emisor == "IBERDROLA DEMO")
+    ).first()
+    gemelo = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        cuenta_codigo="CI.GAS.LUZ",
+        fecha=date(2026, 3, 11),
+        ejercicio=2026,
+        emisor="IBERDROLA DEMO",
+        nif_emisor="B12345674",
+        numero_factura="F2",
+        base=Decimal("40.00"),
+        iva_cuota=Decimal("8.40"),
+        total=Decimal("48.40"),
+        estado="pendiente",
+    )
+    session.add(gemelo)
+    session.commit()
+
+    data = collect_asiento_ficha(session, asiento, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html = render_asiento_page(data)
+    assert 'id="ficha-dup-dialog"' in html
+    assert "Coincidencias evidentes encontradas" in html
+    assert f'value="{gemelo.id}"' in html
+    assert "importe ±3 días" in html
+    assert "window.prompt" not in html

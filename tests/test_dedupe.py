@@ -164,3 +164,52 @@ def test_dedupe_emisor_usa_la_normalizacion_unica(session):
         total=Decimal("99.00"),
     )
     assert find_duplicate(session, actividad_id=actividad.id, extract=distinto, phash=None) is None
+
+
+def test_candidatos_duplicado_sugiere_el_gemelo_evidente(session):
+    from aeat_hub.dedupe import candidatos_duplicado
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    bueno = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=date(2026, 9, 9),
+        ejercicio=2026,
+        emisor="IKEA IBÉRICA S.A.",
+        nif_emisor="A28812618",
+        numero_factura="ESCINV-1",
+        total=Decimal("190.75"),
+        estado="confirmado",
+    )
+    gemelo = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=date(2026, 9, 9),
+        ejercicio=2026,
+        emisor="IKEA Ibérica S.A.",
+        numero_factura="ESSIM-1",
+        total=Decimal("190.75"),
+        estado="pendiente",
+    )
+    session.add_all([bueno, gemelo])
+    session.commit()
+
+    sugeridos = candidatos_duplicado(session, gemelo)
+    assert len(sugeridos) == 1
+    assert sugeridos[0]["id"] == bueno.id
+    assert "emisor" in sugeridos[0]["motivo"]
+
+    # comprado con total distinto no es gemelo
+    otro = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=date(2026, 9, 10),
+        ejercicio=2026,
+        emisor="IKEA IBÉRICA S.A.",
+        nif_emisor="A28812618",
+        total=Decimal("55.00"),
+        estado="confirmado",
+    )
+    session.add(otro)
+    session.commit()
+    assert candidatos_duplicado(session, otro) == []
