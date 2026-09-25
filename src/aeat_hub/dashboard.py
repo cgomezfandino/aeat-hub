@@ -2160,14 +2160,17 @@ def _panel_duplicados(data: dict) -> str:
     {_tabla(sospechosos, "Sospechosos pendientes")}
   </section>
   <dialog class="edit-dialog" id="dup-gestor" aria-labelledby="dup-gestor-title">
-    <h2 id="dup-gestor-title">Gestionar duplicado</h2>
-    <p class="hint" id="dup-gestor-motivo"></p>
-    <div class="dup-par" id="dup-gestor-par"></div>
-    <div class="edit-actions">
-      <a class="ghost" id="dup-gestor-ficha" target="_blank" rel="noopener">Abrir ficha</a>
-      <button type="button" class="export-btn" id="dup-gestor-fusionar" hidden>Fusionar</button>
-      <button type="button" class="ghost" id="dup-gestor-quitar" hidden>Quitar duplicado</button>
-      <button type="button" class="ghost" id="dup-gestor-cerrar">Cerrar</button>
+    <div class="dup-gestor-cuerpo">
+      <p class="dup-gestor-eyebrow" id="dup-gestor-eyebrow">Duplicado</p>
+      <h2 id="dup-gestor-title">Gestionar duplicado</h2>
+      <p class="dup-motivo-caja" id="dup-gestor-motivo"></p>
+      <div class="dup-par" id="dup-gestor-par"></div>
+      <div class="edit-actions">
+        <a class="ghost" id="dup-gestor-ficha" target="_blank" rel="noopener">Abrir ficha</a>
+        <button type="button" class="export-btn" id="dup-gestor-fusionar" hidden>Fusionar</button>
+        <button type="button" class="ghost" id="dup-gestor-quitar" hidden>Quitar duplicado</button>
+        <button type="button" class="ghost" id="dup-gestor-cerrar">Cerrar</button>
+      </div>
     </div>
   </dialog>
   {_footer(data)}
@@ -3325,7 +3328,26 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .dup-tabla tbody tr { cursor: pointer; }
 .dup-tabla tbody tr:hover, .dup-tabla tbody tr:focus { background: var(--paper); outline: none; }
 .dup-abrir { color: var(--muted); text-align: right; width: 24px; }
-#dup-gestor .edit-actions { margin-top: 12px; }
+#dup-gestor .dup-gestor-cuerpo { padding: 18px 18px 16px; }
+#dup-gestor h2 { margin: 0 0 2px; }
+#dup-gestor .dup-gestor-eyebrow { margin: 0; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+#dup-gestor .dup-motivo-caja {
+  border-left: 3px solid var(--line);
+  background: #fff;
+  padding: 8px 12px;
+  margin: 12px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+#dup-gestor .dup-par { align-items: stretch; margin: 0; }
+#dup-gestor .dup-lado { border: 1px solid var(--line); background: #fff; padding: 12px 14px; gap: 3px; }
+#dup-gestor .dup-lado strong { font: 600 20px/1.1 Palatino, serif; }
+#dup-gestor .dup-vinclo { align-self: center; }
+#dup-gestor .edit-actions {
+  border-top: 1px solid var(--line);
+  margin: 16px -18px -16px;
+  padding: 12px 18px 0;
+}
 @media (max-width: 640px) {
   .dup-par { grid-template-columns: 1fr; }
   .dup-vinclo { display: none; }
@@ -4833,7 +4855,7 @@ _JS = r"""
     const lado = (rol, estado, id, emisor, nif, numero, fecha, total) => `
       <div class="dup-lado">
         <p class="dup-rol">${esc(rol)}</p>
-        ${id ? `<a href="/asiento/${id}">Asiento #${id}</a>` : ""}
+        ${id ? `<a href="/asiento/${id}">Asiento #${id}</a>` : "<p class=\"muted\">—</p>"}
         <p class="dup-emisor">${esc(emisor) || "—"}</p>
         <p class="muted">${esc(numero)} · ${esc(fecha)}${nif ? ` · NIF ${esc(nif)}` : ""}</p>
         <p><span class="pill ${esc(estado)}">${estado === "duplicado" ? "Duplicado" : estado === "sospechoso" ? "Sospechoso" : "Asiento"}</span></p>
@@ -4844,6 +4866,8 @@ _JS = r"""
       <div class="dup-vinclo" aria-hidden="true">⇄</div>
       ${lado(d.estado === "duplicado" ? "Asiento bueno" : "Posible gemelo", d.gemelo ? "vivo" : "", d.gemelo, d.gemeloEmisor, d.gemeloNif, d.gemeloNumero, d.gemeloFecha, d.gemeloTotal)}`;
     document.getElementById("dup-gestor-motivo").textContent = d.motivo || "";
+    document.getElementById("dup-gestor-eyebrow").textContent =
+      d.estado === "duplicado" ? "Duplicado fusionado" : "Sospechoso pendiente";
     const btnFusionar = document.getElementById("dup-gestor-fusionar");
     const btnQuitar = document.getElementById("dup-gestor-quitar");
     const ficha = document.getElementById("dup-gestor-ficha");
