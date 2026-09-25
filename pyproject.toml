@@ -20,6 +20,7 @@ dependencies = [
     "python-dateutil>=2.9",
     "rapidocr>=2.0",
     "onnxruntime>=1.18",
+    "cleanco>=2.3",
 ]
 
 [project.optional-dependencies]

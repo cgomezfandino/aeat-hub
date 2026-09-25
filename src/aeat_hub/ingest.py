@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from aeat_hub.classify import classify
 from aeat_hub.dedupe import DuplicateHit, find_duplicate, find_sha_duplicate
 from aeat_hub.edits import replace_lineas
+from aeat_hub.emisores import nombre_canonico_para
 from aeat_hub.er import cluster_documento, save_extraccion
 from aeat_hub.extract.ids import normalize_emisor
 from aeat_hub.extract.parser import parse_invoice
@@ -261,6 +262,21 @@ def ingest_file(
             origen_clasificacion=classification.origen,
             estado="pendiente",
         )
+        canonico = nombre_canonico_para(
+            session, actividad.id, extract.nif_emisor, extract.emisor
+        )
+        if canonico:
+            # la grafía nueva no fragmenta el emisor: adopta la canónica
+            asiento.emisor = canonico
+            asiento.descripcion = _descripcion(
+                extract.model_copy(update={"emisor": canonico}), path
+            )
+            if factura.emisor and factura.emisor != canonico:
+                from aeat_hub.extract.nombres import similitud_nombre
+
+                if similitud_nombre(factura.emisor, canonico) >= 0.85:
+                    factura.emisor = canonico
+                    factura.emisor_norm = normalize_emisor(canonico)
         if conflicto:
             asiento.estado = "pendiente"
         else:

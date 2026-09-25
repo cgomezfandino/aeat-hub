@@ -15,6 +15,7 @@ from aeat_hub import __version__
 from aeat_hub.classify import reabrir_asiento, reclassify, validar_asiento
 from aeat_hub.db import make_engine, session_factory, session_scope
 from aeat_hub.edits import AsientoNoEncontrado, desmarcar_duplicado, marcar_duplicado
+from aeat_hub.emisores import unificar_emisores
 from aeat_hub.evals.gold import load_gold
 from aeat_hub.evals.runner import ENGINE_ORDER, list_engine_status, run_eval
 from aeat_hub.evals.suite import gold_path, load_suite
@@ -422,6 +423,36 @@ def duplicado(
             n = ordenar_asientos(session, layout, actividad)
             if n:
                 console.print(f"Reubicados {n} documentos.")
+
+
+@app.command("emisores")
+def emisores_unificar(
+    actividad: str = typer.Option(..., "--actividad"),
+    umbral: float = typer.Option(0.85, "--umbral", help="Similitud mínima (0-1) para adoptar el nombre canónico"),
+    aplicar: bool = typer.Option(False, "--aplicar", help="Escribe los cambios (sin él, solo preview)"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Unifica las grafías del nombre de un mismo emisor (por NIF)."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    with session_scope(factory) as session:
+        act = get_actividad(session, actividad)
+        propuestas = unificar_emisores(session, act.id, umbral=umbral, aplicar=aplicar)
+        if not propuestas:
+            console.print("Sin variantes de nombre por NIF. Nada que unificar.")
+            return
+        modo = "aplicado" if aplicar else "preview (--aplicar para escribir)"
+        console.print(f"[bold]Nombres canónicos por NIF · {modo}[/bold]")
+        for p in propuestas:
+            marca = "[green]✓[/green]" if p.aplica else "[red]✗[/red]"
+            consolas = ",".join(str(i) for i in p.asientos)
+            console.print(
+                f"{marca} {p.nif} · {p.antes!r} → {p.canonico!r} "
+                f"(sim {p.similitud:.2f}; asientos {consolas}; {p.motivo})"
+            )
+        if aplicar:
+            n = sum(1 for p in propuestas if p.aplica)
+            console.print(f"{n} variantes unificadas. Cambios en el historial con fuente «modelo».")
 
 
 @app.command()

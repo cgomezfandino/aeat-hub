@@ -7,6 +7,7 @@ name = "aeat-hub"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cleanco" },
     { name = "onnxruntime" },
     { name = "openpyxl" },
     { name = "pillow" },
@@ -32,6 +33,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cleanco", specifier = ">=2.3" },
     { name = "onnxruntime", specifier = ">=1.18" },
     { name = "openpyxl", specifier = ">=3.1" },
     { name = "pillow", specifier = ">=10.0" },
@@ -212,6 +214,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/35/4f/b911ed898b26a09789eba9c9200c999aff6c61b4bafaf4838e56d1a1e1a3/charset_normalizer-3.5.1-cp37-abi3-win_amd64.whl", hash = "sha256:70055ff39b97c99e7ae40ea3e393fb62aa2e44dbd9b29f8d14f42fb0025c3959", size = 199764, upload-time = "2026-08-15T08:20:13.908Z" },
     { url = "https://files.pythonhosted.org/packages/f0/a7/920baf467bfd9bf689f3b318340f37aee4572a71f162bd8db51da55ba4fa/charset_normalizer-3.5.1-cp37-abi3-win_arm64.whl", hash = "sha256:87e4f41d375c0b9be2fb5251aee4b8a689169e134535aed81bf085c3b647451e", size = 287318, upload-time = "2026-08-15T08:20:15.551Z" },
     { url = "https://files.pythonhosted.org/packages/cc/61/d01fc49b8dea277640b55a9e15960dbca9fdc8c9fde18e572d39c59f4019/charset_normalizer-3.5.1-py3-none-any.whl", hash = "sha256:6df0ec430f9a831772c23ca5a224cba36517a58a84bb32c32bb59a9fa67c47f6", size = 68658, upload-time = "2026-08-15T08:20:43.306Z" },
+]
+
+[[package]]
+name = "cleanco"
+version = "2.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e9/e1/0b7b567c915ef1d619713b0caee14041536814767bad0c30b5e6542a40c9/cleanco-2.3.tar.gz", hash = "sha256:26b899b2be871be288408205686c5a1dd5f3ab085b709d041a77f3e3049d2961", size = 12311, upload-time = "2024-05-15T16:18:19.314Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/4e/e4a24eec01fbfda0df23582bc9be5d8c32b324d79481edf6d1ff52b03733/cleanco-2.3-py3-none-any.whl", hash = "sha256:7ab4672cdfdabe2375a608686da86005b33df6f347ebf7849c9d0e2651f27e01", size = 11139, upload-time = "2024-05-15T16:18:18.032Z" },
 ]
 
 [[package]]

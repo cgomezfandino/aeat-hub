@@ -93,3 +93,22 @@ El libro y el Excel cuentan asientos, no ficheros. El dashboard muestra un chip 
 Corregir a mano un número mal leído: `aeat-hub factura numero <asiento> <número>`. El HTML sigue sin escribir.
 
 Para fusionar a mano un duplicado evidente sin cambiar el número: `aeat-hub duplicado <duplicado> <bueno>` (y `--quitar` para deshacer). Mueve las evidencias a la factura buena, marca nivel 2 con relación `misma_factura` de fuente `usuario`, lo anota en el historial `Cambio` y reubica el fichero. En la ficha del dashboard: botones **Marcar duplicado de…** / **Quitar duplicado**.
+
+## Nombres canónicos por NIF
+
+Un mismo emisor llega del OCR con grafías distintas («IKEA IBÉRICA S.A., A28812618,»
+frente a «IKEA Ibérica S.A.»). La clave fiscal es el **NIF**: dentro de un
+mismo NIF, los nombres se limpian de formas societarias (cleanco: base
+internacional «según el país» + diccionario español S.A./S.L.U./SOCIEDAD
+LIMITADA…), se comparan por similitud y, si superan el umbral (0,85 por
+defecto), se adopta un **nombre canónico** (el más frecuente; a igualdad, el
+mejor formado y más corto). Nunca se mezclan NIF distintos.
+
+- `aeat-hub emisores --actividad …` → preview de propuestas (dry-run).
+- `aeat-hub emisores --actividad … --aplicar` → unifica asientos y facturas,
+  con anotación en el historial `Cambio` (fuente `modelo`).
+- El ingest adopta automáticamente el canónico conocido del NIF, para que
+  una grafía nueva no fragmente el emisor en Insights ni en el ER.
+- Splink (Fellegi-Sunter en Python puro) queda anotado como camino si algún
+  día se cruza con datasets externos; a escala de un libro local, la
+  similitud determinista + umbral hace el mismo trabajo de forma auditable.

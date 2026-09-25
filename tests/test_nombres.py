@@ -1,0 +1,153 @@
+"""Limpieza y similitud de nombres de emisor; unificación por NIF."""
+
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
+
+from sqlalchemy import select
+
+from aeat_hub.emisores import nombre_canonico_para, unificar_emisores
+from aeat_hub.extract.nombres import (
+    limpiar_nombre,
+    nombre_canonico,
+    similitud_nombre,
+)
+from aeat_hub.models import Actividad, Asiento, Cambio, Factura
+
+
+def test_limpiar_nombre_quita_formas_societarias():
+    assert limpiar_nombre("IKEA IBÉRICA S.A., A28812618,") == "IKEA IBÉRICA"
+    assert limpiar_nombre("BRICOLAJE BRICOMAN,S.L.U.") == "BRICOLAJE BRICOMAN"
+    assert limpiar_nombre("CARPINTERIA VALLADOLID S.L.") == "CARPINTERIA VALLADOLID"
+    assert (
+        limpiar_nombre("MUEBLES DEL SUR SOCIEDAD LIMITADA UNIPERSONAL") == "MUEBLES DEL SUR"
+    )
+    assert limpiar_nombre("ACME GmbH") == "ACME"  # base internacional
+    assert limpiar_nombre("LEROY MERLIN ARROYO") == "LEROY MERLIN ARROYO"
+    assert limpiar_nombre(None) == ""
+
+
+def test_similitud_nombre_tolerante_con_variantes():
+    assert similitud_nombre("IKEA Ibérica S.A.", "IKEA IBÉRICA S.A., A28812618,") >= 0.99
+    assert similitud_nombre("IBERDROLA CLIENTES", "IBERDROLA CLIENTES, S.A.") >= 0.99
+    assert similitud_nombre("IKEA Ibérica S.A.", "LEROY MERLIN ARROYO") < 0.5
+    assert similitud_nombre("IKEA Ibérica S.A.", "") == 0.0
+
+
+def test_nombre_canonico_prefiere_la_mas_frecuente():
+    variantes = [
+        "IKEA IBÉRICA S.A., A28812618,",
+        "IKEA Ibérica S.A.",
+        "IKEA Ibérica S.A.",
+    ]
+    assert nombre_canonico(variantes) == "IKEA Ibérica S.A."
+    assert nombre_canonico([]) is None
+
+
+def _asiento(session, actividad, **kwargs):
+    row = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=date(2026, 9, 9),
+        ejercicio=2026,
+        base=Decimal("10.00"),
+        iva_cuota=Decimal("2.10"),
+        total=Decimal("12.10"),
+        estado="pendiente",
+        **kwargs,
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def test_unificar_emisores_dry_run_y_aplicar(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    a1 = _asiento(session, actividad, emisor="IKEA IBÉRICA S.A., A28812618,", nif_emisor="A28812618")
+    a2 = _asiento(session, actividad, emisor="IKEA Ibérica S.A.", nif_emisor="A28812618")
+    a3 = _asiento(session, actividad, emisor="LEROY MERLIN ARROYO", nif_emisor="B84818442")
+
+    propuestas = unificar_emisores(session, actividad.id)
+    assert len(propuestas) == 1
+    p = propuestas[0]
+    assert p.antes == "IKEA IBÉRICA S.A., A28812618,"
+    assert p.canonico == "IKEA Ibérica S.A."
+    assert p.similitud >= 0.99
+    assert p.aplica is True
+    assert p.asientos == [a1.id]
+    # dry-run: no toca nada
+    session.expire_all()
+    assert session.get(Asiento, a1.id).emisor == "IKEA IBÉRICA S.A., A28812618,"
+
+    unificar_emisores(session, actividad.id, aplicar=True)
+    session.expire_all()
+    assert session.get(Asiento, a1.id).emisor == "IKEA Ibérica S.A."
+    assert session.get(Asiento, a2.id).emisor == "IKEA Ibérica S.A."
+    assert session.get(Asiento, a3.id).emisor == "LEROY MERLIN ARROYO"
+    logs = session.scalars(select(Cambio).where(Cambio.asiento_id == a1.id)).all()
+    assert any(
+        log.campo == "emisor"
+        and log.despues == "IKEA Ibérica S.A."
+        and log.fuente == "modelo"
+        for log in logs
+    )
+
+    # idempotente
+    assert unificar_emisores(session, actividad.id) == []
+
+
+def test_unificar_emisores_respeta_el_umbral(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _asiento(session, actividad, emisor="IKEA IBÉRICA S.A.", nif_emisor="A28812618")
+    _asiento(session, actividad, emisor="TALLERES ISMAR SL", nif_emisor="A28812618")
+
+    propuestas = unificar_emisores(session, actividad.id, aplicar=True)
+    assert len(propuestas) == 1
+    assert propuestas[0].aplica is False
+    rows = session.scalars(
+        select(Asiento).where(Asiento.nif_emisor == "A28812618")
+    ).all()
+    assert sorted(row.emisor for row in rows) == [
+        "IKEA IBÉRICA S.A.",
+        "TALLERES ISMAR SL",
+    ]
+
+
+def test_unificar_emisores_sincroniza_factura(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    factura = Factura(
+        actividad_id=actividad.id,
+        nif_emisor="A28812618",
+        emisor="IKEA IBÉRICA S.A., A28812618,",
+        emisor_norm="IKEA IBÉRICA S.A., A28812618,",
+        numero_norm="X1",
+        numero_visible="X-1",
+        total=Decimal("12.10"),
+    )
+    session.add(factura)
+    session.flush()
+    _asiento(
+        session, actividad, emisor="IKEA Ibérica S.A.", nif_emisor="A28812618", factura_id=factura.id
+    )
+    _asiento(
+        session, actividad, emisor="IKEA IBÉRICA S.A., A28812618,", nif_emisor="A28812618"
+    )
+    unificar_emisores(session, actividad.id, aplicar=True)
+    session.expire_all()
+    assert factura.emisor == "IKEA Ibérica S.A."
+    assert factura.emisor_norm == "IKEA IBÉRICA S.A."
+
+
+def test_nombre_canonico_para_el_ingest(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _asiento(session, actividad, emisor="IKEA IBÉRICA S.A.", nif_emisor="A28812618")
+    _asiento(session, actividad, emisor="IKEA Ibérica S.A.", nif_emisor="A28812618")
+
+    canonico = nombre_canonico_para(
+        session, actividad.id, "A28812618", "IKEA IBÉRICA S.A., A28812618,"
+    )
+    assert canonico == "IKEA Ibérica S.A."
+    # otro emisor con el mismo NIF no arrastra el canónico
+    assert nombre_canonico_para(session, actividad.id, "A28812618", "TALLERES ISMAR SL") is None
+    assert nombre_canonico_para(session, actividad.id, "", "IKEA S.A.") is None

@@ -144,6 +144,15 @@ uv run aeat-hub duplicado 8 --quitar # deshacer: vuelve a pendiente
 
 En la ficha del dashboard hay el botón **Marcar duplicado de…** (y **Quitar duplicado** si ya lo es) que hace lo mismo sin salir del navegador.
 
+### `emisores`
+
+Unifica las grafías del nombre de un mismo emisor, agrupadas por NIF (limpieza de S.A./S.L.U./GmbH… + similitud con umbral). Sin `--aplicar` es un preview.
+
+```bash
+uv run aeat-hub emisores --actividad CI-VA-001            # preview
+uv run aeat-hub emisores --actividad CI-VA-001 --aplicar  # unifica
+```
+
 ### `ordenar`
 
 Reubica en disco documentos ya ingeridos (p. ej. si estaban en `processed/` de una versión anterior).
