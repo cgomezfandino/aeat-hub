@@ -116,6 +116,14 @@ uv run aeat-hub validar 12
 
 Check humano: el rubro no cambia. `reparse` y un nuevo OCR **no pisan** ese asiento. Sirve cuando el modelo acertó y solo quieres cerrarlo.
 
+### `rechazar`
+
+Saca un asiento del libro cuando no es una factura (confirmaciones de pedido, hojas informativas, errores de escaneo): fuera de totales, vistas y Excel, y el fichero pasa a `archivo/…/rechazado/`. `aeat-hub reabrir` lo devuelve a revisión.
+
+```bash
+uv run aeat-hub rechazar 9
+```
+
 ### `reabrir`
 
 ```bash

@@ -47,6 +47,7 @@ def export_xlsx(
         .where(Asiento.actividad_id == actividad.id, Asiento.ejercicio == year)
         .order_by(Asiento.fecha, Asiento.id)
     ).all()
+    rows = [row for row in rows if row.estado != "rechazado"]
     filas_cuenta = session.scalars(select(Cuenta)).all()
     nombres = {item.codigo: item.nombre for item in filas_cuenta}
     extra_casillas = {item.codigo: item.casilla for item in filas_cuenta if item.casilla}

@@ -55,6 +55,7 @@ ESTADO_LABEL = {
     "pendiente": "Por revisar",
     "confirmado": "Confirmado",
     "duplicado": "Duplicado",
+    "rechazado": "Rechazado",
 }
 
 CONTACT_NAME = "Carlos Gomez"
@@ -93,6 +94,7 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         for item in session.scalars(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
     }
     titular = session.get(Titular, actividad.titular_id)
+    rows = [row for row in rows if row.estado != "rechazado"]
     vivos = [row for row in rows if row.estado != "duplicado"]
     factura_ids = [row.factura_id for row in rows if row.factura_id]
     n_docs_map = counts_por_factura(session, factura_ids)
@@ -123,7 +125,7 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
             .where(
                 Asiento.actividad_id == actividad.id,
                 Asiento.fecha.is_(None),
-                Asiento.estado != "duplicado",
+                Asiento.estado.notin_(("duplicado", "rechazado")),
             )
             .order_by(Asiento.id)
         )

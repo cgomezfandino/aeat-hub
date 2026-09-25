@@ -73,7 +73,7 @@ def revisar(session: Session, layout: DataLayout, actividad: Actividad) -> list[
     from aeat_hub.edits import lineas_de_asiento, parse_money_field
 
     for asiento in asientos:
-        if asiento.estado == "duplicado":
+        if asiento.estado in ("duplicado", "rechazado"):
             continue
         for aviso in avisos_cuadre(
             base=asiento.base,
@@ -104,7 +104,7 @@ def revisar(session: Session, layout: DataLayout, actividad: Actividad) -> list[
                 )
 
     # 4. Sin fecha: invisibles en cualquier ejercicio.
-    sin_fecha = [a for a in asientos if a.fecha is None and a.estado != "duplicado"]
+    sin_fecha = [a for a in asientos if a.fecha is None and a.estado not in ("duplicado", "rechazado")]
     if sin_fecha:
         ids = ", ".join(str(a.id) for a in sin_fecha[:8])
         hallazgos.append(

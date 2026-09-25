@@ -142,7 +142,7 @@ def escanear_duplicados(
         umbral = UMBRAL_MENCION
     vivos = session.scalars(
         select(Asiento)
-        .where(Asiento.actividad_id == actividad.id, Asiento.estado != "duplicado")
+        .where(Asiento.actividad_id == actividad.id, Asiento.estado.notin_(("duplicado", "rechazado")))
         .order_by(Asiento.id)
     ).all()
     if len(vivos) < 2:

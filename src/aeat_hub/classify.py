@@ -140,6 +140,9 @@ def reclassify(
     return updated
 
 
+ESTADOS_FUERA = ("duplicado", "rechazado")
+
+
 def validar_asiento(asiento: Asiento) -> None:
     """Marca el asiento como revisado por el usuario. No cambia el rubro ni relanza OCR."""
     asiento.validado = True
@@ -150,11 +153,22 @@ def validar_asiento(asiento: Asiento) -> None:
 
 
 def reabrir_asiento(asiento: Asiento) -> None:
-    """Devuelve un asiento validado a revisión humana."""
+    """Devuelve un asiento validado (o rechazado) a revisión humana."""
     asiento.validado = False
     asiento.origen_clasificacion = "usuario"
     if asiento.estado != "duplicado":
         asiento.estado = "pendiente"
+
+
+def rechazar_asiento(asiento: Asiento) -> None:
+    """Saca el asiento del libro: no es una factura (errores de OCR/escaneo).
+
+    Fuera de totales, vistas y exportaciones; `reabrir` lo devuelve a
+    revisión si fue un error.
+    """
+    asiento.estado = "rechazado"
+    asiento.duplicado_de_id = None
+    asiento.duplicado_nivel = None
 
 
 def _apply_cuenta(asiento: Asiento, cuenta: Cuenta, *, origen: str, confianza: Decimal) -> None:

@@ -35,6 +35,8 @@ def rubro_slug(cuenta_codigo: str | None) -> str:
 def tipo_carpeta(tipo: str | None, estado: str, cuenta_codigo: str | None) -> str:
     if estado == "duplicado":
         return "duplicado"
+    if estado == "rechazado":
+        return "rechazado"
     if not cuenta_codigo and estado == "pendiente":
         return "pendiente"
     if tipo in {"ingreso", "gasto", "mejora", "amortizacion"}:

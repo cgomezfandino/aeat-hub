@@ -12,7 +12,7 @@ from rich.table import Table
 from sqlalchemy import select
 
 from aeat_hub import __version__
-from aeat_hub.classify import reabrir_asiento, reclassify, validar_asiento
+from aeat_hub.classify import rechazar_asiento, reabrir_asiento, reclassify, validar_asiento
 from aeat_hub.db import make_engine, session_factory, session_scope
 from aeat_hub.doctor import revisar as doctor_revisar
 from aeat_hub.edits import AsientoNoEncontrado, desmarcar_duplicado, marcar_duplicado
@@ -329,6 +329,26 @@ def validar(
         console.print(
             f"Asiento {asiento.id} validado. Rubro {rubro}. "
             "reparse e ingest no tocan este apunte."
+        )
+
+
+@app.command()
+def rechazar(
+    asiento_id: int = typer.Argument(..., help="Id del asiento"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Saca el asiento del libro: no es una factura (error de OCR/escaneo)."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    with session_scope(factory) as session:
+        asiento = session.get(Asiento, asiento_id)
+        if asiento is None:
+            raise typer.BadParameter(f"No existe el asiento {asiento_id}")
+        rechazar_asiento(asiento)
+        console.print(
+            f"Asiento {asiento.id} rechazado: fuera de totales, vistas y Excel. "
+            "`aeat-hub reabrir` lo devuelve a revisión. "
+            "Corre `aeat-hub ordenar` para reubicar el fichero."
         )
 
 

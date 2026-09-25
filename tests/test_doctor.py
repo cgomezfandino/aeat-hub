@@ -167,3 +167,43 @@ def test_escaneo_excluye_ya_marcados_y_mismo_cluster(session):
     a.duplicado_nivel = 3
     session.commit()
     assert escanear_duplicados(session, actividad) == []
+
+
+def test_rechazar_saca_del_libro_y_reabrir_devuelve(session, layout):
+    from aeat_hub.classify import rechazar_asiento, reabrir_asiento
+    from aeat_hub.dashboard import collect_dashboard
+    from aeat_hub.export import export_xlsx
+    from openpyxl import load_workbook
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    fea = _asiento(session, actividad, numero_factura="DOC-RARO", total=Decimal("0"))
+    session.commit()
+    antes = collect_dashboard(session, actividad, 2026)
+
+    rechazar_asiento(fea)
+    session.commit()
+    session.expire_all()
+    despues = collect_dashboard(session, actividad, 2026)
+    ids = [a["id"] for a in despues["asientos"]]
+    assert fea.id not in ids
+    assert despues["n_asientos"] == antes["n_asientos"] - 1
+    assert despues["n_pendientes"] == antes["n_pendientes"] - 1
+    assert despues["irpf"]["rendimiento"] == antes["irpf"]["rendimiento"]
+
+    # fuera del Excel
+    dest = export_xlsx(session, layout, actividad, 2026)
+    wb = load_workbook(dest)
+    todos = [c for ws in wb.worksheets for row in ws.iter_rows(values_only=True) for c in row]
+    assert "DOC-RARO" not in [str(c) for c in todos]
+
+    # fichero a carpeta rechazado
+    from aeat_hub.filing import tipo_carpeta
+
+    assert tipo_carpeta("gasto", "rechazado", None) == "rechazado"
+
+    # y reabrir lo devuelve
+    reabrir_asiento(fea)
+    session.commit()
+    session.expire_all()
+    vuelta = collect_dashboard(session, actividad, 2026)
+    assert fea.id in [a["id"] for a in vuelta["asientos"]]
