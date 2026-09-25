@@ -98,3 +98,24 @@ def test_hub_correccion_sobrevive_fallo_de_regeneracion(session, layout, monkeyp
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_api_asiento_devuelve_calidad_y_numero(session, layout):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    row = _asiento(session, actividad)
+    factory = session_factory(make_engine(layout))
+    httpd, port = bind_server(layout, factory, "dashboard_CI-VA-001_2026.html", port=18761)
+    thread = Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/asientos/{row.id}") as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        assert payload["numero"] == "F-1"
+        ids_calidad = [c["id"] for c in payload["calidad"]]
+        assert "numero" in ids_calidad and "suma" in ids_calidad
+        assert all({"id", "label", "ok", "detail"} <= set(c) for c in payload["calidad"])
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

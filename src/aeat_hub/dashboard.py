@@ -2088,7 +2088,9 @@ def _kan_card(item: dict) -> str:
     else:
         pct = item.get("conf_min_pct")
         chip = f'<span class="pill confirmado">{pct if pct is not None else "—"} %</span>'
-    acciones = []
+    acciones = [
+        f'<button type="button" class="kan-act" data-kan="lineas" data-id="{item["id"]}" title="Ver detalle de extracción (líneas)">≡</button>'
+    ]
     if estado == "pendiente":
         acciones.append(f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar: revisada y buena">✓</button>')
     if estado == "confirmado":
@@ -2156,6 +2158,7 @@ def _panel_revision(data: dict) -> str:
             f'<td class="num">{total_label}</td>'
             f"<td>{escape(faltas)}</td>"
             f'<td class="kan-celda-act">'
+            f'<button type="button" class="kan-act" data-kan="lineas" data-id="{item["id"]}" title="Ver detalle de extracción">≡</button>'
             f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar">✓</button>'
             f'<button type="button" class="kan-act" data-kan="rechazar" data-id="{item["id"]}" title="Rechazar">✕</button>'
             "</td></tr>"
@@ -2220,6 +2223,27 @@ def _panel_revision(data: dict) -> str:
         <button type="button" class="export-btn" id="rechazo-ok">Rechazar</button>
       </div>
     </div>
+  </dialog>
+  <dialog class="edit-dialog" id="lineas-dialog" aria-labelledby="lin-emisor">
+    <div class="dup-gestor-cuerpo">
+      <p class="dup-gestor-eyebrow" id="lin-eyebrow">Detalle de extracción</p>
+      <h2 id="lin-emisor">—</h2>
+      <p class="muted" id="lin-datos"></p>
+      <div class="lin-calidad" id="lin-calidad"></div>
+      <div class="lin-wrap"><table class="edit-lines">
+        <thead><tr><th>Id</th><th>Concepto</th><th class="num">Uds.</th>
+        <th class="num">Importe</th><th class="num">IVA %</th><th class="num">IVA</th></tr></thead>
+        <tbody id="lin-body"></tbody></table></div>
+      <p class="hint" id="lin-suma"></p>
+    </div>
+    <footer class="dup-gestor-pie">
+      <a class="dup-ficha-link" id="lin-ficha" target="_blank" rel="noopener">Abrir ficha para corregir ↗</a>
+      <div class="dup-gestor-acciones">
+        <button type="button" class="ghost" id="lin-cerrar">Cerrar</button>
+        <button type="button" class="ghost" id="lin-rechazar">✕ Rechazar</button>
+        <button type="button" class="export-btn" id="lin-validar">✓ Consolidar</button>
+      </div>
+    </footer>
   </dialog>
   {_footer(data)}
 </div>
@@ -3551,6 +3575,12 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .kan-act:hover { border-color: var(--ink); color: var(--ink); }
 .kan-vacio { margin: 0; padding: 14px 10px; font-size: 12px; color: var(--muted); }
 .rev-vistas { display: flex; gap: 6px; margin: 0 0 10px; }
+.lin-calidad { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0; }
+.lin-chk { border: 1px solid var(--line); padding: 1px 7px; font-size: 11px; color: var(--muted); }
+.lin-chk.is-ok { border-color: #9bc4b8; color: var(--ingreso); }
+.lin-chk.is-bad { border-color: #d4a574; color: var(--warn); background: #fff6eb; }
+.lin-wrap { max-height: 40vh; overflow: auto; border: 1px solid var(--line); background: #fff; margin: 0 0 8px; }
+.lin-eliminada td { opacity: .45; text-decoration: line-through; }
 .rev-vistas .ghost[aria-pressed="true"] { border-color: var(--ink); background: var(--paper); }
 .kan-mas { border: 1px dashed var(--line); background: transparent; padding: 6px; font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; }
 .rechazo-opciones { display: grid; gap: 6px; margin: 10px 0; }
@@ -5209,6 +5239,70 @@ _JS = r"""
       }
       if (!accion) return;
       kanAccion(accion, id);
+    });
+  }
+  const linDialog = document.getElementById("lineas-dialog");
+  const linEsc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const cargarLineas = async (id) => {
+    if (!linDialog || !id) return;
+    try {
+      const res = await fetch(`/api/asientos/${id}`);
+      const p = await res.json();
+      if (!res.ok || p.ok === false) throw new Error(p.error || String(res.status));
+      linDialog.dataset.linId = id;
+      document.getElementById("lin-eyebrow").textContent = `Detalle de extracción · asiento #${id}`;
+      document.getElementById("lin-emisor").textContent = p.emisor || "—";
+      document.getElementById("lin-datos").textContent = `${p.numero || "—"} · ${p.fecha_label || "—"} · ${p.estado_label}`;
+      document.getElementById("lin-calidad").innerHTML = (p.calidad || [])
+        .map((c) => `<span class="lin-chk ${c.ok ? "is-ok" : "is-bad"}" title="${linEsc(c.detail)}">${c.ok ? "✓" : "✕"} ${linEsc(c.label)}</span>`)
+        .join("");
+      const filas = (p.lineas || []).length
+        ? p.lineas.map((l) => `<tr class="${l.eliminada ? "lin-eliminada" : ""}">`
+            + `<td class="mono">${linEsc(l.codigo || "")}</td><td>${linEsc(l.descripcion)}</td>`
+            + `<td class="num">${linEsc(l.cantidad || "1")}</td><td class="num">${l.importe ?? "—"}</td>`
+            + `<td class="num">${l.iva_tipo ?? "—"}</td><td class="num">${l.iva_cuota ?? "—"}</td></tr>`).join("")
+        : '<tr><td colspan="6" class="muted">Sin líneas extraídas: el OCR no encontró desglose.</td></tr>';
+      document.getElementById("lin-body").innerHTML = filas;
+      document.getElementById("lin-suma").textContent = p.lineas_suma
+        ? `Suma de líneas ${p.lineas_suma} € · total de la factura ${p.total} € ${p.lineas_ok ? "· cuadra ✓" : "· NO cuadra ✗"}`
+        : "Sin importes de línea para contrastar con el total.";
+      const esPendiente = p.estado === "pendiente";
+      document.getElementById("lin-validar").hidden = !esPendiente;
+      document.getElementById("lin-rechazar").hidden = !esPendiente;
+      document.getElementById("lin-ficha").href = `/asiento/${id}`;
+      linDialog.showModal();
+    } catch (err) {
+      alert("No se pudo cargar el detalle: " + err.message);
+    }
+  };
+  document.getElementById("lin-cerrar")?.addEventListener("click", () => linDialog?.close());
+  document.getElementById("lin-validar")?.addEventListener("click", () => {
+    const id = linDialog?.dataset.linId;
+    linDialog?.close();
+    kanAccion("validar", id);
+  });
+  document.getElementById("lin-rechazar")?.addEventListener("click", () => {
+    const id = linDialog?.dataset.linId;
+    linDialog?.close();
+    kanAccion("rechazar", id);
+  });
+  for (const boton of document.querySelectorAll('[data-kan="lineas"]')) {
+    boton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      cargarLineas(boton.dataset.id);
+    });
+  }
+  for (const card of document.querySelectorAll(".kan-card")) {
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("a, button")) return;
+      cargarLineas(card.dataset.id);
+    });
+  }
+  for (const fila of document.querySelectorAll("#rev-tabla-body tr")) {
+    fila.addEventListener("click", (event) => {
+      if (event.target.closest("a, button")) return;
+      const id = fila.querySelector("a")?.getAttribute("href")?.split("/").pop();
+      if (id) cargarLineas(id);
     });
   }
   const rechazoDialogo = document.getElementById("rechazo-dialog");

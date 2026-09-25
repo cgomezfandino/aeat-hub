@@ -13,12 +13,19 @@ from urllib.parse import unquote, urlparse
 
 from sqlalchemy import select
 
-from aeat_hub.dashboard import ESTADO_LABEL, REGIMEN_LABEL, collect_asiento_ficha, render_asiento_page, write_dashboard
+from aeat_hub.dashboard import (
+    ESTADO_LABEL,
+    REGIMEN_LABEL,
+    collect_asiento_ficha,
+    criterios_calidad,
+    render_asiento_page,
+    write_dashboard,
+)
 from aeat_hub.db import session_scope
 from aeat_hub.edits import AsientoNoEncontrado, articulos_label, lineas_de_asiento, parse_money_field, patch_asiento
 from aeat_hub.fiscal.cuadres import TOLERANCIA_TOTAL
 from aeat_hub.fiscal.money import q2
-from aeat_hub.models import Actividad, Asiento, Cambio, Cuenta
+from aeat_hub.models import Actividad, Asiento, Cambio, Cuenta, Titular
 from aeat_hub.paths import DataLayout
 from aeat_hub.services import patch_expediente
 
@@ -247,6 +254,21 @@ def _asiento_json(session, asiento: Asiento) -> dict:
         select(Cambio).where(Cambio.asiento_id == asiento.id).order_by(Cambio.id.desc())
     ).all()
     lineas = lineas_de_asiento(asiento)
+    actividad = session.get(Actividad, asiento.actividad_id)
+    titular = session.get(Titular, actividad.titular_id) if actividad is not None else None
+    rubro = _rubro_nombre(session, asiento)
+    calidad = criterios_calidad(
+        numero=asiento.numero_factura,
+        fecha=asiento.fecha.strftime("%d/%m/%Y") if asiento.fecha else "",
+        emisor=asiento.emisor,
+        nif=asiento.nif_emisor,
+        base=asiento.base,
+        iva=asiento.iva_cuota,
+        total=asiento.total,
+        rubro=rubro if asiento.cuenta_codigo else "",
+        lineas=lineas,
+        titular_nif=titular.nif if titular else "",
+    )
     suma = None
     if lineas:
         acc = Decimal("0.00")
@@ -259,6 +281,7 @@ def _asiento_json(session, asiento: Asiento) -> dict:
         "id": asiento.id,
         "nif_emisor": asiento.nif_emisor or "",
         "emisor": asiento.emisor or "",
+        "numero": asiento.numero_factura or "—",
         "fecha": asiento.fecha.isoformat() if asiento.fecha else "",
         "fecha_label": asiento.fecha.strftime("%d/%m/%Y") if asiento.fecha else "",
         "n_articulos": articulos_label(lineas),
@@ -266,6 +289,10 @@ def _asiento_json(session, asiento: Asiento) -> dict:
         "iva_cuota": _dec(asiento.iva_cuota),
         "total": _dec(asiento.total),
         "validado": bool(asiento.validado),
+        "calidad": [
+            {"id": item["id"], "label": item["label"], "ok": item["ok"], "detail": item["detail"]}
+            for item in calidad
+        ],
         "estado": asiento.estado,
         "estado_label": ESTADO_LABEL.get(asiento.estado, asiento.estado),
         "lineas": lineas,
