@@ -154,6 +154,12 @@ def patch_asiento(session: Session, asiento_id: int, payload: dict) -> Asiento:
         return marcar_duplicado(session, asiento_id, int(raw))
     if payload.get("quitar_duplicado"):
         return desmarcar_duplicado(session, asiento_id)
+    if payload.get("rechazar"):
+        from aeat_hub.classify import rechazar_asiento
+
+        rechazar_asiento(asiento)
+        session.flush()
+        return asiento
 
     dirty = False
     if "nif_emisor" in payload and payload["nif_emisor"] is not None:

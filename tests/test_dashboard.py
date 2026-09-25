@@ -136,7 +136,7 @@ def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     assert ">Libro" in html
     assert ">Insights</button>" in html
     assert ">Resumen</button>" not in html
-    assert 'data-default-panel="libro"' in html
+    assert 'data-default-panel="revision"' in html  # hay pendientes: se aterriza en el tablero
     assert "dash-nav" not in html
     assert 'class="review-table"' not in html
     assert "q-chip" in html
@@ -331,6 +331,10 @@ def test_ficha_asiento_tiene_volver_y_compra(session):
 def test_dashboard_pop_confianza_cita_casilla(session, layout):
     actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
     _seed_asientos(session, actividad)
+    # el pop de confianza vive en las filas del Libro (consolidadas)
+    for row in session.scalars(select(Asiento).where(Asiento.estado == "pendiente")):
+        row.estado = "confirmado"
+    session.commit()
     html = write_dashboard(session, layout, actividad, 2026).read_text(encoding="utf-8")
     assert "<dt>OCR</dt>" in html
     assert "<dt>Clasificación</dt><dd>60 %</dd>" in html
@@ -770,3 +774,33 @@ def test_libro_cabeceras_con_ayuda_y_compactan(session, layout):
     assert 'font-size: 12px' in html.split("@media (max-width: 1100px)", 1)[1].split("@media", 1)[0]
     assert 'font-size: 11.5px' in html.split("@media (max-width: 700px)", 1)[1].split("@media", 1)[0]
     assert "@media (max-width: 900px)" not in html
+
+
+def test_tablero_kanban_de_revision(session, layout):
+    """El flujo manual: cola por gravedad en Revisar, Libro solo consolidadas."""
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    data = collect_dashboard(session, actividad, 2026)
+    html = render_dashboard(data)
+
+    # tablero con las cuatro columnas y el embudo
+    assert 'id="panel-revision"' in html
+    assert 'data-col="pendiente"' in html
+    assert 'data-col="confirmado"' in html
+    assert 'data-col="duplicado"' in html
+    assert 'data-col="rechazado"' in html
+    assert "kan-embudo" in html
+    assert "Seguimiento" in html
+    # tarjetas arrastrables con acciones rápidas
+    assert 'draggable="true"' in html
+    assert 'data-kan="validar"' in html
+    assert 'data-kan="rechazar"' in html
+    assert "kanAccion" in html
+    assert 'data-soltar="validar|rechazar"' in html
+    # el Libro solo muestra consolidadas: la pendiente semilla no está en su tabla
+    ledger = html.split('id="panel-libro"', 1)[1].split('id="panel-duplicados"', 1)[0]
+    pendiente_id = next(a["id"] for a in data["asientos"] if a["estado"] == "pendiente")
+    assert f'<tr data-id="{pendiente_id}"' not in ledger
+    assert '>Revisar' in html  # pestaña del tablero
+    # el KPI de Insights lleva al tablero
+    assert 'id="insight-kpi-revisar"' in html

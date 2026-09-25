@@ -94,8 +94,7 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         for item in session.scalars(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
     }
     titular = session.get(Titular, actividad.titular_id)
-    rows = [row for row in rows if row.estado != "rechazado"]
-    vivos = [row for row in rows if row.estado != "duplicado"]
+    vivos = [row for row in rows if row.estado not in ("duplicado", "rechazado")]
     factura_ids = [row.factura_id for row in rows if row.factura_id]
     n_docs_map = counts_por_factura(session, factura_ids)
     er_map = estados_er_por_factura(session, factura_ids)
@@ -185,10 +184,12 @@ def render_dashboard(data: dict) -> str:
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
         f"<title>Libro {escape(data['codigo'])} · {data['year']}</title>\n"
         f"<style>{_CSS}</style>\n</head>\n"
-        f"<body data-default-panel=\"libro\" data-actividad=\"{escape(data['codigo'])}\" "
+        f'<body data-default-panel="{"revision" if data["n_pendientes"] else "libro"}" '
+        f'data-actividad="{escape(data["codigo"])}" '
         f"data-year=\"{data['year']}\">\n"
         f"{_masthead(data)}\n"
         '<main class="wrap panels">\n'
+        f"{_panel_revision(data)}\n"
         f"{_panel_libro(data)}\n"
         f"{_panel_duplicados(data)}\n"
         f"{_panel_insights(data)}\n"
@@ -1808,7 +1809,7 @@ def _rank_emisores(asientos: list[dict]) -> tuple[list[dict], Decimal]:
     buckets: dict[str, dict] = {}
     total = ZERO
     for item in asientos:
-        if item["estado"] == "duplicado" or item["tipo"] != TIPO_GASTO:
+        if item["estado"] in ("duplicado", "rechazado") or item["tipo"] != TIPO_GASTO:
             continue
         amount = q2(item["total"]) or ZERO
         if amount <= ZERO:
@@ -1960,8 +1961,10 @@ def _masthead(data: dict) -> str:
   </div>
   <nav class="tabs" role="tablist" aria-label="Secciones del libro">
     <div class="wrap tabs-row">
+      <button type="button" class="tab" role="tab" id="tab-revision" data-panel="revision"
+        aria-controls="panel-revision" aria-selected="false" tabindex="-1">Revisar {badge}</button>
       <button type="button" class="tab" role="tab" id="tab-libro" data-panel="libro"
-        aria-controls="panel-libro" aria-selected="false" tabindex="-1">Libro {badge}</button>
+        aria-controls="panel-libro" aria-selected="false" tabindex="-1">Libro</button>
       <button type="button" class="tab" role="tab" id="tab-duplicados" data-panel="duplicados"
         aria-controls="panel-duplicados" aria-selected="false" tabindex="-1">Duplicados {dup_badge}</button>
       <button type="button" class="tab" role="tab" id="tab-insights" data-panel="insights"
@@ -1986,7 +1989,7 @@ def _kpis(data: dict) -> str:
     {_kpi_btn("Ingresos", data["ingresos"], "ingreso")}
     {_kpi_btn("Mejoras (inversión)", data["mejoras"], "mejora")}
     {_kpi_btn("Rendimiento neto", data["resultado"], "neto")}
-    {_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"])}
+    {_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], kpi_id="insight-kpi-revisar")}
   </div>
   {mejora_note}
 </section>
@@ -2002,9 +2005,10 @@ def _kpi_btn(label: str, value: Decimal, kind: str, *, kpi_id: str = "") -> str:
     )
 
 
-def _kpi_btn_count(label: str, pendientes: int, total: int) -> str:
+def _kpi_btn_count(label: str, pendientes: int, total: int, *, kpi_id: str = "") -> str:
+    id_attr = f' id="{kpi_id}"' if kpi_id else ""
     return (
-        f'<div class="kpi kpi-count">'
+        f'<div class="kpi kpi-count"{id_attr} role="button" tabindex="0">'
         f"<span>{escape(label)}</span>"
         f"<strong>{pendientes}</strong>"
         f"<em>de {total} asientos</em></div>"
@@ -2063,6 +2067,90 @@ def _quality_cell(item: dict, *, prefix: str) -> str:
 def _amount_attr(value: Decimal | None) -> str:
     quantized = q2(value)
     return "" if quantized is None else f"{quantized:.2f}"
+
+
+def _kan_card(item: dict) -> str:
+    """Tarjeta de factura para el tablero Kanban."""
+    estado = item["estado"]
+    total = item.get("total")
+    total_label = escape(format_euro(total)) if total is not None else "—"
+    if estado == "duplicado":
+        chip = f'<span class="pill duplicado">de #{item.get("duplicado_de_id") or "—"}</span>'
+    elif estado == "rechazado":
+        chip = '<span class="pill rechazado">No es factura</span>'
+    elif item["baja"]:
+        chip = '<span class="pill pendiente">Confianza baja</span>'
+    else:
+        pct = item.get("conf_min_pct")
+        chip = f'<span class="pill confirmado">{pct if pct is not None else "—"} %</span>'
+    acciones = []
+    if estado == "pendiente":
+        acciones.append(f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar: revisada y buena">✓</button>')
+    if estado == "confirmado":
+        acciones.append(f'<button type="button" class="kan-act" data-kan="reabrir" data-id="{item["id"]}" title="Devolver a revisión">↩</button>')
+    if estado == "duplicado":
+        acciones.append(f'<button type="button" class="kan-act" data-kan="quitar-dup" data-id="{item["id"]}" title="Quitar duplicado">↩</button>')
+    if estado == "rechazado":
+        acciones.append(f'<button type="button" class="kan-act" data-kan="recuperar" data-id="{item["id"]}" title="Recuperar a revisión">↩</button>')
+    if estado in ("pendiente", "rechazado"):
+        acciones.append(f'<button type="button" class="kan-act" data-kan="rechazar" data-id="{item["id"]}" title="Rechazar: no es una factura">✕</button>')
+    return (
+        f'<article class="kan-card" draggable="true" data-id="{item["id"]}" '
+        f'data-estado="{estado}" data-total="{total_label}" '
+        f'data-emisor="{escape(item["emisor"])}" data-numero="{escape(item["numero"])}" '
+        f'data-fecha="{escape(item["fecha_label"])}">'
+        f'<a class="kan-ref" href="/asiento/{item["id"]}" title="Abrir la ficha">{escape(item["emisor"])}</a>'
+        f'<p class="muted kan-datos">{escape(item["numero"])} · {escape(item["fecha_label"])}</p>'
+        f"<strong>{total_label}</strong> {chip}"
+        f'<div class="kan-acciones">{" ".join(acciones)}</div>'
+        "</article>"
+    )
+
+
+def _panel_revision(data: dict) -> str:
+    """Tablero Kanban del flujo de revisión manual."""
+    pendientes = [item for item in data["asientos"] if item["estado"] == "pendiente"]
+    consolidadas = [item for item in data["asientos"] if item["estado"] == "confirmado"]
+    duplicadas = [item for item in data["asientos"] if item["estado"] == "duplicado"]
+    rechazadas = [item for item in data["asientos"] if item["estado"] == "rechazado"]
+    cola = {item["id"]: item for item in data["cola_revision"]}
+    pendientes_ordenadas = [cola.get(item["id"], item) for item in pendientes]
+    vivas = len(pendientes) + len(consolidadas) + len(duplicadas)
+    hechas = vivas - len(pendientes)
+    progreso = int(round(100 * hechas / vivas)) if vivas else 100
+
+    def _columna(clave: str, titulo: str, filas: list[dict], vacio: str, soltar: str) -> str:
+        cards = "".join(_kan_card(item) for item in filas)
+        cuerpo = cards or f'<p class="kan-vacio">{vacio}</p>'
+        return (
+            f'<section class="kan-col" data-col="{clave}" data-soltar="{soltar}">'
+            f'<header class="kan-col-cab"><span>{titulo}</span><span class="kan-num">{len(filas)}</span></header>'
+            f'<div class="kan-cuerpo">{cuerpo}</div></section>'
+        )
+
+    return f"""
+<div class="panel" role="tabpanel" id="panel-revision" data-panel="revision"
+  aria-labelledby="tab-revision">
+  <p class="panel-lead">El flujo manual: cada factura pasa por tus manos. Arrastra las tarjetas
+  (o usa sus botones) para darles seguimiento; el detalle se trabaja en la ficha.</p>
+  <div class="kan-embudo" aria-label="Embudo de revisión">
+    <div><span>Por revisar</span><strong>{len(pendientes)}</strong></div>
+    <div><span>Consolidadas</span><strong>{len(consolidadas)}</strong></div>
+    <div><span>Duplicadas</span><strong>{len(duplicadas)}</strong></div>
+    <div><span>Rechazadas</span><strong>{len(rechazadas)}</strong></div>
+    <div class="kan-progreso"><span>Seguimiento</span>
+      <div class="kan-barra"><i style="width: {progreso}%"></i></div>
+      <strong>{progreso} %</strong></div>
+  </div>
+  <div class="kan-board" id="kan-board">
+    {_columna("pendiente", "Por revisar", pendientes_ordenadas, "Nada pendiente. Ingresa facturas y vuelve.", "validar|rechazar")}
+    {_columna("confirmado", "Consolidadas", consolidadas, "Aquí caen las revisadas y buenas.", "reabrir")}
+    {_columna("duplicado", "Duplicadas", duplicadas, "Sin duplicados marcados.", "quitar-dup")}
+    {_columna("rechazado", "Rechazadas", rechazadas, "Sin documentos rechazados.", "recuperar")}
+  </div>
+  {_footer(data)}
+</div>
+"""
 
 
 def _panel_libro(data: dict) -> str:
@@ -2244,7 +2332,7 @@ def _panel_insights(data: dict) -> str:
     {_kpi_btn("Ingresos", data["ingresos"], "ingreso", kpi_id="insight-kpi-ingresos")}
     {_kpi_btn("Mejoras", data["mejoras"], "mejora", kpi_id="insight-kpi-mejoras")}
     {_kpi_btn("Neto", data["resultado"], "neto", kpi_id="insight-kpi-neto")}
-    {_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"])}
+    {_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], kpi_id="insight-kpi-revisar")}
   </div>
   <p class="hint" id="insight-kpi-hint" hidden>KPIs y tablas siguen el rango de fechas de abajo; la Renta usa el ejercicio completo.</p>
   {mejora_note}
@@ -2258,7 +2346,7 @@ def _panel_insights(data: dict) -> str:
 def _insight_rows_json(asientos: list[dict]) -> str:
     rows = []
     for item in asientos:
-        if item.get("estado") == "duplicado":
+        if item.get("estado") in ("duplicado", "rechazado"):
             continue
         if item.get("tipo") not in {TIPO_GASTO, TIPO_INGRESO, TIPO_MEJORA}:
             continue
@@ -2823,10 +2911,19 @@ def _sum_money(items: list[dict], key: str) -> Decimal:
 
 
 def _ledger(data: dict) -> str:
-    rows = "\n".join(_row_html(item) for item in data["asientos"])
+    consolidadas = [
+        item for item in data["asientos"] if item["estado"] not in ("pendiente", "rechazado")
+    ]
+    rows = "\n".join(_row_html(item) for item in consolidadas)
     empty = ""
-    if not data["asientos"]:
-        empty = '<p class="empty">No hay asientos en este ejercicio.</p>'
+    if not consolidadas:
+        if data["n_pendientes"]:
+            empty = (
+                '<p class="empty">Aún no hay facturas consolidadas: las pendientes están '
+                'en la pestaña <a href="#panel-revision" class="kan-ir-revisar">Revisar</a>.</p>'
+            )
+        else:
+            empty = '<p class="empty">No hay asientos en este ejercicio.</p>'
     dup_note = ""
     if data["n_duplicados"]:
         dup_note = (
@@ -3357,6 +3454,29 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .insight-preset.is-on { border-color: var(--ink); background: var(--paper); }
 .insight-trims { width: auto; }
 .filter-trims { display: flex; gap: 6px; }
+.kan-embudo { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin: 0 0 14px; padding: 10px 14px; background: #fff; border: 1px solid var(--line); }
+.kan-embudo > div { display: grid; gap: 2px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.kan-embudo strong { font: 600 20px/1 Palatino, serif; color: var(--ink); }
+.kan-progreso { grid-template-columns: auto auto auto; align-items: center; gap: 8px !important; margin-left: auto; }
+.kan-barra { width: 120px; height: 6px; background: var(--paper); border: 1px solid var(--line); }
+.kan-barra i { display: block; height: 100%; background: var(--ingreso); }
+.kan-board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.kan-col { border: 1px solid var(--line); background: var(--sheet); min-height: 120px; }
+.kan-col-cab { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.kan-num { font: 600 16px/1 Palatino, serif; color: var(--ink); }
+.kan-cuerpo { display: grid; gap: 8px; padding: 10px; }
+.kan-card { background: #fff; border: 1px solid var(--line); padding: 8px 10px; display: grid; gap: 3px; cursor: grab; }
+.kan-card:active { cursor: grabbing; }
+.kan-card.dragging { opacity: .5; }
+.kan-col.over { outline: 2px dashed var(--ink); outline-offset: -4px; }
+.kan-ref { font-weight: 600; font-size: 13px; color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kan-ref:hover { text-decoration: underline; }
+.kan-datos { font-size: 11.5px; }
+.kan-card strong { font: 600 16px/1.1 Palatino, serif; }
+.kan-acciones { display: flex; gap: 6px; margin-top: 4px; }
+.kan-act { width: 24px; height: 22px; border: 1px solid var(--line); background: #fff; cursor: pointer; font: inherit; font-size: 12px; color: var(--muted); }
+.kan-act:hover { border-color: var(--ink); color: var(--ink); }
+.kan-vacio { margin: 0; padding: 14px 10px; font-size: 12px; color: var(--muted); }
 .ficha-dup { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .ficha-dup .hint { margin: 0; }
 .dup-par { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: center; }
@@ -4325,6 +4445,7 @@ th {
 .doc-link:hover { border-bottom-color: var(--neto); }
 .empty { color: var(--muted); padding: 12px; }
 @media (max-width: 1100px) {
+  .kan-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .wrap { width: calc(100% - 20px); }
   .ficha-page .wrap { width: calc(100% - 20px); }
   h1 { font-size: 28px; }
@@ -4343,6 +4464,7 @@ th {
   .edit-dialog { width: min(560px, calc(100vw - 20px)); max-height: min(90dvh, 720px); }
 }
 @media (max-width: 700px) {
+  .kan-board { grid-template-columns: 1fr; }
   .wrap, .ficha-page .wrap { width: calc(100% - 16px); }
   .mast { padding-top: 16px; }
   h1 { font-size: 24px; }
@@ -4932,6 +5054,87 @@ _JS = r"""
   document.getElementById("export-visible")?.addEventListener("click", exportVisible);
   document.getElementById("export-visible-top")?.addEventListener("click", exportVisible);
 
+  const kanPost = async (asiento, body) => {
+    try {
+      const res = await fetch(`/api/asientos/${asiento}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload.ok === false) throw new Error(payload.error || String(res.status));
+      window.location.reload();
+    } catch (err) {
+      alert("No se pudo guardar: " + err.message);
+    }
+  };
+  const kanAccion = (accion, id) => {
+    if (!id) return;
+    if (accion === "validar") {
+      if (!window.confirm(`¿Consolidar el asiento #${id}? Revisada y buena.`)) return;
+      kanPost(id, { validado: true, confirmado: true });
+    } else if (accion === "reabrir" || accion === "recuperar") {
+      if (!window.confirm(`¿Devolver el asiento #${id} a revisión?`)) return;
+      kanPost(id, { validado: false, confirmado: true });
+    } else if (accion === "rechazar") {
+      if (!window.confirm(`¿Rechazar el asiento #${id}? No es una factura: fuera del libro.`)) return;
+      kanPost(id, { rechazar: true, confirmado: true });
+    } else if (accion === "quitar-dup") {
+      if (!window.confirm(`¿Quitar el duplicado del asiento #${id}?`)) return;
+      kanPost(id, { quitar_duplicado: true, confirmado: true });
+    }
+  };
+  for (const boton of document.querySelectorAll(".kan-act")) {
+    boton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      kanAccion(boton.dataset.kan, boton.dataset.id);
+    });
+  }
+  let kanArrastrada = null;
+  for (const card of document.querySelectorAll(".kan-card")) {
+    card.addEventListener("dragstart", (event) => {
+      kanArrastrada = card;
+      card.classList.add("dragging");
+      event.dataTransfer.setData("text/plain", card.dataset.id);
+      event.dataTransfer.effectAllowed = "move";
+    });
+    card.addEventListener("dragend", () => {
+      card.classList.remove("dragging");
+      kanArrastrada = null;
+    });
+  }
+  for (const col of document.querySelectorAll(".kan-col")) {
+    col.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      col.classList.add("over");
+    });
+    col.addEventListener("dragleave", () => col.classList.remove("over"));
+    col.addEventListener("drop", (event) => {
+      event.preventDefault();
+      col.classList.remove("over");
+      const id = event.dataTransfer.getData("text/plain");
+      const card = kanArrastrada || document.querySelector(`.kan-card[data-id="${id}"]`);
+      if (!card || card.closest(".kan-col") === col) return;
+      const destino = col.dataset.col;
+      const accion = (col.dataset.soltar || "").split("|")[0];
+      if (destino === "duplicado") {
+        toast("Para marcar duplicado abre la ficha o la pestaña Duplicados y elige el gemelo.");
+        return;
+      }
+      if (!accion) return;
+      kanAccion(accion, id);
+    });
+  }
+  document.getElementById("insight-kpi-revisar")?.addEventListener("click", () => showPanel("revision"));
+  document.getElementById("insight-kpi-revisar")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showPanel("revision"); }
+  });
+  for (const enlace of document.querySelectorAll(".kan-ir-revisar")) {
+    enlace.addEventListener("click", (event) => {
+      event.preventDefault();
+      showPanel("revision");
+    });
+  }
   const dupPost = async (asiento, body) => {
     try {
       const res = await fetch(`/api/asientos/${asiento}`, {

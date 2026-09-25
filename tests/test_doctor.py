@@ -171,7 +171,7 @@ def test_escaneo_excluye_ya_marcados_y_mismo_cluster(session):
 
 def test_rechazar_saca_del_libro_y_reabrir_devuelve(session, layout):
     from aeat_hub.classify import rechazar_asiento, reabrir_asiento
-    from aeat_hub.dashboard import collect_dashboard
+    from aeat_hub.dashboard import collect_dashboard, render_dashboard
     from aeat_hub.export import export_xlsx
     from openpyxl import load_workbook
 
@@ -184,9 +184,12 @@ def test_rechazar_saca_del_libro_y_reabrir_devuelve(session, layout):
     session.commit()
     session.expire_all()
     despues = collect_dashboard(session, actividad, 2026)
-    ids = [a["id"] for a in despues["asientos"]]
-    assert fea.id not in ids
+    # fuera de totales y del Libro; visible solo en el tablero Kanban
     assert despues["n_asientos"] == antes["n_asientos"] - 1
+    html = render_dashboard(despues)
+    ledger = html.split('id="panel-libro"', 1)[1].split('id="panel-duplicados"', 1)[0]
+    assert f"/asiento/{fea.id}" not in ledger
+    assert f'data-col="rechazado"' in html
     assert despues["n_pendientes"] == antes["n_pendientes"] - 1
     assert despues["irpf"]["rendimiento"] == antes["irpf"]["rendimiento"]
 
