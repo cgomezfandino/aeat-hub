@@ -3363,14 +3363,13 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .dup-emisor { margin: 0; }
 .dup-vinclo { color: var(--muted); font-size: 20px; }
 .dup-vacio { border: 1px dashed var(--line); background: var(--sheet); padding: 18px; color: var(--muted); }
-.dup-tabla { width: 100%; border-collapse: collapse; background: #fff; }
-.dup-tabla th, .dup-tabla td { border-bottom: 1px solid var(--line); padding: 5px 10px; font-size: 13px; text-align: left; }
-.dup-tabla th { color: var(--muted); font-size: 12px; font-weight: 600; }
+.dup-tabla { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
+.dup-tabla th { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
 .dup-tabla .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dup-tabla tbody tr { cursor: pointer; }
+.dup-tabla tbody tr:hover, .dup-tabla tbody tr:focus { background: var(--paper); outline: none; }
 .dup-tabla a, #dup-gestor .dup-ref { color: inherit; text-decoration: none; }
 .dup-tabla a:hover, #dup-gestor .dup-ref:hover { text-decoration: underline; }
-.dup-tabla tbody tr:hover, .dup-tabla tbody tr:focus { background: var(--paper); outline: none; }
 .dup-abrir { color: var(--muted); text-align: right; width: 24px; }
 #dup-gestor .dup-gestor-cuerpo { padding: 20px 20px 4px; }
 #dup-gestor h2 { margin: 0 0 2px; font-size: 22px; }
