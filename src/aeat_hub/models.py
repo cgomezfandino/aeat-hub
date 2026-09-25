@@ -192,6 +192,7 @@ class Asiento(Base):
     confianza_clasificacion: Mapped[Decimal] = mapped_column(Numeric(4, 3), default=Decimal("0"))
     origen_clasificacion: Mapped[str] = mapped_column(String(20), default="pendiente")
     validado: Mapped[bool] = mapped_column(Boolean, default=False)
+    motivo_rechazo: Mapped[str | None] = mapped_column(String(200), nullable=True)
     duplicado_de_id: Mapped[int | None] = mapped_column(ForeignKey("asientos.id"), nullable=True)
     duplicado_nivel: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

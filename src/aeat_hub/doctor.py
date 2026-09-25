@@ -103,7 +103,18 @@ def revisar(session: Session, layout: DataLayout, actividad: Actividad) -> list[
                     )
                 )
 
-    # 4. Sin fecha: invisibles en cualquier ejercicio.
+    # 4. Rechazadas: de qué se aprende.
+    from collections import Counter
+
+    rechazados = [a for a in asientos if a.estado == "rechazado"]
+    if rechazados:
+        conteo = Counter((a.motivo_rechazo or "sin motivo").split(" — ")[0] for a in rechazados)
+        detalle = ", ".join(f"{n}× {motivo}" for motivo, n in conteo.most_common())
+        hallazgos.append(
+            Hallazgo("aviso", "rechazadas", f"{len(rechazados)} rechazadas: {detalle}")
+        )
+
+    # 5. Sin fecha: invisibles en cualquier ejercicio.
     sin_fecha = [a for a in asientos if a.fecha is None and a.estado not in ("duplicado", "rechazado")]
     if sin_fecha:
         ids = ", ".join(str(a.id) for a in sin_fecha[:8])

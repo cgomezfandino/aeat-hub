@@ -160,8 +160,17 @@ def reabrir_asiento(asiento: Asiento) -> None:
         asiento.estado = "pendiente"
 
 
-def rechazar_asiento(asiento: Asiento) -> None:
-    """Saca el asiento del libro: no es una factura (errores de OCR/escaneo).
+MOTIVOS_RECHAZO = {
+    "no-es-factura": "No es una factura",
+    "calidad-datos": "Calidad de datos (OCR ilegible)",
+    "falta-informacion": "Falta información (sin número/fecha/importes)",
+    "mal-procesamiento": "Mal procesamiento del pipeline",
+    "otro": "Otro",
+}
+
+
+def rechazar_asiento(asiento: Asiento, motivo: str | None = None) -> None:
+    """Saca el asiento del libro, registrando por qué (para aprender).
 
     Fuera de totales, vistas y exportaciones; `reabrir` lo devuelve a
     revisión si fue un error.
@@ -169,6 +178,7 @@ def rechazar_asiento(asiento: Asiento) -> None:
     asiento.estado = "rechazado"
     asiento.duplicado_de_id = None
     asiento.duplicado_nivel = None
+    asiento.motivo_rechazo = (motivo or "").strip()[:200] or None
 
 
 def _apply_cuenta(asiento: Asiento, cuenta: Cuenta, *, origen: str, confianza: Decimal) -> None:

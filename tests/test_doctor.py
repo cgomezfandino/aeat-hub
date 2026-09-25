@@ -210,3 +210,31 @@ def test_rechazar_saca_del_libro_y_reabrir_devuelve(session, layout):
     session.expire_all()
     vuelta = collect_dashboard(session, actividad, 2026)
     assert fea.id in [a["id"] for a in vuelta["asientos"]]
+
+
+def test_rechazo_con_motivo_aprende(session, layout):
+    """El motivo queda en el asiento, se ve en el tablero y el doctor agrega."""
+    from aeat_hub.classify import rechazar_asiento
+    from aeat_hub.dashboard import collect_dashboard, render_dashboard
+    from aeat_hub.doctor import revisar as doctor_revisar
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    fea = _asiento(session, actividad, numero_factura="RUIDO-1", total=Decimal("0"))
+    rechazar_asiento(fea, motivo="Calidad de datos (OCR ilegible) — escaneo torcido")
+    session.commit()
+
+    data = collect_dashboard(session, actividad, 2026)
+    html = render_dashboard(data)
+    assert "Calidad de datos (OCR ilegible) — escaneo torcido"[:38] in html  # chip truncado
+    assert 'id="rechazo-dialog"' in html
+    assert "¿Por qué se rechaza?" in html
+    # vista dual y paginador
+    assert 'id="rev-vista-tabla"' in html
+    assert 'id="rev-tabla-body"' in html
+    assert "revPintar" in html
+    # doctor agrega por motivo
+    from aeat_hub.paths import DataLayout
+
+    hallazgos = doctor_revisar(session, DataLayout(layout.root), actividad)
+    resumen = [h for h in hallazgos if h.categoria == "rechazadas"]
+    assert resumen and "1× Calidad de datos" in resumen[0].detalle

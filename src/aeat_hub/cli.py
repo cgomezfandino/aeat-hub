@@ -335,18 +335,22 @@ def validar(
 @app.command()
 def rechazar(
     asiento_id: int = typer.Argument(..., help="Id del asiento"),
+    motivo: str = typer.Option("no-es-factura", "--motivo", help="Por qué: no-es-factura | calidad-datos | falta-informacion | mal-procesamiento | otro, u otro texto libre"),
     data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
 ) -> None:
-    """Saca el asiento del libro: no es una factura (error de OCR/escaneo)."""
+    """Saca el asiento del libro, registrando el motivo (para aprender)."""
+    from aeat_hub.classify import MOTIVOS_RECHAZO
+
+    texto = MOTIVOS_RECHAZO.get(motivo, motivo)
     layout = _layout(data_dir)
     factory = _session_factory(layout)
     with session_scope(factory) as session:
         asiento = session.get(Asiento, asiento_id)
         if asiento is None:
             raise typer.BadParameter(f"No existe el asiento {asiento_id}")
-        rechazar_asiento(asiento)
+        rechazar_asiento(asiento, motivo=texto)
         console.print(
-            f"Asiento {asiento.id} rechazado: fuera de totales, vistas y Excel. "
+            f"Asiento {asiento.id} rechazado ({texto}): fuera de totales, vistas y Excel. "
             "`aeat-hub reabrir` lo devuelve a revisión. "
             "Corre `aeat-hub ordenar` para reubicar el fichero."
         )

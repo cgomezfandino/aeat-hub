@@ -248,7 +248,8 @@ def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     assert "Alquiler Valladolid" in html
     assert "Titular local" in html
     assert "Vivienda Valladolid" in html
-    thead = html.split("<thead>", 1)[1].split("</thead>", 1)[0]
+    libro_html = html.split('id="panel-libro"', 1)[1]
+    thead = libro_html.split("<thead>", 1)[1].split("</thead>", 1)[0]
     assert thead.index("Nº factura") < thead.index("Fecha compra")
     assert 'id="solo-revisar"' not in html
     assert "Solo por revisar" not in html

@@ -45,6 +45,8 @@ def _migrate(engine: Engine) -> None:
                 conn.execute(text("ALTER TABLE asientos ADD COLUMN validado BOOLEAN NOT NULL DEFAULT 0"))
             if "factura_id" not in columns:
                 conn.execute(text("ALTER TABLE asientos ADD COLUMN factura_id INTEGER"))
+            if "motivo_rechazo" not in columns:
+                conn.execute(text("ALTER TABLE asientos ADD COLUMN motivo_rechazo VARCHAR(200)"))
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_asientos_factura_id ON asientos (factura_id)"))
     if "cuentas" in table_names:
         columns = {item["name"] for item in inspector.get_columns("cuentas")}

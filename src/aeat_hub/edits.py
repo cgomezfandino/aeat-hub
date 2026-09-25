@@ -157,7 +157,14 @@ def patch_asiento(session: Session, asiento_id: int, payload: dict) -> Asiento:
     if payload.get("rechazar"):
         from aeat_hub.classify import rechazar_asiento
 
-        rechazar_asiento(asiento)
+        _registrar(
+            session,
+            asiento,
+            "motivo_rechazo",
+            asiento.motivo_rechazo or "",
+            str(payload.get("motivo_rechazo") or ""),
+        )
+        rechazar_asiento(asiento, motivo=payload.get("motivo_rechazo"))
         session.flush()
         return asiento
 

@@ -1344,6 +1344,7 @@ def _asiento_view(
         "conf_class_pct": _conf_pct(conf_class),
         "validado": bool(asiento.validado),
         "baja": baja,
+        "motivo_rechazo": asiento.motivo_rechazo or "",
         "duplicado_de_id": asiento.duplicado_de_id,
         "duplicado_nivel": asiento.duplicado_nivel,
         "cmd_confirmar": (
@@ -2077,7 +2078,11 @@ def _kan_card(item: dict) -> str:
     if estado == "duplicado":
         chip = f'<span class="pill duplicado">de #{item.get("duplicado_de_id") or "—"}</span>'
     elif estado == "rechazado":
-        chip = '<span class="pill rechazado">No es factura</span>'
+        motivo = (item.get("motivo_rechazo") or "").strip()
+        chip = (
+            '<span class="pill rechazado">'
+            f"{escape(motivo[:40] or 'Rechazada')}</span>"
+        )
     elif item["baja"]:
         chip = '<span class="pill pendiente">Confianza baja</span>'
     else:
@@ -2119,14 +2124,46 @@ def _panel_revision(data: dict) -> str:
     hechas = vivas - len(pendientes)
     progreso = int(round(100 * hechas / vivas)) if vivas else 100
 
+    TOPE = 12
+
     def _columna(clave: str, titulo: str, filas: list[dict], vacio: str, soltar: str) -> str:
-        cards = "".join(_kan_card(item) for item in filas)
+        visibles = filas[:TOPE]
+        cards = "".join(_kan_card(item) for item in visibles)
+        resto = len(filas) - len(visibles)
+        if resto > 0:
+            destino = "tabla" if clave == "pendiente" else clave
+            cards += (
+                f'<button type="button" class="kan-mas" data-kan-mas="{destino}">'
+                f"+{resto} más…</button>"
+            )
         cuerpo = cards or f'<p class="kan-vacio">{vacio}</p>'
         return (
             f'<section class="kan-col" data-col="{clave}" data-soltar="{soltar}">'
             f'<header class="kan-col-cab"><span>{titulo}</span><span class="kan-num">{len(filas)}</span></header>'
             f'<div class="kan-cuerpo">{cuerpo}</div></section>'
         )
+
+    def _fila_tabla(item: dict) -> str:
+        total = item.get("total")
+        total_label = escape(format_euro(total)) if total is not None else "—"
+        faltas = " · ".join(item.get("calidad_faltas") or [])[:90] or "—"
+        return (
+            "<tr>"
+            f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
+            f"<td>{escape(item['emisor'])}</td>"
+            f"<td>{escape(item['numero'])}</td>"
+            f"<td>{escape(item['fecha_label'])}</td>"
+            f'<td class="num">{total_label}</td>'
+            f"<td>{escape(faltas)}</td>"
+            f'<td class="kan-celda-act">'
+            f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar">✓</button>'
+            f'<button type="button" class="kan-act" data-kan="rechazar" data-id="{item["id"]}" title="Rechazar">✕</button>'
+            "</td></tr>"
+        )
+
+    tabla_rows = "".join(_fila_tabla(item) for item in pendientes_ordenadas) or (
+        '<tr><td colspan="7" class="muted">Nada pendiente.</td></tr>'
+    )
 
     return f"""
 <div class="panel" role="tabpanel" id="panel-revision" data-panel="revision"
@@ -2142,12 +2179,48 @@ def _panel_revision(data: dict) -> str:
       <div class="kan-barra"><i style="width: {progreso}%"></i></div>
       <strong>{progreso} %</strong></div>
   </div>
+  <div class="rev-vistas" role="group" aria-label="Vista de revisión">
+    <button type="button" class="ghost" id="rev-vista-tablero" aria-pressed="true">Tablero</button>
+    <button type="button" class="ghost" id="rev-vista-tabla" aria-pressed="false">Tabla</button>
+  </div>
   <div class="kan-board" id="kan-board">
     {_columna("pendiente", "Por revisar", pendientes_ordenadas, "Nada pendiente. Ingresa facturas y vuelve.", "validar|rechazar")}
     {_columna("confirmado", "Consolidadas", consolidadas, "Aquí caen las revisadas y buenas.", "reabrir")}
     {_columna("duplicado", "Duplicadas", duplicadas, "Sin duplicados marcados.", "quitar-dup")}
     {_columna("rechazado", "Rechazadas", rechazadas, "Sin documentos rechazados.", "recuperar")}
   </div>
+  <div class="rev-tabla" id="revision-tabla" hidden>
+    <div class="table-wrap"><table class="dup-tabla">
+      <thead><tr><th>Id</th><th>Emisor</th><th>Nº</th><th>Fecha</th>
+      <th class="num">Total</th><th>Por qué revisar</th><th></th></tr></thead>
+      <tbody id="rev-tabla-body">{tabla_rows}</tbody></table></div>
+    <nav class="pager" aria-label="Páginas de pendientes">
+      <button type="button" class="ghost" id="rev-prev">Anterior</button>
+      <span class="pager-label" id="rev-paginas"></span>
+      <button type="button" class="ghost" id="rev-next">Siguiente</button>
+    </nav>
+  </div>
+  <dialog class="edit-dialog" id="rechazo-dialog" aria-labelledby="rechazo-title">
+    <div class="dup-gestor-cuerpo">
+      <p class="dup-gestor-eyebrow">Rechazar factura</p>
+      <h2 id="rechazo-title">¿Por qué se rechaza?</h2>
+      <p class="hint">Queda fuera del libro y del Excel. El motivo alimenta las estadísticas
+      de aprendizaje del pipeline.</p>
+      <div class="rechazo-opciones">
+        <label class="filter-opt"><input type="radio" name="rechazo-motivo" value="No es una factura" checked><span>No es una factura (confirmación, publicidad…)</span></label>
+        <label class="filter-opt"><input type="radio" name="rechazo-motivo" value="Calidad de datos (OCR ilegible)"><span>Calidad de datos (OCR ilegible)</span></label>
+        <label class="filter-opt"><input type="radio" name="rechazo-motivo" value="Falta información (sin número/fecha/importes)"><span>Falta información (sin número/fecha/importes)</span></label>
+        <label class="filter-opt"><input type="radio" name="rechazo-motivo" value="Mal procesamiento del pipeline"><span>Mal procesamiento del pipeline</span></label>
+        <label class="filter-opt"><input type="radio" name="rechazo-motivo" value="Otro"><span>Otro</span></label>
+      </div>
+      <label class="dup-campo">Detalle (opcional)
+        <input id="rechazo-detalle" type="text" maxlength="140" placeholder="p. ej. escaneo torcido, página en inglés…"></label>
+      <div class="edit-actions" style="border:0; margin:12px 0 0; padding:0;">
+        <button type="button" class="ghost" id="rechazo-cancel">Cancelar</button>
+        <button type="button" class="export-btn" id="rechazo-ok">Rechazar</button>
+      </div>
+    </div>
+  </dialog>
   {_footer(data)}
 </div>
 """
@@ -3477,6 +3550,12 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .kan-act { width: 24px; height: 22px; border: 1px solid var(--line); background: #fff; cursor: pointer; font: inherit; font-size: 12px; color: var(--muted); }
 .kan-act:hover { border-color: var(--ink); color: var(--ink); }
 .kan-vacio { margin: 0; padding: 14px 10px; font-size: 12px; color: var(--muted); }
+.rev-vistas { display: flex; gap: 6px; margin: 0 0 10px; }
+.rev-vistas .ghost[aria-pressed="true"] { border-color: var(--ink); background: var(--paper); }
+.kan-mas { border: 1px dashed var(--line); background: transparent; padding: 6px; font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; }
+.rechazo-opciones { display: grid; gap: 6px; margin: 10px 0; }
+.rechazo-opciones .filter-opt { align-items: baseline; }
+.rev-tabla .kan-celda-act { white-space: nowrap; }
 .ficha-dup { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .ficha-dup .hint { margin: 0; }
 .dup-par { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: center; }
@@ -5077,8 +5156,11 @@ _JS = r"""
       if (!window.confirm(`¿Devolver el asiento #${id} a revisión?`)) return;
       kanPost(id, { validado: false, confirmado: true });
     } else if (accion === "rechazar") {
-      if (!window.confirm(`¿Rechazar el asiento #${id}? No es una factura: fuera del libro.`)) return;
-      kanPost(id, { rechazar: true, confirmado: true });
+      const dialogo = document.getElementById("rechazo-dialog");
+      if (!dialogo) return;
+      dialogo.dataset.rechazarId = id;
+      document.getElementById("rechazo-detalle").value = "";
+      dialogo.showModal();
     } else if (accion === "quitar-dup") {
       if (!window.confirm(`¿Quitar el duplicado del asiento #${id}?`)) return;
       kanPost(id, { quitar_duplicado: true, confirmado: true });
@@ -5121,10 +5203,60 @@ _JS = r"""
         toast("Para marcar duplicado abre la ficha o la pestaña Duplicados y elige el gemelo.");
         return;
       }
+      if (destino === "rechazado") {
+        kanAccion("rechazar", id);
+        return;
+      }
       if (!accion) return;
       kanAccion(accion, id);
     });
   }
+  const rechazoDialogo = document.getElementById("rechazo-dialog");
+  document.getElementById("rechazo-cancel")?.addEventListener("click", () => rechazoDialogo?.close());
+  document.getElementById("rechazo-ok")?.addEventListener("click", () => {
+    const id = rechazoDialogo?.dataset.rechazarId;
+    if (!id) return;
+    const marcado = rechazoDialogo.querySelector("input[name='rechazo-motivo']:checked");
+    const detalle = document.getElementById("rechazo-detalle")?.value.trim();
+    let motivo = marcado?.value || "Otro";
+    if (detalle) motivo = `${motivo} — ${detalle}`;
+    kanPost(id, { rechazar: true, motivo_rechazo: motivo, confirmado: true });
+  });
+  const revTablero = document.getElementById("kan-board");
+  const revTabla = document.getElementById("revision-tabla");
+  const revVista = (nombre) => {
+    const tablero = nombre !== "tabla";
+    if (revTablero) revTablero.hidden = !tablero;
+    if (revTabla) revTabla.hidden = tablero;
+    document.getElementById("rev-vista-tablero")?.setAttribute("aria-pressed", tablero ? "true" : "false");
+    document.getElementById("rev-vista-tabla")?.setAttribute("aria-pressed", tablero ? "false" : "true");
+    try { localStorage.setItem("aeat-hub-vista-revision", nombre); } catch {}
+  };
+  document.getElementById("rev-vista-tablero")?.addEventListener("click", () => revVista("tablero"));
+  document.getElementById("rev-vista-tabla")?.addEventListener("click", () => revVista("tabla"));
+  try { revVista(localStorage.getItem("aeat-hub-vista-revision") || "tablero"); } catch { revVista("tablero"); }
+  for (const boton of document.querySelectorAll("[data-kan-mas]")) {
+    boton.addEventListener("click", () => {
+      const destino = boton.dataset.kanMas;
+      if (destino === "tabla") revVista("tabla");
+      else showPanel(destino);
+    });
+  }
+  const REV_PAGE = 15;
+  let revPagina = 1;
+  const revPintar = () => {
+    const filas = [...document.querySelectorAll("#rev-tabla-body tr")];
+    const total = Math.max(1, Math.ceil(filas.length / REV_PAGE));
+    revPagina = Math.min(Math.max(1, revPagina), total);
+    filas.forEach((fila, idx) => {
+      fila.hidden = idx < (revPagina - 1) * REV_PAGE || idx >= revPagina * REV_PAGE;
+    });
+    const etiqueta = document.getElementById("rev-paginas");
+    if (etiqueta) etiqueta.textContent = filas.length ? `Página ${revPagina} de ${total} · ${filas.length} pendientes` : "";
+  };
+  document.getElementById("rev-prev")?.addEventListener("click", () => { revPagina -= 1; revPintar(); });
+  document.getElementById("rev-next")?.addEventListener("click", () => { revPagina += 1; revPintar(); });
+  revPintar();
   document.getElementById("insight-kpi-revisar")?.addEventListener("click", () => showPanel("revision"));
   document.getElementById("insight-kpi-revisar")?.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showPanel("revision"); }
