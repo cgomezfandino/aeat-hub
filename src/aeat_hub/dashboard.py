@@ -2732,12 +2732,14 @@ def _filter_th(
     col: str = "",
     sort: str = "",
     sort_type: str = "text",
+    help: str = "",
 ) -> str:
     cls = f" {extra}" if extra else ""
     col_attr = f' data-col="{col}"' if col else ""
     sort_attr = f' data-sort="{sort}" data-sort-type="{sort_type}"' if sort else ""
+    title_attr = f' title="{escape(help)}"' if help else ""
     return (
-        f'<th class="th-filter{cls}"{col_attr}{sort_attr}>'
+        f'<th class="th-filter{cls}"{col_attr}{sort_attr}{title_attr}>'
         f'<div class="th-head"><span class="th-label">{label}</span>'
         f'<button type="button" class="funnel" popovertarget="{pop_id}" '
         f'aria-label="Filtrar {label}" aria-expanded="false">{_FUNNEL_SVG}</button></div>'
@@ -2885,18 +2887,18 @@ def _ledger(data: dict) -> str:
       </colgroup>
       <thead>
         <tr>
-          {_filter_th("Id", "pop-q", id_inner, "col-sticky", col="id", sort="id", sort_type="num")}
-          {_filter_th("Nº factura", "pop-factura", _filter_checks("factura", choices["factura"]), col="factura", sort="factura")}
-          {_filter_th("Fecha compra", "pop-fecha", _filter_date_range(), col="fecha", sort="fecha")}
-          {_filter_th("Emisor", "pop-emisor", _filter_checks("emisor", choices["emisor"]), col="emisor", sort="emisor")}
-          {_filter_th("Confianza", "pop-confianza", _filter_checks("confianza", choices["confianza"]), col="confianza", sort="confianza")}
-          {_filter_th("Total", "pop-total", total_inner, "num", col="total", sort="total", sort_type="num")}
+          {_filter_th("Id", "pop-q", id_inner, "col-sticky", col="id", sort="id", sort_type="num", help="Número de asiento en el libro")}
+          {_filter_th("Nº factura", "pop-factura", _filter_checks("factura", choices["factura"]), col="factura", sort="factura", help="Número de factura tal como lo leyó el OCR")}
+          {_filter_th("Fecha compra", "pop-fecha", _filter_date_range(), col="fecha", sort="fecha", help="Fecha de la compra")}
+          {_filter_th("Emisor", "pop-emisor", _filter_checks("emisor", choices["emisor"]), col="emisor", sort="emisor", help="Tienda o empresa que emite la factura")}
+          {_filter_th("Confianza", "pop-confianza", _filter_checks("confianza", choices["confianza"]), col="confianza", sort="confianza", help="Calidad de la extracción: Revisar (dudosa), Aceptable o Validado por ti")}
+          {_filter_th("Total", "pop-total", total_inner, "num", col="total", sort="total", sort_type="num", help="Total pagado, IVA incluido")}
           <th class="num th-plain" data-col="articulos" data-sort="articulos" data-sort-type="num" title="Artículos con nombre en la factura"><span class="th-label">Artículos</span></th>
-          {_filter_th("NIF emisor", "pop-nif", _filter_checks("nif", choices["nif"]), col="nif", sort="nif")}
-          <th class="num th-plain" data-col="base" data-sort="base" data-sort-type="num"><span class="th-label">Base</span></th>
-          <th class="num th-plain" data-col="iva" data-sort="iva" data-sort-type="num"><span class="th-label">IVA</span></th>
-          <th class="cell-doc th-plain" data-col="doc" data-sort="doc"><span class="th-label">Doc</span></th>
-          {_filter_th("Estado", "pop-estado", _filter_checks("estado", choices["estado"]), "col-estado", col="estado", sort="estado")}
+          {_filter_th("NIF emisor", "pop-nif", _filter_checks("nif", choices["nif"]), col="nif", sort="nif", help="NIF de la empresa emisora")}
+          <th class="num th-plain" data-col="base" data-sort="base" data-sort-type="num" title="Base imponible (sin IVA)"><span class="th-label">Base</span></th>
+          <th class="num th-plain" data-col="iva" data-sort="iva" data-sort-type="num" title="Cuota de IVA soportado"><span class="th-label">IVA</span></th>
+          <th class="cell-doc th-plain" data-col="doc" data-sort="doc" title="Abrir el documento original (PDF o foto)"><span class="th-label">Doc</span></th>
+          {_filter_th("Estado", "pop-estado", _filter_checks("estado", choices["estado"]), "col-estado", col="estado", sort="estado", help="Por revisar, Confirmado o Duplicado (fuera de totales)")}
         </tr>
       </thead>
       <tbody>{rows}</tbody>
@@ -3631,21 +3633,21 @@ figure svg { width: 100%; height: auto; display: block; }
 }
 .col-id { width: 6%; }
 .col-factura { width: 11%; }
-.col-fecha { width: 11%; }
+.col-fecha { width: 10%; }
 .col-emisor { width: 14%; }
-.col-calidad { width: 9%; }
+.col-calidad { width: 10%; }
 .col-total { width: 7%; }
 .col-articulos { width: 7%; }
 .col-nif { width: 9%; }
 .col-base, .col-iva { width: 6%; }
 .col-doc { width: 4%; }
-.col-estado { width: 13%; }
+.col-estado { width: 12%; }
 th[data-col="id"], td[data-col="id"] { min-width: 6.4em; }
 th[data-col="factura"], td[data-col="factura"] { min-width: 9em; }
-th[data-col="fecha"], td[data-col="fecha"] { min-width: 11.5em; }
+th[data-col="fecha"], td[data-col="fecha"] { min-width: 10em; }
 th[data-col="emisor"], td[data-col="emisor"] { min-width: 8em; }
-th[data-col="confianza"], td[data-col="confianza"] { min-width: 7em; }
-th[data-col="estado"], td[data-col="estado"] { min-width: 10.5em; }
+th[data-col="confianza"], td[data-col="confianza"] { min-width: 8em; }
+th[data-col="estado"], td[data-col="estado"] { min-width: 9.5em; }
 th[data-col="total"], td[data-col="total"] { min-width: 5.5em; }
 th[data-col="articulos"], td[data-col="articulos"] { min-width: 6.4em; }
 th[data-col="nif"], td[data-col="nif"] { min-width: 7em; }
@@ -4325,6 +4327,9 @@ th {
   .mast { padding-top: 20px; }
   .mast-h1 #mast-kicker, h1 span { font-size: 18px; }
   .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ledger-table th, .ledger-table td { padding: 5px 8px; font-size: 12px; }
+  .ledger-table .th-label { font-size: 10px; letter-spacing: .04em; }
+  .ledger-table .funnel { width: 22px; height: 22px; }
   .kpi-grid > :last-child { grid-column: 1 / -1; }
   .irpf-kpis, .charts { grid-template-columns: 1fr 1fr; display: grid; }
   .charts figure:last-child { grid-column: auto; }
@@ -4340,6 +4345,8 @@ th {
   .mast-h1 { gap: 6px 8px; }
   .mast-h1 #mast-kicker, h1 span { font-size: 16px; }
   .meta, .mast-strip, .panel-lead { font-size: 13px; }
+  .ledger-table th, .ledger-table td { padding: 4px 6px; font-size: 11.5px; }
+  .ledger-table .th-label { font-size: 9.5px; }
   .kpis { padding: 14px 0 4px; }
   .kpi, .kpi-btn { padding: 12px; }
   .kpi strong, .kpi-btn strong { font-size: 22px; }

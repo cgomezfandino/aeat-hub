@@ -755,3 +755,18 @@ def test_ficha_score_colapsado_con_popover_de_explicaciones(session, layout):
     assert 'class="is-bad"' in html
     # y el JS recalcula y oculta la tira cuando no hay fallos
     assert "failsEl.hidden = malos.length === 0" in html
+
+
+def test_libro_cabeceras_con_ayuda_y_compactan():
+    """Cada columna explica qué es; en pantallas pequeñas la tabla compacta."""
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert 'title="Calidad de la extracción: Revisar (dudosa), Aceptable o Validado por ti"' in html
+    assert 'title="Número de factura tal como lo leyó el OCR"' in html
+    assert 'title="Base imponible (sin IVA)"' in html
+    assert 'title="Abrir el documento original (PDF o foto)"' in html
+    # responsive en los breakpoints existentes, sin crear uno nuevo a 900px
+    assert 'font-size: 12px' in html.split("@media (max-width: 1100px)", 1)[1].split("@media", 1)[0]
+    assert 'font-size: 11.5px' in html.split("@media (max-width: 700px)", 1)[1].split("@media", 1)[0]
+    assert "@media (max-width: 900px)" not in html
