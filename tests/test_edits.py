@@ -262,7 +262,7 @@ def test_hub_sirve_documento_y_guarda_asiento(session, layout):
         assert "Subtotal" in page
         assert "LEROY DEMO" in page
         assert f'href="/doc/{row.id}"' in page
-        assert f'href="/dashboard_CI-VA-001_2026.html#asiento-{row.id}"' in page
+        assert 'href="/dashboard_CI-VA-001_2026.html#revisar"' in page  # pendiente → tablero
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/doc/{row.id}") as resp:
             assert resp.status == 200
             assert resp.read().startswith(b"%PDF")

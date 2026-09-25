@@ -76,3 +76,4 @@ hf_cache/
 
 # Artefactos de depuración
 model.json
+.playwright-mcp/

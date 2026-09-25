@@ -298,6 +298,12 @@ def test_ficha_asiento_tiene_volver_y_compra(session):
         collect_asiento_ficha(session, row, dashboard_name="dashboard_CI-VA-001_2026.html")
     )
     assert "Volver al libro" in html
+    # pendiente: la vuelta lleva al tablero de revisión, no al Libro
+    assert 'href="/dashboard_CI-VA-001_2026.html#revisar"' in html
+    row.estado = "confirmado"
+    session.commit()
+    data = collect_asiento_ficha(session, row, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html = render_asiento_page(data)
     assert f'href="/dashboard_CI-VA-001_2026.html#asiento-{row.id}"' in html
     assert "Líneas de la factura" in html
     assert 'id="ficha-kpis"' in html
