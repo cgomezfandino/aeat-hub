@@ -713,11 +713,13 @@ def test_pestanha_duplicados_y_toggle_del_libro(session, layout):
     assert 'id="panel-duplicados"' in html
     assert "Duplicados fusionados" in html
     assert "Sospechosos pendientes" in html
-    # tarjetas cara a cara: la del duplicado con su gemelo y acción de quitar
-    assert 'class="dup-card"' in html
+    # tablas con gestor en pop-up: fila del duplicado con su gemelo enlazado
+    assert 'class="irpf-table dup-tabla"' in html
     assert f'href="/asiento/{dup.id}"' in html
-    assert 'data-dup-quitar' in html
-    assert "Quitar duplicado" in html
+    assert 'data-gestionar' in html
+    assert 'id="dup-gestor"' in html
+    assert f'data-dup-id="{dup.id}"' in html
+    assert "Gestionar" in html
     assert "Nada por aquí" in html or "Fusionar con #" in html
 
     # el Libro oculta duplicados por defecto (la pestaña es su sitio);
@@ -726,7 +728,7 @@ def test_pestanha_duplicados_y_toggle_del_libro(session, layout):
     assert "Mostrar duplicados" not in html
     assert 'row.dataset.estado === "duplicado" && !estadoSel' in html
 
-    # el sospechoso ofrece fusionar con su gemelo señalado
-    assert f'data-dup-fusionar="{gemelo_vivo.id}"' in html
+    # el sospechoso lleva su gemelo en la fila para el pop-up
+    assert f'data-dup-id="{gemelo_vivo.id}"' in html
     assert f'data-gemelo="{dup.id}"' in html
-    assert "Fusionar con #" in html
+    assert "gestorAbrir" in html
