@@ -21,8 +21,9 @@ def _asiento(session, actividad, **kwargs):
         emisor="TIENDA DEMO S.L.",
         nif_emisor="B12345674",
         estado="pendiente",
-        **kwargs,
     )
+    for clave, valor in kwargs.items():
+        setattr(row, clave, valor)
     session.add(row)
     session.commit()
     return row
@@ -96,3 +97,73 @@ def test_doctor_caza_fichero_perdido_y_descuadre(session, layout):
     assert "cuadre" in categorias
     cuadre = next(h for h in hallazgos if h.categoria == "cuadre")
     assert "no cuadra" in cuadre.detalle
+
+
+def _asiento_dup(session, actividad, **kwargs):
+    from tests.test_doctor import _asiento as _base
+
+    return _base(session, actividad, **kwargs)
+
+
+def test_escaneo_detecta_la_misma_factura_con_numeros_distintos(session):
+    """El caso IKEA: misma compra, número de factura y de servicio."""
+    from aeat_hub.linkage_facturas import escanear_duplicados
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _asiento_dup(
+        session, actividad,
+        emisor="IKEA Ibérica S.A.", nif_emisor="A28812618",
+        numero_factura="ESCINV-1", total=Decimal("190.75"),
+    )
+    _asiento_dup(
+        session, actividad,
+        emisor="IKEA IBÉRICA S.A., A28812618,", nif_emisor="A28812618",
+        numero_factura="ESSIM-1", total=Decimal("190.75"),
+    )
+    pares = escanear_duplicados(session, actividad)
+    assert len(pares) == 1
+    par = pares[0]
+    assert par.probabilidad >= 0.99
+    conceptos = dict(par.desglose)
+    assert conceptos.get("nif igual", 0) > 15
+    assert "importe igual" in conceptos
+    assert "fecha igual" in conceptos
+
+
+def test_escaneo_ignora_compras_distintas(session):
+    from aeat_hub.linkage_facturas import escanear_duplicados
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _asiento_dup(
+        session, actividad,
+        emisor="IKEA Ibérica S.A.", nif_emisor="A28812618",
+        numero_factura="ESCINV-2", total=Decimal("190.75"),
+    )
+    otro = _asiento_dup(
+        session, actividad,
+        emisor="IKEA Ibérica S.A.", nif_emisor="A28812618",
+        numero_factura="ESSIM-9", total=Decimal("55.00"),
+    )
+    otro.fecha = date(2026, 3, 3)
+    session.commit()
+    assert escanear_duplicados(session, actividad) == []
+
+
+def test_escaneo_excluye_ya_marcados_y_mismo_cluster(session):
+    from aeat_hub.linkage_facturas import escanear_duplicados
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    a = _asiento_dup(
+        session, actividad,
+        emisor="IKEA Ibérica S.A.", nif_emisor="A28812618",
+        numero_factura="ESCINV-3", total=Decimal("190.75"),
+    )
+    b = _asiento_dup(
+        session, actividad,
+        emisor="IKEA Ibérica S.A.", nif_emisor="A28812618",
+        numero_factura="ESSIM-3", total=Decimal("190.75"),
+    )
+    a.duplicado_de_id = b.id
+    a.duplicado_nivel = 3
+    session.commit()
+    assert escanear_duplicados(session, actividad) == []

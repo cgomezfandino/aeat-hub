@@ -27,6 +27,7 @@ from aeat_hub.export_dual import write_dual_xlsx
 from aeat_hub.filing import ordenar_asientos
 from aeat_hub.fiscal.accounts import REGIMEN_AE, REGIMEN_CI
 from aeat_hub.ingest import ingest_file, ingest_inbox, list_inbox, reparse_asientos
+from aeat_hub.linkage_facturas import escanear_duplicados
 from aeat_hub.logutil import setup_run_log
 from aeat_hub.models import Actividad, Asiento, Cuenta
 from aeat_hub.ocr.cascade import describe_auto
@@ -424,6 +425,47 @@ def duplicado(
             n = ordenar_asientos(session, layout, actividad)
             if n:
                 console.print(f"Reubicados {n} documentos.")
+
+
+@app.command("escaneo")
+def escaneo_duplicados(
+    actividad: str = typer.Option(..., "--actividad"),
+    umbral: float = typer.Option(0.90, "--umbral", help="Probabilidad mínima (0-1) para mencionar el par"),
+    aplicar: bool = typer.Option(False, "--aplicar", help="Marca los pares como sospechosos (nivel 3) en el libro"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Escanea duplicados factura-contra-factura con Splink y los menciona."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    with session_scope(factory) as session:
+        act = get_actividad(session, actividad)
+        pares = escanear_duplicados(session, act, umbral=umbral)
+        if not pares:
+            console.print("Sin duplicados probables por encima del umbral. Nada que mencionar.")
+            return
+        modo = "aplicado" if aplicar else "preview (--aplicar para marcarlos como sospechosos)"
+        console.print(f"[bold]Duplicados probables · {modo}[/bold]")
+        for par in pares:
+            desglose = " · ".join(f"{c} {b:+.1f}b" for c, b in par.desglose)
+            console.print(
+                f"#{par.id_a} ⇄ #{par.id_b} · P={par.probabilidad:.4f} "
+                f"({par.peso_bits:+.1f}b; {desglose})"
+            )
+        if aplicar:
+            for par in pares:
+                a = session.get(Asiento, par.id_a)
+                b = session.get(Asiento, par.id_b)
+                for uno, otro in ((a, b), (b, a)):
+                    if uno is None or uno.estado == "duplicado" or uno.validado:
+                        continue
+                    uno.duplicado_de_id = otro.id
+                    uno.duplicado_nivel = 3
+                    uno.estado = "pendiente"
+            session.flush()
+            console.print(
+                f"{len(pares)} pares marcados como sospechosos. Aparecen en la pestaña "
+                "Duplicados del dashboard; la fusión sigue siendo decisión tuya."
+            )
 
 
 @app.command()

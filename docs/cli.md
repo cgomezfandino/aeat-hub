@@ -144,6 +144,15 @@ uv run aeat-hub duplicado 8 --quitar # deshacer: vuelve a pendiente
 
 En la ficha del dashboard hay el botón **Marcar duplicado de…** (y **Quitar duplicado** si ya lo es) que hace lo mismo sin salir del navegador.
 
+### `escaneo`
+
+Punto de calidad de duplicados: compara factura contra factura con Splink (Fellegi-Sunter sobre NIF, número, fecha, importe exacto y nombre limpio) y **menciona** los pares probables con su probabilidad y desglose de pesos. La fusión sigue siendo decisión tuya.
+
+```bash
+uv run aeat-hub escaneo --actividad CI-VA-001            # menciona pares (preview)
+uv run aeat-hub escaneo --actividad CI-VA-001 --aplicar  # los marca como sospechosos (nivel 3)
+```
+
 ### `doctor`
 
 Audita el libro: relaciones huérfanas (la tabla `relaciones` es polimórfica sin FKs), ficheros perdidos en disco, importes que no cuadran (base+IVA≠total), IVAs imposibles y asientos sin fecha.

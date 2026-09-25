@@ -94,6 +94,19 @@ Corregir a mano un número mal leído: `aeat-hub factura numero <asiento> <núme
 
 Para fusionar a mano un duplicado evidente sin cambiar el número: `aeat-hub duplicado <duplicado> <bueno>` (y `--quitar` para deshacer). Mueve las evidencias a la factura buena, marca nivel 2 con relación `misma_factura` de fuente `usuario`, lo anota en el historial `Cambio` y reubica el fichero. En la ficha del dashboard: botones **Marcar duplicado de…** / **Quitar duplicado**.
 
+## Escaneo de duplicados factura-contra-factura (Splink)
+
+`aeat-hub escaneo` aplica el mismo modelo Fellegi-Sunter a nivel de factura:
+compara NIF, número normalizado, fecha, importe exacto en céntimos y nombre
+limpio de cada par de asientos vivos, y menciona los que superan P≥0,90 con
+su desglose («nif igual +17,9b · numero distinto −6,5b · fecha igual +6,2b …»).
+El NIF pesa mucho porque en bloque casi asegura la misma tienda, pero la
+identidad de factura la deciden fecha+importe+nombre: importes distintos son
+casi demoledores, y números distintos (factura vs servicio IKEA) no descartan.
+Con `--aplicar` los pares quedan como sospechosos (nivel 3) en la pestaña
+Duplicados; fusionar o descartar sigue siendo humano. Excluye los ya
+fusionados y los pares del mismo cluster de factura.
+
 ## Nombres canónicos por NIF
 
 Un mismo emisor llega del OCR con grafías distintas («IKEA IBÉRICA S.A., A28812618,»
