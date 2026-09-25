@@ -479,6 +479,18 @@ def render_asiento_page(data: dict) -> str:
         "const log = document.getElementById('ficha-log-dialog');"
         "document.getElementById('ficha-log')?.addEventListener('click', () => log?.showModal());"
         "document.getElementById('ficha-log-close')?.addEventListener('click', () => log?.close());"
+        "const qBtn = document.querySelector('.q-i-btn[popovertarget]');"
+        "const qPop = document.getElementById('ficha-score-pop');"
+        "qPop?.addEventListener('toggle', (event) => {"
+        "  if (event.newState !== 'open' || !qBtn) return;"
+        "  qBtn.setAttribute('aria-expanded', 'true');"
+        "  const rect = qBtn.getBoundingClientRect();"
+        "  const left = Math.max(8, Math.min(rect.left, window.innerWidth - qPop.offsetWidth - 8));"
+        "  const top = Math.min(rect.bottom + 8, window.innerHeight - qPop.offsetHeight - 8);"
+        "  qPop.style.left = `${left}px`;"
+        "  qPop.style.top = `${top}px`;"
+        "});"
+        "qBtn?.addEventListener('click', () => qBtn.setAttribute('aria-expanded', qPop?.open ? 'false' : 'true'));"
         "})();</script>\n"
         '<script>(() => {\n'
         "  const id = document.body.dataset.asiento;\n"
@@ -788,6 +800,16 @@ def _ficha_lines_script() -> str:
     if (chip) {
       chip.classList.remove("q-ok", "q-warn", "q-bad", "q-muted");
       chip.classList.add(all ? "q-ok" : pct >= 80 ? "q-warn" : "q-bad");
+    }
+    const failsEl = document.getElementById("ficha-score-fails");
+    if (failsEl) {
+      const malos = items.filter((li) => li.dataset.ok === "0");
+      failsEl.innerHTML = malos.map((li) => {
+        const nombre = li.querySelector("span")?.textContent || "";
+        const detalle = li.querySelector("em")?.textContent || "";
+        return `<li class="is-bad"><span>${nombre}</span>${detalle ? `<em>${detalle}</em>` : ""}</li>`;
+      }).join("");
+      failsEl.hidden = malos.length === 0;
     }
   };
   const pencil = (n) => `<button type="button" class="row-edit line-edit-btn" title="Editar línea" aria-label="Editar línea ${n}">`
@@ -1499,12 +1521,20 @@ def _criterios_html(checks: list[dict], *, total: object = None) -> str:
     items = []
     for item in checks:
         state = "is-ok" if item["ok"] else "is-bad"
+        nota = escape(item.get("title") or "")
+        title_attr = f' title="{nota}"' if nota else ""
         detail = f"<em>{escape(item['detail'])}</em>" if item["detail"] else ""
-        title = f' title="{escape(item["title"])}"' if item.get("title") else ""
         items.append(
             f'<li data-check="{escape(item["id"])}" data-ok="{"1" if item["ok"] else "0"}" '
-            f'class="{state}"{title}><span>{escape(item["label"])}</span>{detail}</li>'
+            f'class="{state}"><span{title_attr}>{escape(item["label"])}</span>{detail}</li>'
         )
+    fallos = [item for item in checks if not item["ok"]]
+    fallos_html = "".join(
+        f'<li class="is-bad"><span>{escape(item["label"])}</span>'
+        f"<em>{escape(item['detail'])}</em></li>"
+        for item in fallos
+    ) or ""
+    fails_hidden = "" if fallos else " hidden"
     quantized = q2(total) if total is not None else None
     total_attr = f' data-total="{quantized:.2f}"' if quantized is not None else ""
     return (
@@ -1513,7 +1543,13 @@ def _criterios_html(checks: list[dict], *, total: object = None) -> str:
         f'<i class="q-dot" aria-hidden="true"></i>'
         f'<span id="ficha-score-label">{label}</span>'
         f'<span class="q-score" id="ficha-score-pct">{pct} %</span></span>'
-        f'<ul class="q-checks" id="ficha-score-list">{"".join(items)}</ul>'
+        f'<button type="button" class="q-i-btn" popovertarget="ficha-score-pop" '
+        f'aria-label="Qué se comprueba en esta factura" aria-expanded="false">i</button>'
+        f'<ul class="q-checks q-solo-fallos" id="ficha-score-fails"{fails_hidden}>{fallos_html}</ul>'
+        f'<div id="ficha-score-pop" popover="auto" class="q-pop q-pop-score" role="tooltip">'
+        f"<strong>Comprobaciones de la factura</strong>"
+        f'<ul class="q-checks q-pop-list" id="ficha-score-list">{"".join(items)}</ul>'
+        "</div>"
         "</div>"
     )
 
@@ -3907,6 +3943,28 @@ a.row-go:hover { text-decoration: underline; }
   list-style: none;
   width: 100%;
 }
+.q-i-btn {
+  align-self: flex-start;
+  width: 20px; height: 20px;
+  display: inline-grid; place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--muted);
+  font: 600 11px/1 "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+  padding: 0;
+}
+.q-i-btn:hover, .q-i-btn[aria-expanded="true"] { border-color: var(--ink); color: var(--ink); }
+.q-solo-fallos { gap: 4px; margin-top: 2px; }
+.q-pop-score { width: min(400px, calc(100vw - 24px)); }
+.q-pop-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.q-pop-list li { display: grid; gap: 1px; padding: 4px 0; border-bottom: 1px solid rgba(251, 247, 239, .12); }
+.q-pop-list li:last-child { border-bottom: 0; }
+.q-pop-list li span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sheet); }
+.q-pop-list li span::before { content: "✓"; color: #9bc4b8; font-size: 11px; }
+.q-pop-list li.is-bad span::before { content: "✕"; color: #d98c6a; }
+.q-pop-list li em { font-style: normal; font-size: 11px; color: #c9c2b6; }
 .q-checks li {
   display: inline-flex;
   align-items: baseline;

@@ -734,3 +734,24 @@ def test_pestanha_duplicados_y_toggle_del_libro(session, layout):
     assert f'data-gemelo="{dup.id}"' in html
     assert 'data-motivo="mismo NIF o emisor + importe ±3 días, o imagen casi idéntica"' in html
     assert "gestorAbrir" in html
+
+
+def test_ficha_score_colapsado_con_popover_de_explicaciones(session, layout):
+    """Todo en orden: solo chip + (i); la lista completa vive en el popover."""
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    asiento = session.scalars(select(Asiento).order_by(Asiento.id)).first()
+    data = collect_asiento_ficha(session, asiento, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html = render_asiento_page(data)
+    # botón (i) con popover y la lista completa dentro (contrato del JS)
+    assert 'class="q-i-btn" popovertarget="ficha-score-pop"' in html
+    assert 'id="ficha-score-pop"' in html
+    assert 'id="ficha-score-list"' in html
+    assert "Comprobaciones de la factura" in html
+    assert 'data-check="numero"' in html
+    assert 'data-check="suma"' in html
+    # con fallos (el asiento semilla no tiene líneas) la tira los muestra inline
+    assert 'id="ficha-score-fails">' in html
+    assert 'class="is-bad"' in html
+    # y el JS recalcula y oculta la tira cuando no hay fallos
+    assert "failsEl.hidden = malos.length === 0" in html
