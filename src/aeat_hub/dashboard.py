@@ -2075,16 +2075,20 @@ def _dup_attrs(item: dict, gemelo_view: dict | None, gemelo_id: int | None) -> s
             return format_euro(valor)
         return str(valor)
 
+    motivo = MOTIVO_NIVEL.get(item.get("duplicado_nivel"), "sospecha del modelo")
     return " ".join(
         [
             f'data-dup-id="{item["id"]}"',
             f'data-estado="{"duplicado" if item["estado"] == "duplicado" else "sospechoso"}"',
             f'data-emisor="{escape(item["emisor"])}"',
+            f'data-nif="{escape(item.get("nif") or "")}"',
             f'data-numero="{escape(item["numero"])}"',
             f'data-fecha="{escape(item["fecha_label"])}"',
             f'data-total="{escape(format_euro(item["total"]) if item["total"] is not None else "—")}"',
+            f'data-motivo="{escape(motivo)}"',
             f'data-gemelo="{gemelo_id or ""}"',
             f'data-gemelo-emisor="{escape(_v("emisor"))}"',
+            f'data-gemelo-nif="{escape(_v("nif"))}"',
             f'data-gemelo-numero="{escape(_v("numero"))}"',
             f'data-gemelo-fecha="{escape(_v("fecha_label"))}"',
             f'data-gemelo-total="{escape(_v("total"))}"',
@@ -2093,24 +2097,20 @@ def _dup_attrs(item: dict, gemelo_view: dict | None, gemelo_id: int | None) -> s
 
 
 def _dup_card(item: dict, gemelo_view: dict | None, gemelo_id: int | None) -> str:
-    es_duplicado = item["estado"] == "duplicado"
-    nivel = item.get("duplicado_nivel")
-    motivo = MOTIVO_NIVEL.get(nivel, "sospecha del modelo")
     gemelo_celda = (
         f'<a href="/asiento/{gemelo_id}">#{gemelo_id}</a>' if gemelo_id else "—"
     )
     total = item.get("total")
     total_label = escape(format_euro(total)) if total is not None else "—"
     return (
-        f"<tr {_dup_attrs(item, gemelo_view, gemelo_id)}>"
+        f'<tr tabindex="0" role="button" {_dup_attrs(item, gemelo_view, gemelo_id)}>'
         f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
         f"<td>{escape(item['emisor'])}</td>"
         f"<td>{escape(item['numero'])}</td>"
         f"<td>{escape(item['fecha_label'])}</td>"
         f'<td class="num">{total_label}</td>'
         f"<td>{gemelo_celda}</td>"
-        f"<td>{escape(motivo)}</td>"
-        f'<td><button type="button" class="ghost" data-gestionar>Gestionar</button></td>'
+        '<td class="dup-abrir" aria-hidden="true">›</td>'
         "</tr>"
     )
 
@@ -2131,9 +2131,9 @@ def _panel_duplicados(data: dict) -> str:
             gemelo_id = item.get("duplicado_de_id") or _gemelo_que_apunta(item["id"], data)
             filas.append(_dup_card(item, por_id.get(gemelo_id) if gemelo_id else None, gemelo_id))
         return (
-            f'<div class="table-wrap" aria-label="{escape(aria)}"><table class="irpf-table dup-tabla">'
+            f'<div class="table-wrap" aria-label="{escape(aria)}"><table class="dup-tabla">'
             "<thead><tr><th>Id</th><th>Emisor</th><th>Nº</th><th>Fecha</th>"
-            '<th class="num">Total</th><th>Gemelo</th><th>Motivo</th><th></th></tr></thead>'
+            '<th class="num">Total</th><th>Gemelo</th><th></th></tr></thead>'
             f'<tbody>{"".join(filas)}</tbody></table></div>'
         )
 
@@ -2161,8 +2161,8 @@ def _panel_duplicados(data: dict) -> str:
   </section>
   <dialog class="edit-dialog" id="dup-gestor" aria-labelledby="dup-gestor-title">
     <h2 id="dup-gestor-title">Gestionar duplicado</h2>
-    <div class="dup-par" id="dup-gestor-par"></div>
     <p class="hint" id="dup-gestor-motivo"></p>
+    <div class="dup-par" id="dup-gestor-par"></div>
     <div class="edit-actions">
       <a class="ghost" id="dup-gestor-ficha" target="_blank" rel="noopener">Abrir ficha</a>
       <button type="button" class="export-btn" id="dup-gestor-fusionar" hidden>Fusionar</button>
@@ -2984,6 +2984,7 @@ _CSS = r"""
   --link-hover: #134868;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 html, body { margin: 0; background: var(--paper); color: var(--ink); }
 html { height: 100%; }
@@ -3317,7 +3318,13 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .dup-emisor { margin: 0; }
 .dup-vinclo { color: var(--muted); font-size: 20px; }
 .dup-vacio { border: 1px dashed var(--line); background: var(--sheet); padding: 18px; color: var(--muted); }
-.dup-tabla td button { white-space: nowrap; }
+.dup-tabla { width: 100%; border-collapse: collapse; background: #fff; }
+.dup-tabla th, .dup-tabla td { border-bottom: 1px solid var(--line); padding: 5px 10px; font-size: 13px; text-align: left; }
+.dup-tabla th { color: var(--muted); font-size: 12px; font-weight: 600; }
+.dup-tabla .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dup-tabla tbody tr { cursor: pointer; }
+.dup-tabla tbody tr:hover, .dup-tabla tbody tr:focus { background: var(--paper); outline: none; }
+.dup-abrir { color: var(--muted); text-align: right; width: 24px; }
 #dup-gestor .edit-actions { margin-top: 12px; }
 @media (max-width: 640px) {
   .dup-par { grid-template-columns: 1fr; }
@@ -4823,20 +4830,20 @@ _JS = r"""
     if (!gestor || !fila) return;
     const d = fila.dataset;
     const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    const lado = (rol, id, emisor, numero, fecha, total) => `
+    const lado = (rol, estado, id, emisor, nif, numero, fecha, total) => `
       <div class="dup-lado">
         <p class="dup-rol">${esc(rol)}</p>
         ${id ? `<a href="/asiento/${id}">Asiento #${id}</a>` : ""}
         <p class="dup-emisor">${esc(emisor) || "—"}</p>
-        <p class="muted">${esc(numero)} · ${esc(fecha)}</p>
+        <p class="muted">${esc(numero)} · ${esc(fecha)}${nif ? ` · NIF ${esc(nif)}` : ""}</p>
+        <p><span class="pill ${esc(estado)}">${estado === "duplicado" ? "Duplicado" : estado === "sospechoso" ? "Sospechoso" : "Asiento"}</span></p>
         <strong>${esc(total)}</strong>
       </div>`;
     document.getElementById("dup-gestor-par").innerHTML = `
-      ${lado(d.estado === "duplicado" ? "Duplicado" : "A revisar", d.dupId, d.emisor, d.numero, d.fecha, d.total)}
+      ${lado(d.estado === "duplicado" ? "Duplicado" : "A revisar", d.estado, d.dupId, d.emisor, d.nif, d.numero, d.fecha, d.total)}
       <div class="dup-vinclo" aria-hidden="true">⇄</div>
-      ${lado(d.estado === "duplicado" ? "Asiento bueno" : "Posible gemelo", d.gemelo, d.gemeloEmisor, d.gemeloNumero, d.gemeloFecha, d.gemeloTotal)}`;
-    document.getElementById("dup-gestor-motivo").textContent =
-      fila.querySelector("td:nth-child(7)")?.textContent?.trim() || "";
+      ${lado(d.estado === "duplicado" ? "Asiento bueno" : "Posible gemelo", d.gemelo ? "vivo" : "", d.gemelo, d.gemeloEmisor, d.gemeloNif, d.gemeloNumero, d.gemeloFecha, d.gemeloTotal)}`;
+    document.getElementById("dup-gestor-motivo").textContent = d.motivo || "";
     const btnFusionar = document.getElementById("dup-gestor-fusionar");
     const btnQuitar = document.getElementById("dup-gestor-quitar");
     const ficha = document.getElementById("dup-gestor-ficha");
@@ -4848,8 +4855,14 @@ _JS = r"""
     gestor.dataset.gemelo = d.gemelo || "";
     gestor.showModal();
   };
-  for (const boton of document.querySelectorAll("[data-gestionar]")) {
-    boton.addEventListener("click", () => gestorAbrir(boton.closest("tr")));
+  for (const fila of document.querySelectorAll("#panel-duplicados tr[data-dup-id]")) {
+    fila.addEventListener("click", () => gestorAbrir(fila));
+    fila.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        gestorAbrir(fila);
+      }
+    });
   }
   document.getElementById("dup-gestor-cerrar")?.addEventListener("click", () => gestor?.close());
   document.getElementById("dup-gestor-fusionar")?.addEventListener("click", () => {

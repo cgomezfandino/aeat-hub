@@ -713,13 +713,14 @@ def test_pestanha_duplicados_y_toggle_del_libro(session, layout):
     assert 'id="panel-duplicados"' in html
     assert "Duplicados fusionados" in html
     assert "Sospechosos pendientes" in html
-    # tablas con gestor en pop-up: fila del duplicado con su gemelo enlazado
-    assert 'class="irpf-table dup-tabla"' in html
+    # tabla compacta: filas clicables con datos para el pop-up
+    assert 'class="dup-tabla"' in html
     assert f'href="/asiento/{dup.id}"' in html
-    assert 'data-gestionar' in html
     assert 'id="dup-gestor"' in html
     assert f'data-dup-id="{dup.id}"' in html
-    assert "Gestionar" in html
+    assert 'data-motivo="sospecha del modelo"' in html  # el seed no fija nivel
+    assert 'data-nif=' in html
+    assert '<tr tabindex="0" role="button" data-dup-id=' in html
     assert "Nada por aquí" in html or "Fusionar con #" in html
 
     # el Libro oculta duplicados por defecto (la pestaña es su sitio);
@@ -728,7 +729,8 @@ def test_pestanha_duplicados_y_toggle_del_libro(session, layout):
     assert "Mostrar duplicados" not in html
     assert 'row.dataset.estado === "duplicado" && !estadoSel' in html
 
-    # el sospechoso lleva su gemelo en la fila para el pop-up
+    # el sospechoso lleva su gemelo y motivo en la fila para el pop-up
     assert f'data-dup-id="{gemelo_vivo.id}"' in html
     assert f'data-gemelo="{dup.id}"' in html
+    assert 'data-motivo="mismo NIF o emisor + importe ±3 días, o imagen casi idéntica"' in html
     assert "gestorAbrir" in html
