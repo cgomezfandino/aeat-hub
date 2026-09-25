@@ -3368,6 +3368,8 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .dup-tabla th { color: var(--muted); font-size: 12px; font-weight: 600; }
 .dup-tabla .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dup-tabla tbody tr { cursor: pointer; }
+.dup-tabla a, #dup-gestor .dup-ref { color: inherit; text-decoration: none; }
+.dup-tabla a:hover, #dup-gestor .dup-ref:hover { text-decoration: underline; }
 .dup-tabla tbody tr:hover, .dup-tabla tbody tr:focus { background: var(--paper); outline: none; }
 .dup-abrir { color: var(--muted); text-align: right; width: 24px; }
 #dup-gestor .dup-gestor-cuerpo { padding: 20px 20px 4px; }
