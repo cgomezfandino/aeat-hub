@@ -2032,66 +2032,108 @@ def _panel_libro(data: dict) -> str:
     )
 
 
-def _dup_fila(item: dict, gemelo_label: str) -> str:
+def _dup_lado(item: dict | None, rol: str, asiento_id: int | None) -> str:
+    """Una de las dos caras de un caso de duplicado (duplicado o gemelo)."""
+    if item is None:
+        if asiento_id is None:
+            return '<div class="dup-lado"><p class="muted">Gemelo no encontrado.</p></div>'
+        return (
+            '<div class="dup-lado">'
+            f'<p class="dup-rol">{escape(rol)}</p>'
+            f'<a href="/asiento/{asiento_id}">Asiento #{asiento_id}</a>'
+            "<p class=\"muted\">Fuera del ejercicio actual.</p>"
+            "</div>"
+        )
+    total = item.get("total")
+    total_label = escape(format_euro(total)) if total is not None else "—"
     return (
-        "<tr>"
-        f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
-        f"<td>{escape(item['emisor'])}</td>"
-        f"<td>{escape(item['numero'])}</td>"
-        f'<td>{escape(item["fecha_label"])}</td>'
-        f'<td class="num">{escape(format_euro(item["total"]))}</td>'
-        f'<td>{gemelo_label}</td>'
-        "</tr>"
+        '<div class="dup-lado">'
+        f'<p class="dup-rol">{escape(rol)}</p>'
+        f'<a href="/asiento/{item["id"]}">Asiento #{item["id"]}</a>'
+        f"<p class=\"dup-emisor\">{escape(item['emisor'])}</p>"
+        f"<p class=\"muted\">{escape(item['numero'])} · {escape(item['fecha_label'])}</p>"
+        f"<strong>{total_label}</strong>"
+        "</div>"
+    )
+
+
+MOTIVO_NIVEL = {
+    2: "fusión por número o decisión humana",
+    3: "mismo NIF o emisor + importe ±3 días, o imagen casi idéntica",
+}
+
+
+def _dup_card(item: dict, gemelo_view: dict | None, gemelo_id: int | None) -> str:
+    es_duplicado = item["estado"] == "duplicado"
+    nivel = item.get("duplicado_nivel")
+    motivo = MOTIVO_NIVEL.get(nivel, "sospecha del modelo")
+    if es_duplicado:
+        acciones = (
+            f'<button type="button" class="ghost" data-dup-quitar="{item["id"]}">'
+            "Quitar duplicado</button>"
+        )
+        pill = '<span class="pill duplicado">Duplicado</span>'
+    else:
+        acciones = (
+            f'<button type="button" class="export-btn" data-dup-fusionar="{item["id"]}"'
+            f' data-gemelo="{gemelo_id or ""}">Fusionar con #{gemelo_id}</button>'
+            if gemelo_id
+            else '<a class="ghost" href="/asiento/{0}">Revisar en la ficha</a>'.format(item["id"])
+        )
+        pill = '<span class="pill pendiente">Sospechoso</span>'
+    return (
+        '<article class="dup-card">'
+        f'<header class="dup-card-head">{pill}'
+        f'<span class="dup-motivo">{escape(motivo)}</span></header>'
+        '<div class="dup-par">'
+        f"{_dup_lado(item, 'Duplicado' if es_duplicado else 'A revisar', item['id'])}"
+        '<div class="dup-vinclo" aria-hidden="true">⇄</div>'
+        f"{_dup_lado(gemelo_view, 'Asiento bueno' if es_duplicado else 'Posible gemelo', gemelo_id)}"
+        "</div>"
+        f'<div class="edit-actions">{acciones}</div>'
+        "</article>"
     )
 
 
 def _panel_duplicados(data: dict) -> str:
+    por_id = {item["id"]: item for item in data["asientos"]}
     fusionados = [item for item in data["asientos"] if item["estado"] == "duplicado"]
     sospechosos = data.get("sospechosos") or []
 
-    def _filas(rows: list[dict], prefix: str) -> str:
+    def _tarjetas(rows: list[dict]) -> str:
+        if not rows:
+            return (
+                '<p class="dup-vacio">Nada por aquí. Cuando el modelo detecte '
+                "la misma compra dos veces, aparecerá aquí para que decidas.</p>"
+            )
         parts = []
         for item in rows:
-            gemelo = item.get("duplicado_de_id")
-            if gemelo:
-                gemelo_label = f'<a href="/asiento/{gemelo}">#{gemelo}</a>'
-            elif item["estado"] != "duplicado":
-                apuntado = _gemelo_que_apunta(item["id"], data)
-                gemelo_label = (
-                    f'<a href="/asiento/{apuntado}">#{apuntado}</a>'
-                    if apuntado
-                    else "—"
-                )
-            else:
-                gemelo_label = "—"
-            parts.append(_dup_fila(item, gemelo_label))
-        if not parts:
-            return f'<tr><td colspan="6" class="muted">Nada aquí.</td></tr>'
+            gemelo_id = item.get("duplicado_de_id") or _gemelo_que_apunta(item["id"], data)
+            gemelo_view = por_id.get(gemelo_id) if gemelo_id else None
+            parts.append(_dup_card(item, gemelo_view, gemelo_id))
         return "".join(parts)
 
+    resumen = (
+        f'{len(fusionados)} fusionado{"s" if len(fusionados) != 1 else ""} · '
+        f'{len(sospechosos)} sospechoso{"s" if len(sospechosos) != 1 else ""}'
+    )
     return f"""
 <div class="panel" role="tabpanel" id="panel-duplicados" data-panel="duplicados"
   aria-labelledby="tab-duplicados">
-  <p class="panel-lead">La misma compra más de una vez. Fuera de los totales hasta que decidas.</p>
+  <p class="panel-lead">La misma compra más de una vez, cara a cara con su gemelo. {escape(resumen)}.</p>
   <section class="insight-block" aria-labelledby="dup-fusionados">
     <div class="review-head">
       <h2 id="dup-fusionados">Duplicados fusionados</h2>
-      <p>Marcados (por el modelo o por ti) y fuera de los totales. «Quitar duplicado» en su ficha para deshacer.</p>
+      <p>Marcados (por el modelo o por ti) y fuera de los totales. Se deshacen con «Quitar duplicado».</p>
     </div>
-    <div class="table-wrap"><table class="irpf-table">
-      <thead><tr><th>Id</th><th>Emisor</th><th>Nº</th><th>Fecha</th><th class="num">Total</th><th>Gemelo</th></tr></thead>
-      <tbody>{_filas(fusionados, "dup")}</tbody>
-    </table></div>
+    {_tarjetas(fusionados)}
   </section>
   <section class="insight-block" aria-labelledby="dup-sospechosos">
     <div class="review-head">
       <h2 id="dup-sospechosos">Sospechosos pendientes</h2>
-      <p>Mismo NIF o emisor + importe ±3 días, o imagen casi idéntica. Revisa y fusiona desde su ficha.</p>
+      <p>Decide con un click: «Fusionar» marca el asiento como duplicado de su gemelo.</p>
     </div>
-    <div class="table-wrap"><table class="irpf-table">
-      <thead><tr><th>Id</th><th>Emisor</th><th>Nº</th><th>Fecha</th><th class="num">Total</th><th>Gemelo</th></tr></thead>
-      <tbody>{_filas(sospechosos, "sos")}</tbody>
-    </table></div>
+    {_tarjetas(sospechosos)}
   </section>
   {_footer(data)}
 </div>
@@ -3233,6 +3275,21 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .filter-trims { display: flex; gap: 6px; }
 .ficha-dup { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .ficha-dup .hint { margin: 0; }
+.dup-card { border: 1px solid var(--line); background: #fff; padding: 14px 16px; margin: 0 0 14px; }
+.dup-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.dup-motivo { color: var(--muted); font-size: 13px; }
+.dup-par { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: center; }
+.dup-lado { display: grid; gap: 2px; }
+.dup-lado a { font-weight: 600; }
+.dup-rol { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.dup-emisor { margin: 0; }
+.dup-vinclo { color: var(--muted); font-size: 20px; }
+.dup-vacio { border: 1px dashed var(--line); background: var(--sheet); padding: 18px; color: var(--muted); }
+.dup-card .edit-actions { margin: 12px 0 0; }
+@media (max-width: 640px) {
+  .dup-par { grid-template-columns: 1fr; }
+  .dup-vinclo { display: none; }
+}
 .dup-campo { display: grid; gap: 4px; margin: 10px 0 0; font-size: 13px; color: var(--muted); }
 .dup-select, .dup-manual {
   font: inherit; color: var(--ink);
@@ -4713,6 +4770,37 @@ _JS = r"""
   };
   document.getElementById("export-visible")?.addEventListener("click", exportVisible);
   document.getElementById("export-visible-top")?.addEventListener("click", exportVisible);
+
+  const dupPost = async (asiento, body) => {
+    try {
+      const res = await fetch(`/api/asientos/${asiento}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload.ok === false) throw new Error(payload.error || String(res.status));
+      window.location.reload();
+    } catch (err) {
+      alert("No se pudo guardar: " + err.message);
+    }
+  };
+  for (const button of document.querySelectorAll("[data-dup-quitar]")) {
+    button.addEventListener("click", () => {
+      const text = `¿Quitar el duplicado del asiento #${button.dataset.dupQuitar}? Vuelve a Por revisar.`;
+      if (!window.confirm(text)) return;
+      dupPost(button.dataset.dupQuitar, { quitar_duplicado: true, confirmado: true });
+    });
+  }
+  for (const button of document.querySelectorAll("[data-dup-fusionar]")) {
+    button.addEventListener("click", () => {
+      const gemelo = button.dataset.gemelo;
+      if (!gemelo) return;
+      const text = `¿Marcar el asiento #${button.dataset.dupFusionar} como duplicado de #${gemelo}?`;
+      if (!window.confirm(text)) return;
+      dupPost(button.dataset.dupFusionar, { duplicado_de: gemelo, confirmado: true });
+    });
+  }
 
   const table = document.querySelector(".ledger-table");
   const COL_KEY = "aeat-hub-libro-cols";

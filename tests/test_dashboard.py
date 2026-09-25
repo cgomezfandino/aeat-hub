@@ -689,6 +689,22 @@ def test_pestanha_duplicados_y_toggle_del_libro(session, layout):
     _seed_asientos(session, actividad)
     dup = session.scalars(select(Asiento).where(Asiento.estado == "duplicado")).first()
     session.commit()
+    gemelo_vivo = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        cuenta_codigo="CI.GAS.LUZ",
+        fecha=date(2026, 3, 12),
+        ejercicio=2026,
+        emisor="IBERDROLA DEMO",
+        nif_emisor="B12345674",
+        numero_factura="F3",
+        total=Decimal("48.40"),
+        estado="pendiente",
+        duplicado_de_id=dup.id,
+        duplicado_nivel=3,
+    )
+    session.add(gemelo_vivo)
+    session.commit()
     data = collect_dashboard(session, actividad, 2026)
     html = render_dashboard(data)
 
@@ -697,11 +713,20 @@ def test_pestanha_duplicados_y_toggle_del_libro(session, layout):
     assert 'id="panel-duplicados"' in html
     assert "Duplicados fusionados" in html
     assert "Sospechosos pendientes" in html
+    # tarjetas cara a cara: la del duplicado con su gemelo y acción de quitar
+    assert 'class="dup-card"' in html
     assert f'href="/asiento/{dup.id}"' in html
-    assert "Nada aquí." in html  # la sección de sospechosos está vacía
+    assert 'data-dup-quitar' in html
+    assert "Quitar duplicado" in html
+    assert "Nada por aquí" in html or "Fusionar con #" in html
 
     # el Libro oculta duplicados por defecto (la pestaña es su sitio);
     # solo vuelven si se piden a mano desde el embudo de Estado
     assert 'id="toggle-dups"' not in html
     assert "Mostrar duplicados" not in html
     assert 'row.dataset.estado === "duplicado" && !estadoSel' in html
+
+    # el sospechoso ofrece fusionar con su gemelo señalado
+    assert f'data-dup-fusionar="{gemelo_vivo.id}"' in html
+    assert f'data-gemelo="{dup.id}"' in html
+    assert "Fusionar con #" in html
