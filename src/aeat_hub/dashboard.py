@@ -2165,13 +2165,15 @@ def _panel_duplicados(data: dict) -> str:
       <h2 id="dup-gestor-title">Gestionar duplicado</h2>
       <p class="dup-motivo-caja" id="dup-gestor-motivo"></p>
       <div class="dup-par" id="dup-gestor-par"></div>
-      <div class="edit-actions">
-        <a class="ghost" id="dup-gestor-ficha" target="_blank" rel="noopener">Abrir ficha</a>
+    </div>
+    <footer class="dup-gestor-pie">
+      <a class="dup-ficha-link" id="dup-gestor-ficha" target="_blank" rel="noopener">Abrir ficha ↗</a>
+      <div class="dup-gestor-acciones">
+        <button type="button" class="ghost" id="dup-gestor-cerrar">Cerrar</button>
         <button type="button" class="export-btn" id="dup-gestor-fusionar" hidden>Fusionar</button>
         <button type="button" class="ghost" id="dup-gestor-quitar" hidden>Quitar duplicado</button>
-        <button type="button" class="ghost" id="dup-gestor-cerrar">Cerrar</button>
       </div>
-    </div>
+    </footer>
   </dialog>
   {_footer(data)}
 </div>
@@ -3328,29 +3330,54 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .dup-tabla tbody tr { cursor: pointer; }
 .dup-tabla tbody tr:hover, .dup-tabla tbody tr:focus { background: var(--paper); outline: none; }
 .dup-abrir { color: var(--muted); text-align: right; width: 24px; }
-#dup-gestor .dup-gestor-cuerpo { padding: 18px 18px 16px; }
-#dup-gestor h2 { margin: 0 0 2px; }
-#dup-gestor .dup-gestor-eyebrow { margin: 0; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+#dup-gestor .dup-gestor-cuerpo { padding: 20px 20px 4px; }
+#dup-gestor h2 { margin: 0 0 2px; font-size: 22px; }
+#dup-gestor .dup-gestor-eyebrow { margin: 0 0 4px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 #dup-gestor .dup-motivo-caja {
-  border-left: 3px solid var(--line);
-  background: #fff;
+  border-left: 3px solid var(--warn);
+  background: var(--paper);
   padding: 8px 12px;
-  margin: 12px 0;
+  margin: 12px 0 14px;
   font-size: 13px;
   color: var(--muted);
 }
-#dup-gestor .dup-par { align-items: stretch; margin: 0; }
-#dup-gestor .dup-lado { border: 1px solid var(--line); background: #fff; padding: 12px 14px; gap: 3px; }
-#dup-gestor .dup-lado strong { font: 600 20px/1.1 Palatino, serif; }
-#dup-gestor .dup-vinclo { align-self: center; }
-#dup-gestor .edit-actions {
-  border-top: 1px solid var(--line);
-  margin: 16px -18px -16px;
-  padding: 12px 18px 0;
+#dup-gestor .dup-par { gap: 10px; margin: 0; align-items: stretch; }
+#dup-gestor .dup-lado {
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 0 14px 12px;
+  gap: 3px;
+  display: grid;
 }
+#dup-gestor .dup-lado-cab {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 0 -14px 10px; padding: 7px 14px;
+  border-bottom: 1px solid var(--line);
+}
+#dup-gestor .dup-lado-bueno .dup-lado-cab { background: #eef7f3; border-bottom-color: #9bc4b8; }
+#dup-gestor .dup-lado-fuera .dup-lado-cab { background: #f3f0ea; border-bottom-color: var(--line); }
+#dup-gestor .dup-lado-revisar .dup-lado-cab { background: #fff6eb; border-bottom-color: #d4a574; }
+#dup-gestor .dup-ref { font-weight: 600; font-size: 13px; }
+#dup-gestor .dup-datos { font-size: 12px; }
+#dup-gestor .dup-importe { font: 600 22px/1.2 Palatino, serif; margin-top: 6px; }
+#dup-gestor .dup-vinclo {
+  align-self: center; display: grid; place-items: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--sheet); border: 1px solid var(--line);
+  color: var(--muted); font-size: 15px;
+}
+#dup-gestor .dup-gestor-pie {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  border-top: 1px solid var(--line);
+  margin: 16px 0 0; padding: 12px 20px;
+  background: var(--paper);
+}
+#dup-gestor .dup-ficha-link { font-size: 13px; color: var(--link); }
+#dup-gestor .dup-gestor-acciones { display: flex; gap: 8px; }
+#dup-gestor .dup-gestor-acciones .export-btn { margin-top: 0; }
 @media (max-width: 640px) {
   .dup-par { grid-template-columns: 1fr; }
-  .dup-vinclo { display: none; }
+  #dup-gestor .dup-vinclo { display: none; }
 }
 .dup-campo { display: grid; gap: 4px; margin: 10px 0 0; font-size: 13px; color: var(--muted); }
 .dup-select, .dup-manual {
@@ -4852,22 +4879,30 @@ _JS = r"""
     if (!gestor || !fila) return;
     const d = fila.dataset;
     const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    const lado = (rol, estado, id, emisor, nif, numero, fecha, total) => `
-      <div class="dup-lado">
-        <p class="dup-rol">${esc(rol)}</p>
-        ${id ? `<a href="/asiento/${id}">Asiento #${id}</a>` : "<p class=\"muted\">—</p>"}
+    const lado = (rol, clase, pill, id, emisor, nif, numero, fecha, total) => `
+      <div class="dup-lado ${clase}">
+        <header class="dup-lado-cab"><span class="dup-rol">${esc(rol)}</span>${pill}</header>
+        ${id ? `<a class="dup-ref" href="/asiento/${id}">Asiento #${id}</a>` : '<p class="dup-ref muted">—</p>'}
         <p class="dup-emisor">${esc(emisor) || "—"}</p>
-        <p class="muted">${esc(numero)} · ${esc(fecha)}${nif ? ` · NIF ${esc(nif)}` : ""}</p>
-        <p><span class="pill ${esc(estado)}">${estado === "duplicado" ? "Duplicado" : estado === "sospechoso" ? "Sospechoso" : "Asiento"}</span></p>
-        <strong>${esc(total)}</strong>
+        <p class="muted dup-datos">${esc(numero)} · ${esc(fecha)}${nif ? ` · NIF ${esc(nif)}` : ""}</p>
+        <strong class="dup-importe">${esc(total)}</strong>
       </div>`;
+    const pillHTML = (clase, texto) => `<span class="pill ${clase}">${texto}</span>`;
     document.getElementById("dup-gestor-par").innerHTML = `
-      ${lado(d.estado === "duplicado" ? "Duplicado" : "A revisar", d.estado, d.dupId, d.emisor, d.nif, d.numero, d.fecha, d.total)}
-      <div class="dup-vinclo" aria-hidden="true">⇄</div>
-      ${lado(d.estado === "duplicado" ? "Asiento bueno" : "Posible gemelo", d.gemelo ? "vivo" : "", d.gemelo, d.gemeloEmisor, d.gemeloNif, d.gemeloNumero, d.gemeloFecha, d.gemeloTotal)}`;
+      ${d.estado === "duplicado"
+        ? lado("Duplicado", "dup-lado-fuera", pillHTML("duplicado", "Fuera de totales"), d.dupId, d.emisor, d.nif, d.numero, d.fecha, d.total)
+        : lado("A revisar", "dup-lado-revisar", pillHTML("pendiente", "Sospechoso"), d.dupId, d.emisor, d.nif, d.numero, d.fecha, d.total)}
+      <div class="dup-vinclo" aria-hidden="true"><span>⇄</span></div>
+      ${lado(d.estado === "duplicado" ? "Asiento bueno" : "Posible gemelo", "dup-lado-bueno",
+          pillHTML("confirmado", d.estado === "duplicado" ? "Cuenta en el libro" : "Candidato"),
+          d.gemelo, d.gemeloEmisor, d.gemeloNif, d.gemeloNumero, d.gemeloFecha, d.gemeloTotal)}`;
     document.getElementById("dup-gestor-motivo").textContent = d.motivo || "";
     document.getElementById("dup-gestor-eyebrow").textContent =
       d.estado === "duplicado" ? "Duplicado fusionado" : "Sospechoso pendiente";
+    const titulo = document.getElementById("dup-gestor-title");
+    titulo.textContent = d.emisor && d.gemeloEmisor && d.emisor !== d.gemeloEmisor
+      ? `${d.emisor} / ${d.gemeloEmisor}`
+      : (d.emisor || "Gestionar duplicado");
     const btnFusionar = document.getElementById("dup-gestor-fusionar");
     const btnQuitar = document.getElementById("dup-gestor-quitar");
     const ficha = document.getElementById("dup-gestor-ficha");
