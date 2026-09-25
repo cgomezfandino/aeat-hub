@@ -757,7 +757,7 @@ def test_ficha_score_colapsado_con_popover_de_explicaciones(session, layout):
     assert "failsEl.hidden = malos.length === 0" in html
 
 
-def test_libro_cabeceras_con_ayuda_y_compactan():
+def test_libro_cabeceras_con_ayuda_y_compactan(session, layout):
     """Cada columna explica qué es; en pantallas pequeñas la tabla compacta."""
     actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
     _seed_asientos(session, actividad)
