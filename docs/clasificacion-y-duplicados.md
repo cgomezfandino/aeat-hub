@@ -116,6 +116,9 @@ viven en `extract/nombres.py` y son jugables.
   asientos y facturas, con anotación en el historial `Cambio` (fuente `modelo`).
 - El ingest adopta automáticamente el canónico conocido del NIF (banda auto),
   para que una grafía nueva no fragmente el emisor en Insights ni en el ER.
-- Splink (Fellegi-Sunter en Python puro) queda anotado como camino si algún
-  día se cruza con datasets externos y hace falta entrenar m/u de verdad;
-  aquí los priors calibrados hacen el mismo trabajo de forma auditable.
+- El score lo calcula **Splink** (librería, backend DuckDB en memoria; el
+  backend SQLite de Splink tiene las UDF de similitud rotas) con las m/u
+  fijadas a los priors calibrados — determinista, sin entrenamiento. Si
+  Splink falta o falla, cae en el scorer a mano de `extract/nombres.py`
+  (mismo modelo). Cuando el libro crezca, Splink permite entrenar las m/u
+  por EM en lugar de fijarlas.

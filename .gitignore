@@ -73,3 +73,6 @@ hf_cache/
 # ZCode (sesiones locales de la herramienta)
 .zcode/
 .zcodeignore
+
+# Artefactos de depuración
+model.json

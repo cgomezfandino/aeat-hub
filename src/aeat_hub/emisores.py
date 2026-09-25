@@ -14,7 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aeat_hub.extract.ids import normalize_emisor
-from aeat_hub.extract.nombres import nombre_canonico, probabilidad_mismo_emisor
+from aeat_hub.extract.nombres import nombre_canonico
+from aeat_hub.linkage import score_emisor
 from aeat_hub.models import Actividad, Asiento, Cambio
 UMBRAL_AUTO = 0.90
 
@@ -71,7 +72,7 @@ def unificar_emisores(
         for antes, filas in variantes.items():
             if antes == canonico:
                 continue
-            score = probabilidad_mismo_emisor(nif, nif, antes, canonico)
+            score = score_emisor(nif, nif, antes, canonico)
             propuesta = PropuestaNombre(
                 nif=nif,
                 antes=antes,
@@ -135,7 +136,7 @@ def _sincronizar_facturas(
             and (factura.nif_emisor or "") == nif
             and (
                 not factura.emisor
-                or probabilidad_mismo_emisor(nif, nif, factura.emisor, canonico).probabilidad
+                or score_emisor(nif, nif, factura.emisor, canonico).probabilidad
                 >= umbral
             )
         ):
@@ -167,9 +168,6 @@ def nombre_canonico_para(
     canonico = nombre_canonico([*conocidas, variante])
     if not canonico or canonico == variante:
         return None
-    if (
-        probabilidad_mismo_emisor(nif, nif, variante, canonico).probabilidad
-        < UMBRAL_AUTO
-    ):
+    if score_emisor(nif, nif, variante, canonico).probabilidad < UMBRAL_AUTO:
         return None
     return canonico

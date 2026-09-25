@@ -272,9 +272,9 @@ def ingest_file(
                 extract.model_copy(update={"emisor": canonico}), path
             )
             if factura.emisor and factura.emisor != canonico:
-                from aeat_hub.extract.nombres import probabilidad_mismo_emisor
+                from aeat_hub.linkage import score_emisor as _score
 
-                score = probabilidad_mismo_emisor(
+                score = _score(
                     extract.nif_emisor, extract.nif_emisor, factura.emisor, canonico
                 )
                 if score.probabilidad >= 0.90:

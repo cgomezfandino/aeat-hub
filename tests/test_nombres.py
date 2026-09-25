@@ -195,3 +195,54 @@ def test_score_fellegi_sunter_por_nif_y_nombre():
     # el desglose suma el intercepto, el NIF y el tramo del nombre
     assert len(auto.desglose) == 3
     assert auto.desglose[1] == ("NIF igual", 18.0)
+
+
+def test_score_splink_mismas_bandas_que_el_modelo_a_mano():
+    """El scorer Splink reproduce las bandas del modelo a mano (fallback)."""
+    from aeat_hub.linkage import score_emisor
+
+    auto = score_emisor(
+        "A28812618", "A28812618", "IKEA Ibérica S.A.", "IKEA IBÉRICA S.A., A28812618,"
+    )
+    assert auto.probabilidad >= 0.99
+    assert auto.banda == "auto"
+    concepto_nif = [c for c, _b in auto.desglose if c.startswith("nif")]
+    assert concepto_nif == ["nif igual"]
+
+    errata = score_emisor(
+        "B84818442", "B84818442", "LEROY MERLIN ARROYO", "LEROY MERLIN ARROYC"
+    )
+    assert errata.banda == "auto"
+
+    revisar = score_emisor(
+        "A28812618",
+        "A28812618",
+        "IKEA Ibérica S.A.",
+        "Información básica sobre protección de datos: Responsable: IKEA",
+    )
+    assert 0.50 <= revisar.probabilidad < 0.90
+    assert revisar.banda == "revisar"
+
+    sin_nif = score_emisor(None, "A28812618", "IKEA Ibérica S.A.", "IKEA Ibérica S.A.")
+    assert sin_nif.banda == "revisar"
+    assert ("nif ausente", 0.0) in sin_nif.desglose
+
+    distinto = score_emisor(
+        "B12345674", "B84818442", "IKEA Ibérica S.A.", "IKEA Ibérica S.A."
+    )
+    assert distinto.probabilidad < 0.01
+    assert distinto.banda == "rechazar"
+
+
+def test_score_splink_cae_al_modelo_a_mano_si_falla(monkeypatch):
+    import aeat_hub.linkage as linkage
+
+    def _explota():
+        raise RuntimeError("duckdb no disponible")
+
+    monkeypatch.setattr(linkage, "_linker", _explota)
+    score = linkage.score_emisor(
+        "A28812618", "A28812618", "IKEA Ibérica S.A.", "IKEA IBÉRICA S.A., A28812618,"
+    )
+    assert score.probabilidad >= 0.99
+    assert score.banda == "auto"
