@@ -14,8 +14,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aeat_hub.extract.ids import normalize_emisor
-from aeat_hub.extract.nombres import UMBRAL_NOMBRE, nombre_canonico, similitud_nombre
+from aeat_hub.extract.nombres import nombre_canonico, probabilidad_mismo_emisor
 from aeat_hub.models import Actividad, Asiento, Cambio
+UMBRAL_AUTO = 0.90
 
 
 @dataclass
@@ -24,6 +25,8 @@ class PropuestaNombre:
     antes: str
     canonico: str
     similitud: float
+    probabilidad: float = 0.0
+    banda: str = ""
     asientos: list[int] = field(default_factory=list)
     aplica: bool = True
     motivo: str = ""
@@ -38,10 +41,13 @@ def unificar_emisores(
 ) -> list[PropuestaNombre]:
     """Detecta variantes del mismo emisor por NIF y, opcionalmente, unifica.
 
+    La decisión usa el score Fellegi-Sunter (probabilidad de misma empresa):
+    se aplica automáticamente desde `umbral` (0,90 por defecto); la banda
+    intermedia (0,50–0,90) se lista como «revisar» para decisión humana.
     Sin `aplicar` es un dry-run: devuelve propuestas sin tocar nada.
     """
     if umbral is None:
-        umbral = UMBRAL_NOMBRE
+        umbral = UMBRAL_AUTO
     rows = session.scalars(
         select(Asiento).where(
             Asiento.actividad_id == actividad_id,
@@ -65,21 +71,31 @@ def unificar_emisores(
         for antes, filas in variantes.items():
             if antes == canonico:
                 continue
-            sim = similitud_nombre(antes, canonico)
+            score = probabilidad_mismo_emisor(nif, nif, antes, canonico)
             propuesta = PropuestaNombre(
                 nif=nif,
                 antes=antes,
                 canonico=canonico,
-                similitud=round(sim, 3),
+                similitud=score.similitud,
+                probabilidad=score.probabilidad,
+                banda=score.banda,
                 asientos=[fila.id for fila in filas],
             )
-            if sim >= umbral:
+            if score.probabilidad >= umbral:
                 if aplicar:
                     _aplicar(session, filas, canonico)
-                propuesta.motivo = "supera el umbral"
+                propuesta.motivo = " · ".join(
+                    f"{concepto} {bits:+.0f}b" for concepto, bits in score.desglose
+                )
             else:
                 propuesta.aplica = False
-                propuesta.motivo = "por debajo del umbral"
+                propuesta.motivo = (
+                    score.banda
+                    if score.banda == "rechazar"
+                    else " · ".join(
+                        f"{concepto} {bits:+.0f}b" for concepto, bits in score.desglose
+                    )
+                )
             propuestas.append(propuesta)
         if aplicar:
             _sincronizar_facturas(session, grupo, canonico, nif=nif, umbral=umbral)
@@ -119,7 +135,8 @@ def _sincronizar_facturas(
             and (factura.nif_emisor or "") == nif
             and (
                 not factura.emisor
-                or similitud_nombre(factura.emisor, canonico) >= umbral
+                or probabilidad_mismo_emisor(nif, nif, factura.emisor, canonico).probabilidad
+                >= umbral
             )
         ):
             factura.emisor = canonico
@@ -150,6 +167,9 @@ def nombre_canonico_para(
     canonico = nombre_canonico([*conocidas, variante])
     if not canonico or canonico == variante:
         return None
-    if similitud_nombre(variante, canonico) < UMBRAL_NOMBRE:
+    if (
+        probabilidad_mismo_emisor(nif, nif, variante, canonico).probabilidad
+        < UMBRAL_AUTO
+    ):
         return None
     return canonico

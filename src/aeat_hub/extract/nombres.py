@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
 from cleanco import prepare_default_terms
@@ -107,4 +108,71 @@ def nombre_canonico(variantes: list[str]) -> str | None:
     return max(
         mejor_grupo,
         key=lambda v: (sum(1 for ch in v if ch.islower()), -len(v)),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Modelo de puntuación Fellegi-Sunter (como Splink) para identidad de emisor.
+#
+# Peso de cada nivel de comparación = log2(m/u): m = P(nivel | misma empresa),
+# u = P(nivel | empresas distintas). Se suman al intercepto (prior en
+# log-odds) y la probabilidad sale con P = 1 / (1 + 2^-peso).
+# En facturación española el NIF identifica a la empresa: su acuerdo domina.
+# Los pesos son priors calibrados a mano y jugables desde aquí.
+INTERCEPTO_BITS = -8.0  # prior: 1 de cada ~256 pares al azar es la misma empresa
+NIF_IGUAL_BITS = 18.0   # m=0.99, u≈4e-6
+NIF_DISTINTO_BITS = -18.0  # m≈1e-6, u=0.99
+NIF_AUSENTE_BITS = 0.0  # sin información
+NOMBRE_TRAMOS_BITS: list[tuple[float, float]] = [
+    (0.95, 10.0),  # m=0.90, u≈1e-3
+    (0.85, 8.0),  # m=0.60, u≈2e-3
+    (0.70, 5.0),  # m=0.25, u≈8e-3
+    (0.00, -8.0),  # desacuerdo fuerte: evidencia en contra
+]
+
+
+@dataclass
+class ScoreEmisor:
+    probabilidad: float
+    peso_bits: float
+    similitud: float
+    desglose: list[tuple[str, float]] = field(default_factory=list)
+
+    @property
+    def banda(self) -> str:
+        if self.probabilidad >= 0.90:
+            return "auto"
+        if self.probabilidad >= 0.50:
+            return "revisar"
+        return "rechazar"
+
+
+def probabilidad_mismo_emisor(
+    nif_a: str | None,
+    nif_b: str | None,
+    nombre_a: str | None,
+    nombre_b: str | None,
+) -> ScoreEmisor:
+    """P(misma empresa) al estilo Splink, con desglose de pesos para elegir."""
+    peso = INTERCEPTO_BITS
+    desglose = [("base (prior)", INTERCEPTO_BITS)]
+    if nif_a and nif_b:
+        if nif_a == nif_b:
+            peso += NIF_IGUAL_BITS
+            desglose.append(("NIF igual", NIF_IGUAL_BITS))
+        else:
+            peso += NIF_DISTINTO_BITS
+            desglose.append(("NIF distinto", NIF_DISTINTO_BITS))
+    else:
+        peso += NIF_AUSENTE_BITS
+        desglose.append(("NIF ausente", NIF_AUSENTE_BITS))
+    sim = similitud_nombre(nombre_a, nombre_b)
+    for techo, bits in NOMBRE_TRAMOS_BITS:
+        if sim >= techo:
+            peso += bits
+            desglose.append((f"nombre sim {sim:.2f}", bits))
+            break
+    probabilidad = 1.0 / (1.0 + 2.0 ** -peso)
+    return ScoreEmisor(
+        probabilidad=probabilidad, peso_bits=peso, similitud=sim, desglose=desglose
     )

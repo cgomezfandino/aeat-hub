@@ -428,7 +428,7 @@ def duplicado(
 @app.command("emisores")
 def emisores_unificar(
     actividad: str = typer.Option(..., "--actividad"),
-    umbral: float = typer.Option(0.85, "--umbral", help="Similitud mínima (0-1) para adoptar el nombre canónico"),
+    umbral: float = typer.Option(0.90, "--umbral", help="Probabilidad mínima (0-1, score Fellegi-Sunter) para adoptar el nombre canónico"),
     aplicar: bool = typer.Option(False, "--aplicar", help="Escribe los cambios (sin él, solo preview)"),
     data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
 ) -> None:
@@ -444,11 +444,11 @@ def emisores_unificar(
         modo = "aplicado" if aplicar else "preview (--aplicar para escribir)"
         console.print(f"[bold]Nombres canónicos por NIF · {modo}[/bold]")
         for p in propuestas:
-            marca = "[green]✓[/green]" if p.aplica else "[red]✗[/red]"
+            marca = "[green]✓[/green]" if p.aplica else f"[yellow]{p.banda}[/yellow]" if p.banda == "revisar" else "[red]✗[/red]"
             consolas = ",".join(str(i) for i in p.asientos)
             console.print(
                 f"{marca} {p.nif} · {p.antes!r} → {p.canonico!r} "
-                f"(sim {p.similitud:.2f}; asientos {consolas}; {p.motivo})"
+                f"(P={p.probabilidad:.3f} [{p.banda}]; {p.motivo}; asientos {consolas})"
             )
         if aplicar:
             n = sum(1 for p in propuestas if p.aplica)

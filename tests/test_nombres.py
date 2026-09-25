@@ -151,3 +151,47 @@ def test_nombre_canonico_para_el_ingest(session):
     # otro emisor con el mismo NIF no arrastra el canónico
     assert nombre_canonico_para(session, actividad.id, "A28812618", "TALLERES ISMAR SL") is None
     assert nombre_canonico_para(session, actividad.id, "", "IKEA S.A.") is None
+
+
+def test_score_fellegi_sunter_por_nif_y_nombre():
+    """NIF igual domina; el nombre es el double-check que baja a revisar."""
+    from aeat_hub.extract.nombres import probabilidad_mismo_emisor
+
+    # NIF igual + nombre coincide (y errata de OCR) → auto
+    auto = probabilidad_mismo_emisor(
+        "A28812618", "A28812618", "IKEA Ibérica S.A.", "IKEA IBÉRICA S.A., A28812618,"
+    )
+    assert auto.probabilidad >= 0.99
+    assert auto.banda == "auto"
+    errata = probabilidad_mismo_emisor(
+        "B84818442", "B84818442", "LEROY MERLIN ARROYO", "LEROY MERLIN ARROYC"
+    )
+    assert errata.probabilidad >= 0.99
+    assert errata.banda == "auto"
+
+    # NIF igual + nombre que no casa (texto legal) → revisar, no auto
+    revisar = probabilidad_mismo_emisor(
+        "A28812618",
+        "A28812618",
+        "IKEA Ibérica S.A.",
+        "Información básica sobre protección de datos: Responsable: IKEA",
+    )
+    assert 0.50 <= revisar.probabilidad < 0.90
+    assert revisar.banda == "revisar"
+
+    # sin NIF, el nombre solo no basta para auto
+    sin_nif = probabilidad_mismo_emisor(
+        None, "A28812618", "IKEA Ibérica S.A.", "IKEA Ibérica S.A."
+    )
+    assert sin_nif.banda == "revisar"
+
+    # NIF distinto → rechazar aunque el nombre coincida
+    distinto = probabilidad_mismo_emisor(
+        "B12345674", "B84818442", "IKEA Ibérica S.A.", "IKEA Ibérica S.A."
+    )
+    assert distinto.probabilidad < 0.01
+    assert distinto.banda == "rechazar"
+
+    # el desglose suma el intercepto, el NIF y el tramo del nombre
+    assert len(auto.desglose) == 3
+    assert auto.desglose[1] == ("NIF igual", 18.0)

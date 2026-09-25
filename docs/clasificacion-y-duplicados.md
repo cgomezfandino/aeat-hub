@@ -100,15 +100,22 @@ Un mismo emisor llega del OCR con grafías distintas («IKEA IBÉRICA S.A., A288
 frente a «IKEA Ibérica S.A.»). La clave fiscal es el **NIF**: dentro de un
 mismo NIF, los nombres se limpian de formas societarias (cleanco: base
 internacional «según el país» + diccionario español S.A./S.L.U./SOCIEDAD
-LIMITADA…), se comparan por similitud y, si superan el umbral (0,85 por
-defecto), se adopta un **nombre canónico** (el más frecuente; a igualdad, el
-mejor formado y más corto). Nunca se mezclan NIF distintos.
+LIMITADA…) y la decisión usa un **score Fellegi-Sunter** (el modelo de
+Splink): cada nivel de comparación aporta un peso en bits log₂(m/u), se
+suman al prior y la probabilidad sale con P = 1/(1+2^−peso). En facturación
+española el NIF identifica a la empresa (+18 bits su acuerdo); el nombre es
+el *double check* por tramos de similitud (+10/+8/+5/−8 bits). Los pesos
+viven en `extract/nombres.py` y son jugables.
+
+- **P ≥ 0,90** → `auto`: se adopta el nombre canónico.
+- **0,50 ≤ P < 0,90** → `revisar`: se lista con su desglose, decisión humana.
+- **P < 0,50** → `rechazar` (p. ej. NIF distinto).
 
 - `aeat-hub emisores --actividad …` → preview de propuestas (dry-run).
-- `aeat-hub emisores --actividad … --aplicar` → unifica asientos y facturas,
-  con anotación en el historial `Cambio` (fuente `modelo`).
-- El ingest adopta automáticamente el canónico conocido del NIF, para que
-  una grafía nueva no fragmente el emisor en Insights ni en el ER.
+- `aeat-hub emisores --actividad … --aplicar [--umbral 0.7]` → unifica
+  asientos y facturas, con anotación en el historial `Cambio` (fuente `modelo`).
+- El ingest adopta automáticamente el canónico conocido del NIF (banda auto),
+  para que una grafía nueva no fragmente el emisor en Insights ni en el ER.
 - Splink (Fellegi-Sunter en Python puro) queda anotado como camino si algún
-  día se cruza con datasets externos; a escala de un libro local, la
-  similitud determinista + umbral hace el mismo trabajo de forma auditable.
+  día se cruza con datasets externos y hace falta entrenar m/u de verdad;
+  aquí los priors calibrados hacen el mismo trabajo de forma auditable.
