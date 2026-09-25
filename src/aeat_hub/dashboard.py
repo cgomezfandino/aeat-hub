@@ -24,6 +24,7 @@ from aeat_hub.fiscal.accounts import (
 )
 from aeat_hub.fiscal.irpf import INDEX_CI, casilla_clave, summarize_irpf
 from aeat_hub.fiscal.money import format_euro, q2
+from aeat_hub.fiscal.cuadres import TOLERANCIA_TOTAL
 from aeat_hub.fiscal.nif import is_placeholder_nif, is_valid_nif, normalize_nif
 from aeat_hub.models import Actividad, Asiento, Cambio, Cuenta, Inmueble, Titular
 from aeat_hub.paths import DataLayout
@@ -1388,7 +1389,7 @@ def _suma_importes(lineas: list[dict]) -> Decimal | None:
 def _cuadra_con_total(suma: Decimal | None, total: Decimal | None) -> bool:
     if suma is None or total is None:
         return False
-    return abs(q2(suma) - q2(total)) <= Decimal("0.02")
+    return abs(q2(suma) - q2(total)) <= TOLERANCIA_TOTAL
 
 
 def _elementos_label(n: int) -> str:
@@ -1457,7 +1458,7 @@ def criterios_calidad(
     if base_q is not None and iva_q is not None and total_q is not None:
         add(
             "desglose",
-            abs(base_q + iva_q - total_q) <= Decimal("0.02"),
+            abs(base_q + iva_q - total_q) <= TOLERANCIA_TOTAL,
             "Base+IVA",
             "Base más IVA no da el total de la factura.",
         )

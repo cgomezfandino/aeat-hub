@@ -22,7 +22,7 @@ REL_CONFLICTO = "conflicto"
 ER_PROPUESTA = "propuesta"
 ER_CONFLICTO = "conflicto"
 
-TOTAL_TOLERANCE = Decimal("0.02")
+from aeat_hub.fiscal.cuadres import TOLERANCIA_TOTAL as TOTAL_TOLERANCE  # noqa: F401
 
 
 def save_extraccion(session: Session, documento: Documento, extract: InvoiceExtract) -> Extraccion:

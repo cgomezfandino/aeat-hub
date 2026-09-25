@@ -144,6 +144,14 @@ uv run aeat-hub duplicado 8 --quitar # deshacer: vuelve a pendiente
 
 En la ficha del dashboard hay el botón **Marcar duplicado de…** (y **Quitar duplicado** si ya lo es) que hace lo mismo sin salir del navegador.
 
+### `doctor`
+
+Audita el libro: relaciones huérfanas (la tabla `relaciones` es polimórfica sin FKs), ficheros perdidos en disco, importes que no cuadran (base+IVA≠total), IVAs imposibles y asientos sin fecha.
+
+```bash
+uv run aeat-hub doctor --actividad CI-VA-001
+```
+
 ### `emisores`
 
 Unifica las grafías del nombre de un mismo emisor, agrupadas por NIF (limpieza de S.A./S.L.U./GmbH… + similitud con umbral). Sin `--aplicar` es un preview.

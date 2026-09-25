@@ -14,6 +14,7 @@ from sqlalchemy import select
 from aeat_hub import __version__
 from aeat_hub.classify import reabrir_asiento, reclassify, validar_asiento
 from aeat_hub.db import make_engine, session_factory, session_scope
+from aeat_hub.doctor import revisar as doctor_revisar
 from aeat_hub.edits import AsientoNoEncontrado, desmarcar_duplicado, marcar_duplicado
 from aeat_hub.emisores import unificar_emisores
 from aeat_hub.evals.gold import load_gold
@@ -423,6 +424,28 @@ def duplicado(
             n = ordenar_asientos(session, layout, actividad)
             if n:
                 console.print(f"Reubicados {n} documentos.")
+
+
+@app.command()
+def doctor(
+    actividad: str = typer.Option(..., "--actividad"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Audita el libro: relaciones huérfanas, ficheros perdidos y cuadres."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    with session_scope(factory) as session:
+        act = get_actividad(session, actividad)
+        hallazgos = doctor_revisar(session, layout, act)
+    if not hallazgos:
+        console.print("[green]Libro sano:[/green] sin relaciones huérfanas, ficheros perdidos ni descuadres.")
+        return
+    errores = [h for h in hallazgos if h.severidad == "error"]
+    avisos = [h for h in hallazgos if h.severidad == "aviso"]
+    console.print(f"[bold]Doctor del libro · {len(errores)} errores, {len(avisos)} avisos[/bold]")
+    for h in hallazgos:
+        color = "red" if h.severidad == "error" else "yellow"
+        console.print(f"[{color}]{h.severidad}[/{color}] · {h.categoria}: {h.detalle}")
 
 
 @app.command("emisores")

@@ -104,10 +104,12 @@ Por orden de interés, con su porqué:
    por asiento; `Documento.json_extraido` queda como salida intacta del
    modelo y `Extraccion` sigue siendo el histórico. La migración de los JSON
    históricos corre en `create_schema`.
-2. **Sin restricciones aritméticas.** Nada exige `total = base + cuota` ni
-   `total = Σ líneas` en el modelo; las tolerancias están dispersas (0,02 en
-   ER, 0,05 en ingest/parser, ±0,8 % en el triple de IVA). Y
-   `iva_tipo Numeric(5,2)` acepta cualquier valor, no solo 21/10/4/0.
+2. **Sin restricciones aritméticas.** *Abordado el 25 sep:* las tolerancias
+   viven ahora en `fiscal/cuadres.py` (una sola fuente: 0,02 cabecera /
+   0,05 líneas) y tanto el ingest como el nuevo `aeat-hub doctor` avisan
+   cuando base+IVA no cuadra con el total o el IVA no es 21/10/4/0. Sigue
+   sin haber CONSTRAINT en la base de datos (decisión: SQLite + libro
+   editable a mano).
 3. **Tres nociones de duplicado** que se solapan: SHA de fichero, niveles 1–3
    del asiento (`duplicado_de_id`/`duplicado_nivel`) y conflicto ER. La fusión
    ER marca `duplicado_nivel=2` mezclando conceptos.
@@ -120,8 +122,10 @@ Por orden de interés, con su porqué:
    que el pipeline dejó pasar. Sin número, el nivel 3 sigue marcando
    `duplicado` directamente. Compras legítimas repetidas quedan en la cola de
    revisión, no fuera de los totales.
-5. **`Relacion` sin FK ni cascadas.** Bordes polimórficos sin integridad
-   referencial; no hay borrado (el roadmap promete «borrado recuperable»).
+5. **`Relacion` sin FK ni cascadas.** *Mitigado el 25 sep:* `aeat-hub
+   doctor` audita las relaciones polimórficas (huérfanas), ficheros
+   perdidos y cuadres. Las FKs siguen sin existir (la polimorfía las
+   complica); no hay borrado aún.
 6. **`ProyectoMejora` es vaporware**: tabla y FK sin relationship ni uso.
 7. **Confianza mezclada.** `Documento.confianza` guarda la puntuación del
    parser (presencia de campos), no la del OCR; la confianza del motor se

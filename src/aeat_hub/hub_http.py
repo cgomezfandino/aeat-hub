@@ -16,6 +16,7 @@ from sqlalchemy import select
 from aeat_hub.dashboard import ESTADO_LABEL, REGIMEN_LABEL, collect_asiento_ficha, render_asiento_page, write_dashboard
 from aeat_hub.db import session_scope
 from aeat_hub.edits import AsientoNoEncontrado, articulos_label, lineas_de_asiento, parse_money_field, patch_asiento
+from aeat_hub.fiscal.cuadres import TOLERANCIA_TOTAL
 from aeat_hub.fiscal.money import q2
 from aeat_hub.models import Actividad, Asiento, Cambio, Cuenta
 from aeat_hub.paths import DataLayout
@@ -293,7 +294,7 @@ def _rubro_nombre(session, asiento: Asiento) -> str:
 def _lineas_cuadran(asiento: Asiento, suma) -> bool:
     if suma is None:
         return False
-    tol = Decimal("0.02")
+    tol = TOLERANCIA_TOTAL
     for target in (asiento.base, asiento.total):
         if target is not None and abs(suma - target) <= tol:
             return True
