@@ -13,12 +13,13 @@ from sqlalchemy.orm import Session
 from aeat_hub.classify import classify
 from aeat_hub.dedupe import DuplicateHit, find_duplicate, find_sha_duplicate
 from aeat_hub.edits import replace_lineas
-from aeat_hub.emisores import nombre_canonico_para
+from aeat_hub.emisores import emisor_canonico_u_ocr, nombre_canonico_para
 from aeat_hub.er import cluster_documento, save_extraccion
 from aeat_hub.extract.ids import normalize_emisor
 from aeat_hub.extract.parser import parse_invoice
 from aeat_hub.extract.schema import InvoiceExtract
 from aeat_hub.filing import place_file, relocate_asiento, relocate_documento
+from aeat_hub.fiscal.cuadres import TOLERANCIA_LINEAS, avisos_cuadre
 from aeat_hub.media import file_phash, sha256_file
 from aeat_hub.models import Actividad, Asiento, Documento, Inmueble
 from aeat_hub.ocr.base import OCRProvider, OCRResult
@@ -73,7 +74,7 @@ def _reintentar_si_no_cuadra(
 ) -> tuple[OCRResult, InvoiceExtract]:
     """Si las líneas no suman el total, prueba el otro motor de imagen una vez."""
     gap = _descuadre_lineas(extract)
-    if gap is None or gap <= Decimal("0.05") or rapid is not None:
+    if gap is None or gap <= TOLERANCIA_LINEAS or rapid is not None:
         return ocr, extract
     alt_prefer = "rapid" if ocr.engine == "apple-vision" else "vision"
     notes.append("La suma de las líneas no coincide con el total. Se reintenta la lectura.")
@@ -292,6 +293,13 @@ def ingest_file(
         session.add(asiento)
         session.flush()
         replace_lineas(session, asiento, extract.lineas)
+        for aviso in avisos_cuadre(
+            base=extract.base,
+            iva_cuota=extract.iva_cuota,
+            iva_tipo=extract.iva_tipo,
+            total=extract.total,
+        ):
+            warnings.append(aviso)
         log_detalle("guardar", "documento=%s asiento=%s factura=%s estado=%s", documento.id, asiento.id, factura.id, asiento.estado)
 
     with etapa("archivar", name):
@@ -421,7 +429,11 @@ def reparse_asientos(session: Session, actividad: Actividad) -> int:
         extract = parse_invoice(documento.texto_crudo, motor=documento.motor_ocr)
         factura = asiento.factura
         divergencia = _divergencias_con_factura(asiento, factura)
-        asiento.emisor = extract.emisor
+        # el nombre canónico ya conocido del NIF gana a la grafía del OCR
+        emisor_final = emisor_canonico_u_ocr(
+            session, actividad.id, extract.nif_emisor, extract.emisor
+        )
+        asiento.emisor = emisor_final
         asiento.nif_emisor = extract.nif_emisor
         asiento.fecha = extract.fecha
         asiento.ejercicio = extract.fecha.year if extract.fecha else asiento.ejercicio
@@ -430,7 +442,10 @@ def reparse_asientos(session: Session, actividad: Actividad) -> int:
         asiento.iva_tipo = extract.iva_tipo
         asiento.iva_cuota = extract.iva_cuota
         asiento.total = extract.total
-        asiento.descripcion = _descripcion(extract, Path(documento.nombre_original))
+        asiento.descripcion = _descripcion(
+            extract.model_copy(update={"emisor": emisor_final or ""}),
+            Path(documento.nombre_original),
+        )
         _sync_factura_reparse(factura, extract, divergencia)
         documento.json_extraido = extract.model_dump_json()
         documento.confianza = extract.confianza

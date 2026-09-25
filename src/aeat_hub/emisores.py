@@ -152,7 +152,8 @@ def nombre_canonico_para(
 ) -> str | None:
     """El nombre canónico ya conocido de ese NIF, si la variante casa.
 
-    Lo usa el ingest para que una grafía nueva no fragmente el emisor.
+    Lo usan el ingest y el reparse para que una grafía nueva no fragmente
+    el emisor.
     """
     if not nif or not variante:
         return None
@@ -171,3 +172,14 @@ def nombre_canonico_para(
     if score_emisor(nif, nif, variante, canonico).probabilidad < UMBRAL_AUTO:
         return None
     return canonico
+
+
+def emisor_canonico_u_ocr(
+    session: Session,
+    actividad_id: int,
+    nif: str | None,
+    emisor_ocr: str | None,
+) -> str | None:
+    """El emisor que debe guardar el pipeline: canónico conocido u OCR."""
+    canonico = nombre_canonico_para(session, actividad_id, nif, emisor_ocr)
+    return canonico or emisor_ocr

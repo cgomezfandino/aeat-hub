@@ -246,3 +246,43 @@ def test_score_splink_cae_al_modelo_a_mano_si_falla(monkeypatch):
     )
     assert score.probabilidad >= 0.99
     assert score.banda == "auto"
+
+
+def test_reparse_no_pisa_el_nombre_canonico(session, layout):
+    """El reparse relee el OCR, pero el canónico del NIF gana (regresión IKEA)."""
+    from datetime import date as _date
+    from decimal import Decimal as _D
+
+    from aeat_hub.ingest import reparse_asientos
+    from aeat_hub.models import Documento
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    texto_variante = (
+        "IKEA IBÉRICA S.A., A28812618,\n"
+        "NIF: A28812618\n"
+        "Factura: BORD_030_2026 / 0003196\n"
+        "Fecha: 09/09/2026\n"
+        "Base imponible: 10,00 €\n"
+        "IVA 21%: 2,10 €\n"
+        "Total factura: 12,10 €\n"
+    )
+    doc = Documento(
+        sha256="e" * 64,
+        nombre_original="ikea.pdf",
+        ruta_almacenada="/tmp/ikea.pdf",
+        texto_crudo=texto_variante,
+    )
+    session.add(doc)
+    session.flush()
+    buenos = _asiento(session, actividad, emisor="IKEA Ibérica S.A.", nif_emisor="A28812618")
+    variante = _asiento(
+        session, actividad, emisor="IKEA Ibérica S.A.", nif_emisor="A28812618", documento_id=doc.id
+    )
+    session.commit()
+
+    n = reparse_asientos(session, actividad)
+    session.commit()
+    session.expire_all()
+    assert n >= 1
+    fresh = session.get(Asiento, variante.id)
+    assert fresh.emisor == "IKEA Ibérica S.A.", fresh.emisor
