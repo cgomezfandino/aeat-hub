@@ -39,6 +39,14 @@ TOTAL_SI_RE = re.compile(r"total\s*si\b|tot\s*si\b", re.IGNORECASE)
 TOTAL_IVA_RE = re.compile(r"total\s*iva\b", re.IGNORECASE)
 
 NUMERO_BASURA = {"NIF", "CIF", "IVA", "EUR", "DE", "LA", "EL", "NUMERO", "NÚMERO"}
+# Etiqueta «Factura» a solas en su línea (el valor viene en la siguiente).
+FACTURA_LABEL_SOLA_RE = re.compile(r"^factura\s*[:.\-]?\s*$", re.IGNORECASE)
+# Valor de nº de factura en su propia línea: admite guiones bajos y « / »
+# (IKEA: «BORD_030_2026 / 0003196»).
+NUMERO_LINEA_RE = re.compile(
+    r"^[A-Z0-9][A-Z0-9_\-\.]{2,40}(?:\s*/\s*[A-Z0-9][A-Z0-9_\-\.]{2,40})?$",
+    re.IGNORECASE,
+)
 COMPANY_HINT = re.compile(
     r"(?<![A-Za-zÁÉÍÓÚÜÑáéíóúüñ])(?:"
     r"s\.?\s?a\.?(?:\s?u\.?)?"
@@ -136,6 +144,29 @@ def _find_numero(text: str) -> str | None:
     loose = LER_NUM_RE.search(text)
     if loose:
         return loose.group(1).upper()
+    return _numero_tras_label_sola(text)
+
+
+def _numero_tras_label_sola(text: str) -> str | None:
+    """«Factura» a solas y el número en la línea siguiente (recibos IKEA)."""
+    lineas = [linea.strip() for linea in text.splitlines()]
+    for idx, linea in enumerate(lineas):
+        if not FACTURA_LABEL_SOLA_RE.fullmatch(linea):
+            continue
+        for siguiente in lineas[idx + 1 : idx + 3]:
+            if not siguiente or FACTURA_LABEL_SOLA_RE.fullmatch(siguiente):
+                continue
+            candidato = NUMERO_LINEA_RE.fullmatch(siguiente)
+            if not candidato:
+                break
+            token = re.sub(r"\s+", "", candidato.group(0)).strip("-_.")
+            digitos = sum(ch.isdigit() for ch in token)
+            if digitos < 4 or token.upper() in NUMERO_BASURA:
+                break
+            if DATE_RE.fullmatch(token) or find_nifs(token):
+                break
+            return token.upper()
+        break
     return None
 
 

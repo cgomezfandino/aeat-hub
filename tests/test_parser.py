@@ -635,3 +635,52 @@ Inter IKEA Systems B.V. 2026
     extract = parse_invoice(texto)
     assert extract.total == __import__("decimal").Decimal("172.90")
     assert extract.lineas == []
+
+
+def test_numero_con_label_sola_y_guiones_bajos_ikea():
+    """Recibo IKEA real: «Factura:» a solas y «BORD_030_2026 / 0003196» debajo."""
+    from aeat_hub.extract.parser import parse_invoice
+
+    texto = """IKEA
+IKEA IBÉRICA S.A., A28812618,
+AVENIDA MATAPIÑONERA N9,28703
+Factura
+Factura:
+BORD_030_2026 / 0003196
+DNI /NIE / CIF:
+60052213H
+Nombre / razón:
+CARLOS EDUARDO
+Fecha factura:
+24/09/2026
+Base imponible: 33,02 €
+IVA 21%: 6,93 €
+Total factura: 39,95 €
+"""
+    extract = parse_invoice(texto)
+    assert extract.numero == "BORD_030_2026/0003196"
+    assert extract.numero_norm == "BORD03020260003196"
+
+
+def test_confirmacion_de_pedido_no_inventa_numero():
+    """Documento IKEA real sin factura: no debe pillar el N° iSell ni el Family."""
+    from aeat_hub.extract.parser import parse_invoice
+
+    texto = """KEA
+Confirmación de pedido
+N° iSell: 1628093126
+N° Family: 6275980225870925095
+Entrega contacto
+CARLOS EDUARDO GOMEZ
+Resumen de servicios
+Servicio
+Recogida en almacén
+Coste total servicios
+Precio
+0,00
+0,00
+Fecha servicio
+5/9/26
+"""
+    extract = parse_invoice(texto)
+    assert extract.numero is None
