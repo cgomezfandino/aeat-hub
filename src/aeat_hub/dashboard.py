@@ -1539,12 +1539,14 @@ def _criterios_html(checks: list[dict], *, total: object = None) -> str:
     total_attr = f' data-total="{quantized:.2f}"' if quantized is not None else ""
     return (
         f'<div class="ficha-score" id="ficha-score"{total_attr}>'
+        f'<div class="ficha-score-cab">'
         f'<span class="q-chip q-{tone}" id="ficha-score-chip">'
         f'<i class="q-dot" aria-hidden="true"></i>'
         f'<span id="ficha-score-label">{label}</span>'
         f'<span class="q-score" id="ficha-score-pct">{pct} %</span></span>'
         f'<button type="button" class="q-i-btn" popovertarget="ficha-score-pop" '
         f'aria-label="Qué se comprueba en esta factura" aria-expanded="false">i</button>'
+        f"</div>"
         f'<ul class="q-checks q-solo-fallos" id="ficha-score-fails"{fails_hidden}>{fallos_html}</ul>'
         f'<div id="ficha-score-pop" popover="auto" class="q-pop q-pop-score" role="tooltip">'
         f"<strong>Comprobaciones de la factura</strong>"
@@ -3955,6 +3957,7 @@ a.row-go:hover { text-decoration: underline; }
   cursor: pointer;
   padding: 0;
 }
+.ficha-score-cab { display: flex; align-items: center; gap: 8px; }
 .q-i-btn:hover, .q-i-btn[aria-expanded="true"] { border-color: var(--ink); color: var(--ink); }
 .q-solo-fallos { gap: 4px; margin-top: 2px; }
 .q-pop-score { width: min(400px, calc(100vw - 24px)); }
