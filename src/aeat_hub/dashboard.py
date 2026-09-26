@@ -183,7 +183,7 @@ def render_dashboard(data: dict) -> str:
         '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
         f"<title>Libro {escape(data['codigo'])} · {data['year']}</title>\n"
-        f"<style>{_CSS}</style>\n</head>\n"
+        f"{_FONT_LINKS}<style>{_CSS}</style>\n</head>\n"
         f'<body data-default-panel="{"revision" if data["n_pendientes"] else "libro"}" '
         f'data-actividad="{escape(data["codigo"])}" '
         f"data-year=\"{data['year']}\">\n"
@@ -196,6 +196,7 @@ def render_dashboard(data: dict) -> str:
         "</main>\n"
         f"{_site_footer()}\n"
         f"{_edit_dialog(data)}\n"
+        f"{_decision_dialog()}\n"
         f"{_mast_dialog()}\n"
         f"<script>{_JS}</script>\n"
         "</body>\n</html>\n"
@@ -326,9 +327,9 @@ def render_asiento_page(data: dict) -> str:
     else:
         filas_log = '<tr><td colspan="4">Sin cambios registrados todavía.</td></tr>'
     historial = (
-        '<table class="edit-diff log-table"><thead><tr>'
+        '<div class="table-wrap table-wrap--dialog"><table class="edit-diff log-table"><thead><tr>'
         "<th>Fecha</th><th>Campo</th><th>Antes</th><th>Después</th>"
-        f"</tr></thead><tbody>{filas_log}</tbody></table>"
+        f"</tr></thead><tbody>{filas_log}</tbody></table></div>"
     )
     doc = ""
     if data["has_doc"]:
@@ -383,16 +384,18 @@ def render_asiento_page(data: dict) -> str:
     )
     solo_manual = not opciones_dup
     dup_dialog = (
-        '<dialog class="edit-dialog" id="ficha-dup-dialog" aria-labelledby="ficha-dup-title">'
+        '<dialog class="app-sheet sheet-form" id="ficha-dup-dialog" aria-labelledby="ficha-dup-title">'
+        '<p class="sheet-eyebrow">Duplicado</p>'
         f'<h2 id="ficha-dup-title">Marcar duplicado del asiento #{data["id"]}</h2>'
-        '<p class="hint">Elige el asiento bueno: este queda como duplicado y sale de los totales. '
+        '<p class="sheet-lead">Elige el asiento bueno: este queda como duplicado y sale de los totales. '
         "Puedes deshacerlo después.</p>"
         '<label class="dup-campo">Asiento bueno'
         f'<select id="dup-candidato" class="dup-select">{html_opciones}'
         f'<option value="manual"{" selected" if solo_manual else ""}>Otro id…</option></select></label>'
         f'<label class="dup-campo" id="dup-manual-wrap"{" hidden" if not solo_manual else ""}>Otro id'
         '<input id="dup-manual" type="number" min="1" placeholder="Id" class="dup-manual"></label>'
-        '<div class="edit-actions">'
+        '<p class="sheet-error" id="ficha-dup-error" hidden></p>'
+        '<div class="sheet-foot">'
         '<button type="button" class="ghost" id="ficha-dup-cancel">Cancelar</button>'
         '<button type="button" class="export-btn" id="ficha-dup-ok" disabled>Fusionar</button>'
         "</div></dialog>"
@@ -402,7 +405,7 @@ def render_asiento_page(data: dict) -> str:
         '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
         f"<title>Factura {escape(str(data['numero']))} · {escape(str(data['emisor']))}</title>\n"
-        f"<style>{_CSS}</style>\n</head>\n"
+        f"{_FONT_LINKS}<style>{_CSS}</style>\n</head>\n"
         f"<body class=\"ficha-page\" data-asiento=\"{data['id']}\">\n"
         '<header class="ficha-bar wrap">'
         f'<a class="back-link" href="{escape(data["dashboard_href"])}">{_BACK_SVG} Volver al libro</a>'
@@ -456,48 +459,74 @@ def render_asiento_page(data: dict) -> str:
         '<p class="edit-actions ficha-line-actions">'
         '<button type="button" class="ghost" id="ficha-line-add">Añadir línea</button>'
         "</p>\n"
-        '<div id="ficha-line-tools" hidden>'
-        '<label class="edit-check"><input id="ficha-ack" type="checkbox"> '
-        "Acepto los cambios de esta línea. Base, IVA y total pasan a ser la suma.</label>\n"
-        '<div class="edit-actions">'
-        '<button type="button" class="ghost" id="ficha-lines-cancel">Cancelar</button>'
-        '<button type="button" class="export-btn" id="ficha-lines-save" disabled>Guardar</button>'
-        "</div>\n"
-        "</div>\n"
         f'<p class="edit-lines-note" id="ficha-lines-note"></p>\n'
         "</div>\n"
-        '<dialog class="edit-dialog app-confirm" id="app-confirm" aria-labelledby="app-confirm-title">'
+        '<dialog class="app-sheet sheet-decision app-confirm" id="app-confirm" aria-labelledby="app-confirm-title">'
         '<form method="dialog">'
+        '<p class="sheet-eyebrow">Confirmar</p>'
         '<h2 id="app-confirm-title">Confirmar</h2>'
-        '<p id="app-confirm-text"></p>'
-        '<div class="edit-actions">'
+        '<p class="sheet-lead" id="app-confirm-text"></p>'
+        '<div class="sheet-foot">'
         '<button type="submit" class="ghost" value="cancel">Cancelar</button>'
         '<button type="submit" class="export-btn" id="app-confirm-ok" value="ok">Aceptar</button>'
         "</div></form></dialog>\n"
+        '<dialog class="app-sheet sheet-form" id="ficha-line-dialog" aria-labelledby="ficha-line-title">'
+        '<p class="sheet-eyebrow" id="ficha-line-eyebrow">Línea</p>'
+        '<h2 id="ficha-line-title">Editar línea</h2>'
+        '<p class="sheet-lead" id="ficha-line-lead">Al guardar, base, IVA y total de la factura pasan a ser la suma de las líneas visibles.</p>'
+        '<div id="ficha-line-form">'
+        '<label>Id<input id="ficha-line-codigo" maxlength="80" autocomplete="off"></label>'
+        '<label>Concepto<input id="ficha-line-desc" maxlength="240" autocomplete="off"></label>'
+        '<label>Unidades<input id="ficha-line-qty" type="number" min="0" step="0.001"></label>'
+        '<label>Subtotal<input id="ficha-line-base" type="number" min="0" step="0.01"></label>'
+        '<label>IVA %<input id="ficha-line-rate" type="number" min="0" max="100" step="0.01" aria-label="IVA %"></label>'
+        '<label>IVA<input id="ficha-line-iva" class="line-calc" type="number" step="0.01" disabled tabindex="-1"></label>'
+        '<label>Total de línea<input id="ficha-line-total" type="number" min="0" step="0.01"></label>'
+        '<div class="sheet-totals" id="ficha-line-preview" aria-live="polite"></div>'
+        '<p class="sheet-error" id="ficha-line-error" hidden></p>'
+        '<div class="sheet-foot">'
+        '<button type="button" class="ghost sheet-aside" id="ficha-line-del">Eliminar línea</button>'
+        '<button type="button" class="ghost" id="ficha-line-cancel">Cancelar</button>'
+        '<button type="button" class="export-btn" id="ficha-lines-save">Guardar</button>'
+        "</div></div>"
+        '<div id="ficha-line-danger" hidden>'
+        '<p class="sheet-lead" id="ficha-line-danger-text"></p>'
+        '<div class="sheet-foot">'
+        '<button type="button" class="ghost" id="ficha-line-danger-back">Volver</button>'
+        '<button type="button" class="export-btn is-warn" id="ficha-line-danger-ok">Eliminar</button>'
+        "</div></div></dialog>\n"
         f"{dup_dialog}\n"
         f"{_ficha_lines_script()}\n"
         f"{_ficha_filter_script()}\n"
-        '<dialog class="edit-dialog ficha-log-dialog" id="ficha-log-dialog" aria-labelledby="ficha-log-title">'
-        f'<h2 id="ficha-log-title">{_CLOCK_SVG} Historial de cambios</h2>'
+        '<dialog class="app-sheet sheet-form ficha-log-dialog" id="ficha-log-dialog" aria-labelledby="ficha-log-title">'
+        '<p class="sheet-eyebrow">Historial</p>'
+        f'<h2 id="ficha-log-title">{_CLOCK_SVG} Cambios del asiento</h2>'
         f"{historial}"
-        '<div class="edit-actions"><button type="button" class="ghost" id="ficha-log-close">Cerrar</button></div>'
+        '<div class="sheet-foot"><button type="button" class="ghost" id="ficha-log-close">Cerrar</button></div>'
         "</dialog>\n"
         "<script>(() => {"
         "const log = document.getElementById('ficha-log-dialog');"
         "document.getElementById('ficha-log')?.addEventListener('click', () => log?.showModal());"
         "document.getElementById('ficha-log-close')?.addEventListener('click', () => log?.close());"
-        "const qBtn = document.querySelector('.q-i-btn[popovertarget]');"
         "const qPop = document.getElementById('ficha-score-pop');"
-        "qPop?.addEventListener('toggle', (event) => {"
-        "  if (event.newState !== 'open' || !qBtn) return;"
-        "  qBtn.setAttribute('aria-expanded', 'true');"
-        "  const rect = qBtn.getBoundingClientRect();"
+        "const qTriggers = [...document.querySelectorAll('[popovertarget=\"ficha-score-pop\"]')];"
+        "const qInfo = document.querySelector('.q-i-btn[popovertarget=\"ficha-score-pop\"]');"
+        "const placePopover = (anchor) => {"
+        "  if (!qPop || !anchor) return;"
+        "  const rect = anchor.getBoundingClientRect();"
         "  const left = Math.max(8, Math.min(rect.left, window.innerWidth - qPop.offsetWidth - 8));"
         "  const top = Math.min(rect.bottom + 8, window.innerHeight - qPop.offsetHeight - 8);"
         "  qPop.style.left = `${left}px`;"
         "  qPop.style.top = `${top}px`;"
+        "};"
+        "qPop?.addEventListener('toggle', (event) => {"
+        "  const open = event.newState === 'open';"
+        "  qTriggers.forEach((node) => node.setAttribute('aria-expanded', open ? 'true' : 'false'));"
+        "  if (!open) return;"
+        "  const anchor = qTriggers.find((node) => node.matches(':focus, :focus-within')) || qInfo || qTriggers[0];"
+        "  placePopover(anchor);"
         "});"
-        "qBtn?.addEventListener('click', () => qBtn.setAttribute('aria-expanded', qPop?.open ? 'false' : 'true'));"
+        "qTriggers.forEach((node) => node.addEventListener('click', () => placePopover(node)));"
         "})();</script>\n"
         '<script>(() => {\n'
         "  const id = document.body.dataset.asiento;\n"
@@ -512,7 +541,8 @@ def render_asiento_page(data: dict) -> str:
         "      if (!res.ok || payload.ok === false) throw new Error(payload.error || String(res.status));\n"
         "      window.location.reload();\n"
         "    } catch (err) {\n"
-        "      alert(\"No se pudo guardar: \" + err.message);\n"
+        "      const box = document.getElementById(\"ficha-dup-error\");\n"
+        "      if (box) { box.hidden = false; box.textContent = \"No se pudo guardar: \" + err.message; }\n"
         "    }\n"
         "  };\n"
         "  const dialog = document.getElementById(\"ficha-dup-dialog\");\n"
@@ -538,14 +568,35 @@ def render_asiento_page(data: dict) -> str:
         "    dialog?.showModal();\n"
         "  });\n"
         "  document.getElementById(\"ficha-dup-cancel\")?.addEventListener(\"click\", () => dialog?.close());\n"
+        "  const dupError = (text) => {\n"
+        "    const box = document.getElementById(\"ficha-dup-error\");\n"
+        "    if (!box) return;\n"
+        "    box.hidden = !text;\n"
+        "    box.textContent = text || \"\";\n"
+        "  };\n"
         "  okBtn?.addEventListener(\"click\", () => {\n"
         "    const value = elegido();\n"
-        "    if (!/^\\d+$/.test(value)) { alert(\"Escribe el id numérico del asiento bueno.\"); return; }\n"
-        "    if (value === id) { alert(\"Un asiento no puede ser duplicado de sí mismo.\"); return; }\n"
+        "    if (!/^\\d+$/.test(value)) { dupError(\"Escribe el id numérico del asiento bueno.\"); return; }\n"
+        "    if (value === id) { dupError(\"Un asiento no puede ser duplicado de sí mismo.\"); return; }\n"
+        "    dupError(\"\");\n"
         "    postDup({ duplicado_de: value, confirmado: true });\n"
         "  });\n"
         "  document.getElementById(\"ficha-dup-quitar\")?.addEventListener(\"click\", () => {\n"
-        "    postDup({ quitar_duplicado: true, confirmado: true });\n"
+        "    const confirm = document.getElementById(\"app-confirm\");\n"
+        "    const msg = document.getElementById(\"app-confirm-text\");\n"
+        "    const title = document.getElementById(\"app-confirm-title\");\n"
+        "    const ok = document.getElementById(\"app-confirm-ok\");\n"
+        "    if (!confirm || typeof confirm.showModal !== \"function\") {\n"
+        "      postDup({ quitar_duplicado: true, confirmado: true });\n"
+        "      return;\n"
+        "    }\n"
+        "    title.textContent = \"Quitar duplicado\";\n"
+        "    msg.textContent = \"Este asiento vuelve a revisión y entra otra vez en los totales.\";\n"
+        "    ok.textContent = \"Quitar duplicado\";\n"
+        "    confirm.addEventListener(\"close\", () => {\n"
+        "      if (confirm.returnValue === \"ok\") postDup({ quitar_duplicado: true, confirmado: true });\n"
+        "    }, { once: true });\n"
+        "    if (!confirm.open) confirm.showModal();\n"
         "  });\n"
         "})();</script>\n"
         "</main>\n"
@@ -554,69 +605,192 @@ def render_asiento_page(data: dict) -> str:
     )
 
 
-def _ficha_kpi_script() -> str:
-    return r"""
-<script>
+_SMART_TABLE_JS = r"""
 (() => {
-  const root = document.getElementById("ficha-kpis");
-  const track = root?.querySelector(".ficha-grid");
-  const dots = root?.querySelector(".kpi-dots");
-  if (!track || !dots) return;
-  const metrics = () => {
-    const card = track.querySelector(":scope > div");
-    const gap = 10;
-    const stride = (card?.getBoundingClientRect().width || 160) + gap;
-    const fit = Math.max(1, Math.floor((track.clientWidth + gap) / stride));
-    const count = track.querySelectorAll(":scope > div").length;
-    return { stride, fit, pages: Math.max(1, Math.ceil(count / fit)) };
+  const compareSort = (a, b) => {
+    if (typeof a === "number" && typeof b === "number") return a - b;
+    return String(a).localeCompare(String(b), "es", { numeric: true, sensitivity: "base" });
   };
-  const paint = () => {
-    const { stride, fit, pages } = metrics();
-    const max = Math.max(0, track.scrollWidth - track.clientWidth);
-    const current = max <= 1 ? 0 : Math.min(pages - 1, Math.round((track.scrollLeft / max) * (pages - 1)));
-    dots.hidden = pages < 2;
-    dots.replaceChildren();
-    for (let index = 0; index < pages; index += 1) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "kpi-dot" + (index === current ? " is-on" : "");
-      button.setAttribute("aria-label", `Indicadores, página ${index + 1} de ${pages}`);
-      if (index === current) button.setAttribute("aria-current", "true");
-      button.addEventListener("click", () => {
-        const end = Math.max(0, track.scrollWidth - track.clientWidth);
-        const left = index === pages - 1 ? end : index * stride * fit;
-        track.scrollTo({ left, behavior: "smooth" });
-      });
-      dots.appendChild(button);
+  const parseAmt = (raw) => {
+    const text = (raw || "").trim().replace(",", ".");
+    if (!text) return null;
+    const value = Number(text);
+    return Number.isFinite(value) ? value : null;
+  };
+  const registry = new Map();
+  const scopedBoxes = (table, name) => [...table.querySelectorAll(`input[data-fg="${name}"]`)];
+  const selectedValues = (table, name) => {
+    const boxes = scopedBoxes(table, name);
+    if (!boxes.length) return null;
+    const on = boxes.filter((box) => box.checked).map((box) => box.value);
+    if (!on.length) return new Set();
+    if (on.length === boxes.length) return null;
+    return new Set(on);
+  };
+  const matchesGroup = (table, name, value) => {
+    const selected = selectedValues(table, name);
+    if (selected === null) return true;
+    return selected.has(value);
+  };
+  const syncTableFunnels = (table) => {
+    for (const th of table.querySelectorAll("th.th-filter")) {
+      const btn = th.querySelector(".funnel");
+      const pop = th.querySelector(".filter-pop");
+      if (!btn || !pop) continue;
+      const boxes = [...pop.querySelectorAll("input[data-fg]")];
+      const boxDirty = boxes.length > 0 && boxes.some((box) => !box.checked);
+      const rangeDirty = [...pop.querySelectorAll("input[type=number], input[type=date]")].some((el) => (el.value || "").trim());
+      btn.classList.toggle("on", boxDirty || rangeDirty);
     }
   };
-  track.addEventListener("scroll", paint, { passive: true });
-  window.addEventListener("resize", paint);
-  let drag = null;
-  track.addEventListener("pointerdown", (event) => {
-    if (event.pointerType !== "mouse" || event.button !== 0) return;
-    drag = { x: event.clientX, left: track.scrollLeft, id: event.pointerId, moved: false };
-    track.setPointerCapture(event.pointerId);
-  });
-  track.addEventListener("pointermove", (event) => {
-    if (!drag || drag.id !== event.pointerId) return;
-    const dx = event.clientX - drag.x;
-    if (Math.abs(dx) > 3) drag.moved = true;
-    if (!drag.moved) return;
-    track.classList.add("is-dragging");
-    track.scrollLeft = drag.left - dx;
-  });
-  const endDrag = (event) => {
-    if (!drag || drag.id !== event.pointerId) return;
-    drag = null;
-    track.classList.remove("is-dragging");
+  const rowValue = (row, key, sortType) => {
+    const raw = row.dataset[key] ?? "";
+    if (sortType === "num") {
+      const num = Number(String(raw).replace(",", "."));
+      return Number.isFinite(num) ? num : 0;
+    }
+    return raw;
   };
-  track.addEventListener("pointerup", endDrag);
-  track.addEventListener("pointercancel", endDrag);
-  paint();
+  const initSmartTable = (table) => {
+    if (!table || table.dataset.smartReady) return;
+    table.dataset.smartReady = "1";
+    const body = table.tBodies[0];
+    if (!body) return;
+    let config = {};
+    try { config = JSON.parse(table.dataset.smartConfig || "{}"); } catch {}
+    const filters = config.filters || [];
+    const ranges = config.ranges || [];
+    let sortKey = config.defaultSort || "id";
+    let sortDir = 1;
+    const matchRow = (row) => {
+      for (const { fg, field } of filters) {
+        if (!matchesGroup(table, fg, row.dataset[field] || "")) return false;
+      }
+      for (const { field, minId, maxId } of ranges) {
+        const amount = Number(row.dataset[field] || 0);
+        const min = parseAmt(document.getElementById(minId)?.value);
+        const max = parseAmt(document.getElementById(maxId)?.value);
+        if (min !== null && amount < min) return false;
+        if (max !== null && amount > max) return false;
+      }
+      return true;
+    };
+    const apply = () => {
+      const rows = [...body.querySelectorAll("tr[data-smart-row]")];
+      const paged = table.id === "rev-pend-tabla";
+      for (const row of rows) {
+        const show = matchRow(row);
+        row.dataset.match = show ? "1" : "0";
+        if (!show) row.hidden = true;
+        else if (!paged) row.hidden = false;
+      }
+      rows.sort((a, b) => {
+        const th = table.querySelector(`thead th[data-sort="${sortKey}"]`);
+        const sortType = th?.dataset.sortType || "text";
+        return sortDir * compareSort(rowValue(a, sortKey, sortType), rowValue(b, sortKey, sortType));
+      });
+      for (const row of rows) body.appendChild(row);
+      table.querySelectorAll("thead th[data-sort]").forEach((th) => {
+        const on = th.dataset.sort === sortKey;
+        th.classList.toggle("is-sorted", on);
+        th.classList.toggle("is-desc", on && sortDir < 0);
+      });
+      syncTableFunnels(table);
+      table.dispatchEvent(new CustomEvent("smarttableapply", { bubbles: true }));
+    };
+    table.querySelectorAll("thead th[data-sort]").forEach((th) => {
+      th.addEventListener("click", (event) => {
+        if (event.target.closest(".funnel, .filter-pop")) return;
+        const key = th.dataset.sort;
+        if (!key) return;
+        if (sortKey === key) sortDir *= -1;
+        else { sortKey = key; sortDir = 1; }
+        apply();
+      });
+    });
+    for (const box of table.querySelectorAll("input[data-fg]")) box.addEventListener("change", apply);
+    for (const input of table.querySelectorAll(".filter-pop input[type=number], .filter-pop input[type=date]")) {
+      input.addEventListener("input", apply);
+    }
+    registry.set(table, apply);
+    apply();
+  };
+  const boot = () => document.querySelectorAll("table.smart-table").forEach(initSmartTable);
+  boot();
+  window.smartTableRefresh = (table) => {
+    if (!table) return boot();
+    if (table.dataset.smartReady) registry.get(table)?.();
+    else initSmartTable(table);
+  };
 })();
-</script>
 """
+
+_KPI_CAROUSEL_JS = r"""
+(() => {
+  const initKpiCarousel = (root) => {
+    const track = root.querySelector(".kpi-track, .ficha-grid");
+    const dots = root.querySelector(".kpi-dots");
+    if (!track || !dots) return;
+    const metrics = () => {
+      const card = track.querySelector(":scope > *");
+      const gap = parseFloat(getComputedStyle(track).columnGap || getComputedStyle(track).gap || "10") || 10;
+      const stride = (card?.getBoundingClientRect().width || 160) + gap;
+      const fit = Math.max(1, Math.floor((track.clientWidth + gap) / stride));
+      const count = track.querySelectorAll(":scope > *").length;
+      return { stride, fit, pages: Math.max(1, Math.ceil(count / fit)) };
+    };
+    const paint = () => {
+      const { stride, fit, pages } = metrics();
+      const max = Math.max(0, track.scrollWidth - track.clientWidth);
+      const current = max <= 1 ? 0 : Math.min(pages - 1, Math.round((track.scrollLeft / max) * (pages - 1)));
+      dots.hidden = pages < 2;
+      dots.replaceChildren();
+      for (let index = 0; index < pages; index += 1) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "kpi-dot" + (index === current ? " is-on" : "");
+        button.setAttribute("aria-label", `Indicadores, página ${index + 1} de ${pages}`);
+        if (index === current) button.setAttribute("aria-current", "true");
+        button.addEventListener("click", () => {
+          const end = Math.max(0, track.scrollWidth - track.clientWidth);
+          const left = index === pages - 1 ? end : index * stride * fit;
+          track.scrollTo({ left, behavior: "smooth" });
+        });
+        dots.appendChild(button);
+      }
+    };
+    track.addEventListener("scroll", paint, { passive: true });
+    window.addEventListener("resize", paint);
+    let drag = null;
+    track.addEventListener("pointerdown", (event) => {
+      if (event.pointerType !== "mouse" || event.button !== 0) return;
+      drag = { x: event.clientX, left: track.scrollLeft, id: event.pointerId, moved: false };
+      track.setPointerCapture(event.pointerId);
+    });
+    track.addEventListener("pointermove", (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      const dx = event.clientX - drag.x;
+      if (Math.abs(dx) > 3) drag.moved = true;
+      if (!drag.moved) return;
+      track.classList.add("is-dragging");
+      track.scrollLeft = drag.left - dx;
+    });
+    const endDrag = (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      drag = null;
+      track.classList.remove("is-dragging");
+    };
+    track.addEventListener("pointerup", endDrag);
+    track.addEventListener("pointercancel", endDrag);
+    paint();
+  };
+  document.querySelectorAll(".kpi-carousel").forEach(initKpiCarousel);
+})();
+"""
+
+
+def _ficha_kpi_script() -> str:
+    return f"<script>{_KPI_CAROUSEL_JS}</script>\n"
 
 
 def _ficha_lines_script() -> str:
@@ -624,9 +798,11 @@ def _ficha_lines_script() -> str:
 <script>
 (() => {
   const body = document.getElementById("ficha-lines-body");
-  const tools = document.getElementById("ficha-line-tools");
+  const lineDialog = document.getElementById("ficha-line-dialog");
+  const lineForm = document.getElementById("ficha-line-form");
+  const lineDanger = document.getElementById("ficha-line-danger");
+  const lineError = document.getElementById("ficha-line-error");
   const save = document.getElementById("ficha-lines-save");
-  const ack = document.getElementById("ficha-ack");
   const note = document.getElementById("ficha-lines-note");
   const asiento = document.body.dataset.asiento;
   const leaveText = "Hay cambios sin guardar. No se guardan solos. ¿Salir de todas formas?";
@@ -755,8 +931,9 @@ def _ficha_lines_script() -> str:
   };
   const paintQuality = (rows, lineTotal, nTotal) => {
     const root = document.getElementById("ficha-score");
-    const list = document.getElementById("ficha-score-list");
-    if (!root || !list) return;
+    const fails = document.getElementById("ficha-score-fails");
+    const okList = document.getElementById("ficha-score-ok");
+    if (!root || !fails || !okList) return;
     const join = (items) => items.slice(0, 3).join(", ") + (items.length > 3 ? ` y ${items.length - 3} más` : "");
     const names = [];
     const noConcept = [];
@@ -769,21 +946,33 @@ def _ficha_lines_script() -> str:
       if (!desc) noConcept.push(`línea ${idx + 1}`);
       if (num(tr, "importe") == null) noMoney.push(name);
     });
+    const findCheck = (id) => root.querySelector(`[data-check="${id}"]`);
     const set = (id, ok, detail) => {
-      const li = list.querySelector(`[data-check="${id}"]`);
+      const li = findCheck(id);
       if (!li) return;
       li.dataset.ok = ok ? "1" : "0";
       li.classList.toggle("is-ok", ok);
       li.classList.toggle("is-bad", !ok);
-      const em = li.querySelector("em");
-      if (ok) em?.remove();
-      else if (em) em.textContent = detail;
-      else li.insertAdjacentHTML("beforeend", `<em></em>`), li.querySelector("em").textContent = detail;
+      let em = li.querySelector("em");
+      if (!em) {
+        li.insertAdjacentHTML("beforeend", "<em></em>");
+        em = li.querySelector("em");
+      }
+      em.textContent = ok ? "" : detail;
     };
     const empty = rows.length === 0;
-    set("ids", !empty && names.length === 0, empty ? "No hay líneas, así que no hay ids de artículo." : `Falta el id en ${join(names)}.`);
-    set("conceptos", !empty && noConcept.length === 0, empty ? "No hay líneas, así que no hay conceptos." : `Falta el concepto en ${join(noConcept)}.`);
-    set("importes", !empty && noMoney.length === 0, empty ? "No hay líneas, así que no hay importes." : `Falta el importe en ${join(noMoney)}.`);
+    for (const id of ["ids", "conceptos", "importes", "suma"]) {
+      const li = findCheck(id);
+      if (li) li.hidden = empty;
+    }
+    if (findCheck("lineas")) {
+      set("lineas", !empty, "No hay líneas extraídas.");
+    }
+    if (!empty) {
+      set("ids", names.length === 0, `Falta el id en ${join(names)}.`);
+      set("conceptos", noConcept.length === 0, `Falta el concepto en ${join(noConcept)}.`);
+      set("importes", noMoney.length === 0, `Falta el importe en ${join(noMoney)}.`);
+    }
     const book = root.dataset.total === undefined || root.dataset.total === "" ? null : Number(root.dataset.total);
     const suma = round2(lineTotal);
     const cuadra = !empty && book != null && nTotal > 0 && Math.abs(suma - book) <= 0.02;
@@ -795,29 +984,38 @@ def _ficha_lines_script() -> str:
         ? "No hay importes que contrastar con el total del libro."
         : `Suma de ${nTotal} importes ${euro(suma)} ≠ total del libro ${euro(book)} (diferencia ${euro(delta)}). Puede faltar un artículo, o un importe se ha mezclado con otra línea.`
     );
-    const items = [...list.querySelectorAll("[data-check]")];
+    const items = [...root.querySelectorAll("[data-check]")].filter((li) => !li.hidden);
+    for (const li of items) {
+      if (li.dataset.ok === "1") okList.appendChild(li);
+      else fails.appendChild(li);
+    }
     const okN = items.filter((li) => li.dataset.ok === "1").length;
+    const failN = items.length - okN;
     const pct = items.length ? Math.round((100 * okN) / items.length) : 0;
     const all = items.length > 0 && okN === items.length;
     const label = document.getElementById("ficha-score-label");
     const pctEl = document.getElementById("ficha-score-pct");
     const chip = document.getElementById("ficha-score-chip");
+    const summary = document.getElementById("ficha-score-summary");
+    const failsWrap = document.getElementById("ficha-score-fails-wrap");
+    const allOk = document.getElementById("ficha-score-all-ok");
+    const okWrap = document.getElementById("ficha-score-ok-wrap");
+    const okCount = document.getElementById("ficha-score-ok-n");
     if (label) label.textContent = all ? "Lista" : "Revisar";
     if (pctEl) pctEl.textContent = `${pct} %`;
     if (chip) {
       chip.classList.remove("q-ok", "q-warn", "q-bad", "q-muted");
       chip.classList.add(all ? "q-ok" : pct >= 80 ? "q-warn" : "q-bad");
     }
-    const failsEl = document.getElementById("ficha-score-fails");
-    if (failsEl) {
-      const malos = items.filter((li) => li.dataset.ok === "0");
-      failsEl.innerHTML = malos.map((li) => {
-        const nombre = li.querySelector("span")?.textContent || "";
-        const detalle = li.querySelector("em")?.textContent || "";
-        return `<li class="is-bad"><span>${nombre}</span>${detalle ? `<em>${detalle}</em>` : ""}</li>`;
-      }).join("");
-      failsEl.hidden = malos.length === 0;
+    if (summary) {
+      summary.textContent = failN
+        ? `${failN} pendiente${failN === 1 ? "" : "s"} de ${items.length}`
+        : `${items.length} comprobaciones correctas`;
     }
+    if (failsWrap) failsWrap.hidden = failN === 0;
+    if (allOk) allOk.hidden = failN !== 0;
+    if (okWrap) okWrap.hidden = okN === 0;
+    if (okCount) okCount.textContent = String(okN);
   };
   const pencil = (n) => `<button type="button" class="row-edit line-edit-btn" title="Editar línea" aria-label="Editar línea ${n}">`
     + `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M11.7 1.6c.4-.4 1.1-.4 1.5 0l1.2 1.2c.4.4.4 1.1 0 1.5L6.2 12.5 2 14l1.5-4.2z"/></svg></button>`;
@@ -829,71 +1027,122 @@ def _ficha_lines_script() -> str:
     + `<td class="num cell-nowrap"><span class="line-view">21 %</span><input class="line-edit" data-f="iva_tipo" data-orig="21" type="number" min="0" max="100" step="0.01" value="21" aria-label="IVA %"></td>`
     + `<td class="num cell-nowrap"><span class="line-view">—</span><input class="line-edit line-calc" disabled data-f="iva_cuota" data-orig="" type="number" step="0.01" tabindex="-1" aria-label="IVA"></td>`
     + `<td class="num cell-nowrap"><span class="line-view">—</span>${field("importe", "Total de línea", true)}</td>`
-    + `<td class="line-actions cell-estado"><div class="row-actions">${pencil(n)}${disk}${trash}${restore}</div></td>`;
-  const rowDirty = (tr) => {
-    if (!tr) return false;
-    if (tr.dataset.fresh === "1") return true;
-    return [...tr.querySelectorAll("input.line-edit")].some((input) => input.value !== (input.dataset.orig || ""));
+    + `<td class="line-actions cell-estado"><div class="row-actions">${pencil(n)}${restore}</div></td>`;
+  const sheetFields = {
+    codigo: document.getElementById("ficha-line-codigo"),
+    descripcion: document.getElementById("ficha-line-desc"),
+    cantidad: document.getElementById("ficha-line-qty"),
+    base: document.getElementById("ficha-line-base"),
+    iva_tipo: document.getElementById("ficha-line-rate"),
+    iva_cuota: document.getElementById("ficha-line-iva"),
+    importe: document.getElementById("ficha-line-total"),
   };
-  const deletionDirty = () => [...body.querySelectorAll("tr[data-line]")]
-    .some((tr) => (tr.dataset.deleted || "0") !== (tr.dataset.wasDeleted || "0"));
-  const pending = () => deletionDirty() || rowDirty(editing);
-  const showTools = (on) => {
-    if (tools) tools.hidden = !on;
-    if (!on && ack) ack.checked = false;
-    if (save) save.disabled = true;
+  let sheetOrig = {};
+  const sheetVal = (name) => (sheetFields[name]?.value || "").trim();
+  const sheetDirty = () => Object.keys(sheetFields).some((name) => sheetVal(name) !== (sheetOrig[name] || ""));
+  const pending = () => Boolean(lineDialog?.open && (editing?.dataset.fresh === "1" || sheetDirty()));
+  const showDanger = (on) => {
+    if (lineForm) lineForm.hidden = on;
+    if (lineDanger) lineDanger.hidden = !on;
+    const lead = document.getElementById("ficha-line-lead");
+    if (lead) lead.hidden = on;
+    const title = document.getElementById("ficha-line-title");
+    if (!title) return;
+    if (on) title.textContent = "¿Eliminar esta línea?";
+    else if (editing) title.textContent = editing.dataset.fresh === "1" ? "Nueva línea" : "Editar línea";
   };
-  const closeRow = (tr, revert) => {
-    if (!tr) return;
-    if (revert) {
-      if (tr.dataset.fresh === "1") {
-        tr.remove();
-      } else {
-        tr.querySelectorAll("input.line-edit").forEach((input) => { input.value = input.dataset.orig || ""; });
-      }
+  const paintPreview = () => {
+    const box = document.getElementById("ficha-line-preview");
+    if (!box || !editing) return;
+    let base = 0;
+    let iva = 0;
+    let total = 0;
+    const rows = [...body.querySelectorAll("tr[data-line]")].filter((tr) => tr.dataset.deleted !== "1" && tr !== editing);
+    for (const tr of rows) {
+      const b = num(tr, "base");
+      const i = num(tr, "iva_cuota");
+      const t = num(tr, "importe");
+      if (b != null) base += b;
+      if (i != null) iva += i;
+      if (t != null) total += t;
     }
-    tr.classList.remove("is-editing");
-    tr.querySelectorAll("input.line-edit").forEach((input) => { input.disabled = true; });
-    if (editing === tr) editing = null;
-    refreshKpis();
+    const draftBase = sheetVal("base") ? Number(sheetVal("base").replace(",", ".")) : null;
+    const draftIva = sheetVal("iva_cuota") ? Number(sheetVal("iva_cuota").replace(",", ".")) : null;
+    const draftTotal = sheetVal("importe") ? Number(sheetVal("importe").replace(",", ".")) : null;
+    if (Number.isFinite(draftBase)) base += draftBase;
+    if (Number.isFinite(draftIva)) iva += draftIva;
+    if (Number.isFinite(draftTotal)) total += draftTotal;
+    const bit = (label, value) => `<span>${label} <strong>${euro(round2(value))}</strong></span>`;
+    box.innerHTML = bit("Base", base) + bit("IVA", iva) + bit("Total", total);
   };
-  const openRow = async (tr) => {
-    if (editing && editing !== tr) {
-      if (rowDirty(editing) && !(await ask(leaveText, { title: "Cambios sin guardar", ok: "Salir" }))) return;
-      closeRow(editing, true);
+  const recalcSheet = (source) => {
+    const rate = sheetVal("iva_tipo") ? Number(sheetVal("iva_tipo").replace(",", ".")) : null;
+    if (!Number.isFinite(rate)) { paintPreview(); return; }
+    let origin = source;
+    if (origin === "iva_tipo") origin = editing?.dataset.driver || (sheetVal("importe") ? "importe" : "base");
+    if (origin === "base") {
+      const base = Number(sheetVal("base").replace(",", "."));
+      if (!Number.isFinite(base)) return;
+      const iva = round2(base * rate / 100);
+      if (sheetFields.iva_cuota) sheetFields.iva_cuota.value = iva.toFixed(2);
+      if (sheetFields.importe) sheetFields.importe.value = round2(base + iva).toFixed(2);
+      if (editing) editing.dataset.driver = "base";
+    } else if (origin === "importe") {
+      const total = Number(sheetVal("importe").replace(",", "."));
+      if (!Number.isFinite(total)) return;
+      const base = round2(total / (1 + rate / 100));
+      if (sheetFields.base) sheetFields.base.value = base.toFixed(2);
+      if (sheetFields.iva_cuota) sheetFields.iva_cuota.value = round2(total - base).toFixed(2);
+      if (editing) editing.dataset.driver = "importe";
     }
+    paintPreview();
+  };
+  const fillSheet = (tr) => {
+    for (const name of Object.keys(sheetFields)) {
+      const value = tr.querySelector(`[data-f="${name}"]`)?.value || "";
+      sheetOrig[name] = value;
+      if (sheetFields[name]) sheetFields[name].value = value;
+    }
+    showDanger(false);
+    if (lineError) lineError.hidden = true;
+    const title = document.getElementById("ficha-line-title");
+    const del = document.getElementById("ficha-line-del");
+    if (title) title.textContent = tr.dataset.fresh === "1" ? "Nueva línea" : "Editar línea";
+    if (del) del.hidden = tr.dataset.fresh === "1";
+    paintPreview();
+  };
+  const closeSheet = (dropFresh) => {
+    if (dropFresh && editing?.dataset.fresh === "1") editing.remove();
+    editing = null;
+    lineDialog?.close();
+  };
+  const openRow = (tr) => {
     editing = tr;
-    tr.classList.add("is-editing");
-    tr.querySelectorAll("input.line-edit").forEach((input) => {
-      input.disabled = input.classList.contains("line-calc");
-    });
-    showTools(true);
-    tr.querySelector("input.line-edit")?.focus();
+    fillSheet(tr);
+    if (lineDialog && !lineDialog.open) lineDialog.showModal();
+    sheetFields.descripcion?.focus();
   };
-  const syncSave = () => {
-    if (save) save.disabled = !(ack?.checked && pending());
-  };
-  ack?.addEventListener("change", syncSave);
-  body?.addEventListener("input", (event) => {
-    const input = event.target.closest("input.line-edit");
-    const tr = input?.closest("tr");
-    if (input && tr && ["base", "importe", "iva_tipo"].includes(input.dataset.f)) recalc(tr, input.dataset.f);
-    refreshKpis();
-    syncSave();
+  lineDialog?.addEventListener("input", (event) => {
+    const input = event.target;
+    if (input === sheetFields.base) recalcSheet("base");
+    else if (input === sheetFields.importe) recalcSheet("importe");
+    else if (input === sheetFields.iva_tipo) recalcSheet("iva_tipo");
+    else paintPreview();
   });
-  document.getElementById("ficha-lines-cancel")?.addEventListener("click", async () => {
+  document.getElementById("ficha-line-cancel")?.addEventListener("click", async () => {
     if (pending() && !(await ask(leaveText, { title: "Cambios sin guardar", ok: "Salir" }))) return;
-    allowLeave = true;
-    if (removed) {
-      window.location.reload();
-      return;
-    }
-    closeRow(editing, true);
-    showTools(false);
+    closeSheet(true);
   });
-  document.getElementById("ficha-line-add")?.addEventListener("click", async () => {
-    if (editing && rowDirty(editing) && !(await ask(leaveText, { title: "Cambios sin guardar", ok: "Salir" }))) return;
-    closeRow(editing, true);
+  lineDialog?.addEventListener("cancel", async (event) => {
+    if (!pending()) return;
+    event.preventDefault();
+    if (await ask(leaveText, { title: "Cambios sin guardar", ok: "Salir" })) closeSheet(true);
+  });
+  lineDialog?.addEventListener("click", async (event) => {
+    if (event.target !== lineDialog || !pending()) return;
+    if (await ask(leaveText, { title: "Cambios sin guardar", ok: "Salir" })) closeSheet(true);
+  });
+  document.getElementById("ficha-line-add")?.addEventListener("click", () => {
     body.querySelector("tr:not([data-line])")?.remove();
     const tr = document.createElement("tr");
     tr.dataset.line = "1";
@@ -904,7 +1153,6 @@ def _ficha_lines_script() -> str:
     tr.innerHTML = rowHtml(n);
     body.appendChild(tr);
     openRow(tr);
-    refreshKpis();
     body.dispatchEvent(new CustomEvent("ficha-repaginate", { detail: { last: true } }));
   });
   const eye = document.getElementById("ficha-lines-eye");
@@ -915,17 +1163,35 @@ def _ficha_lines_script() -> str:
     eye.hidden = n === 0;
     eye.title = n ? `Ver ${n} línea${n === 1 ? "" : "s"} eliminada${n === 1 ? "" : "s"}` : "Ver líneas eliminadas";
   };
+  const applySheet = () => {
+    if (!editing) return;
+    for (const name of Object.keys(sheetFields)) {
+      const input = editing.querySelector(`[data-f="${name}"]`);
+      if (!input) continue;
+      input.value = sheetFields[name]?.value || "";
+      const view = input.parentElement?.querySelector(".line-view");
+      if (!view) continue;
+      if (name === "iva_tipo") view.textContent = input.value ? `${input.value} %` : "—";
+      else if (["base", "iva_cuota", "importe"].includes(name)) view.textContent = input.value ? euro(Number(input.value)) : "—";
+      else view.textContent = input.value || (name === "cantidad" ? "1" : "—");
+    }
+    editing.dataset.fresh = "0";
+    editing.dataset.lineId = sheetVal("codigo");
+    editing.dataset.lineDesc = sheetVal("descripcion");
+    editing.dataset.lineBase = sheetVal("base");
+    editing.dataset.lineRate = sheetVal("iva_tipo");
+    editing.dataset.lineIva = sheetVal("iva_cuota");
+    editing.dataset.lineTotal = sheetVal("importe");
+    sheetOrig = Object.fromEntries(Object.keys(sheetFields).map((name) => [name, sheetVal(name)]));
+  };
   const markDeleted = (tr, deleted) => {
     tr.dataset.deleted = deleted ? "1" : "0";
     tr.classList.toggle("is-deleted", deleted);
-    if (deleted && editing === tr) closeRow(tr, false);
     updateEye();
     refreshKpis();
-    syncSave();
     body?.dispatchEvent(new CustomEvent("ficha-repaginate"));
   };
   const persist = async (opts = {}) => {
-    if (!pending()) return;
     allowLeave = true;
     try {
       const res = await fetch(`/api/asientos/${asiento}`, {
@@ -942,11 +1208,26 @@ def _ficha_lines_script() -> str:
       window.location.reload();
     } catch {
       allowLeave = false;
-      if (note) note.textContent = "No se pudo guardar. Abre el libro con el servidor local.";
+      const text = "No se pudo guardar. Abre el libro con el servidor local.";
+      if (lineError) { lineError.hidden = false; lineError.textContent = text; }
+      if (note) note.textContent = text;
       if (save) save.disabled = false;
     }
   };
-  body?.addEventListener("click", async (event) => {
+  document.getElementById("ficha-line-del")?.addEventListener("click", () => {
+    const nombre = sheetVal("descripcion") || "esta línea";
+    const text = document.getElementById("ficha-line-danger-text");
+    if (text) text.textContent = `«${nombre}» sale de la suma. Podrás verla y recuperarla con el ojo. Base, IVA y total de la factura se recalculan.`;
+    showDanger(true);
+  });
+  document.getElementById("ficha-line-danger-back")?.addEventListener("click", () => showDanger(false));
+  document.getElementById("ficha-line-danger-ok")?.addEventListener("click", () => {
+    if (!editing) return;
+    markDeleted(editing, true);
+    editing = null;
+    persist({ mantenerEstado: true });
+  });
+  body?.addEventListener("click", (event) => {
     const edit = event.target.closest(".line-edit-btn");
     if (edit) {
       const tr = edit.closest("tr");
@@ -954,25 +1235,11 @@ def _ficha_lines_script() -> str:
       openRow(tr);
       return;
     }
-    const saveBtn = event.target.closest(".line-save");
-    if (saveBtn) {
-      if (!(await ask("Base, IVA y total de la factura pasan a ser la suma de las líneas visibles.", { title: "¿Guardar esta línea?", ok: "Guardar" }))) return;
-      persist();
-      return;
-    }
-    const del = event.target.closest(".line-del");
-    if (del) {
-      const tr = del.closest("tr");
-      if (!tr) return;
-      const nombre = (tr.querySelector("[data-f=descripcion]")?.value || "esta fila").trim();
-      if (!(await ask(`«${nombre}» no se borra del todo: podrás verla y recuperarla con el ojo.`, { title: "¿Eliminar esta línea?", ok: "Eliminar", warn: true }))) return;
-      markDeleted(tr, true);
-      persist({ mantenerEstado: true });
-      return;
-    }
     const back = event.target.closest(".line-restore");
     if (back) {
-      markDeleted(back.closest("tr"), false);
+      const tr = back.closest("tr");
+      if (!tr) return;
+      markDeleted(tr, false);
       persist({ mantenerEstado: true });
     }
   });
@@ -999,8 +1266,9 @@ def _ficha_lines_script() -> str:
       window.location.href = link.href;
     }
   });
-  save?.addEventListener("click", async () => {
-    if (!ack?.checked || !pending()) return;
+  save?.addEventListener("click", () => {
+    if (!editing) return;
+    applySheet();
     save.disabled = true;
     persist();
   });
@@ -1472,10 +1740,7 @@ def criterios_calidad(
 
     activas = [item for item in lineas if not item.get("eliminada")]
     if not activas:
-        add("ids", False, "Ids", "No hay líneas, así que no hay ids de artículo.")
-        add("conceptos", False, "Conceptos", "No hay líneas, así que no hay conceptos.")
-        add("importes", False, "Importes", "No hay líneas, así que no hay importes.")
-        add("suma", False, "Suma", "No hay importes que contrastar con el total del libro.")
+        add("lineas", False, "Líneas", "No hay líneas extraídas.")
         return checks
 
     sin_id: list[str] = []
@@ -1517,8 +1782,20 @@ def criterios_calidad(
     return checks
 
 
+def _check_li(item: dict) -> str:
+    state = "is-ok" if item["ok"] else "is-bad"
+    nota = escape(item.get("title") or "")
+    title_attr = f' title="{nota}"' if nota else ""
+    detail = f"<em>{escape(item['detail'])}</em>" if item["detail"] else "<em></em>"
+    return (
+        f'<li data-check="{escape(item["id"])}" data-ok="{"1" if item["ok"] else "0"}" '
+        f'class="{state}"><span{title_attr}>{escape(item["label"])}</span>{detail}</li>'
+    )
+
+
 def _criterios_html(checks: list[dict], *, total: object = None) -> str:
     ok_n = sum(1 for item in checks if item["ok"])
+    fail_n = len(checks) - ok_n
     pct = int(round(100 * ok_n / len(checks))) if checks else 0
     if checks and ok_n == len(checks):
         tone, label = "ok", "Lista"
@@ -1526,39 +1803,39 @@ def _criterios_html(checks: list[dict], *, total: object = None) -> str:
         tone, label = "warn", "Revisar"
     else:
         tone, label = "bad", "Revisar"
-    items = []
-    for item in checks:
-        state = "is-ok" if item["ok"] else "is-bad"
-        nota = escape(item.get("title") or "")
-        title_attr = f' title="{nota}"' if nota else ""
-        detail = f"<em>{escape(item['detail'])}</em>" if item["detail"] else ""
-        items.append(
-            f'<li data-check="{escape(item["id"])}" data-ok="{"1" if item["ok"] else "0"}" '
-            f'class="{state}"><span{title_attr}>{escape(item["label"])}</span>{detail}</li>'
-        )
-    fallos = [item for item in checks if not item["ok"]]
-    fallos_html = "".join(
-        f'<li class="is-bad"><span>{escape(item["label"])}</span>'
-        f"<em>{escape(item['detail'])}</em></li>"
-        for item in fallos
-    ) or ""
-    fails_hidden = "" if fallos else " hidden"
+    fails = [_check_li(item) for item in checks if not item["ok"]]
+    oks = [_check_li(item) for item in checks if item["ok"]]
+    if fail_n:
+        summary = f"{fail_n} pendiente{'s' if fail_n != 1 else ''} de {len(checks)}"
+    else:
+        summary = f"{len(checks)} comprobaciones correctas"
     quantized = q2(total) if total is not None else None
     total_attr = f' data-total="{quantized:.2f}"' if quantized is not None else ""
     return (
         f'<div class="ficha-score" id="ficha-score"{total_attr}>'
         f'<div class="ficha-score-cab">'
-        f'<span class="q-chip q-{tone}" id="ficha-score-chip">'
+        f'<button type="button" class="q-chip q-{tone} q-chip-btn" id="ficha-score-chip" '
+        f'popovertarget="ficha-score-pop" aria-label="Ver comprobaciones de calidad">'
         f'<i class="q-dot" aria-hidden="true"></i>'
         f'<span id="ficha-score-label">{label}</span>'
-        f'<span class="q-score" id="ficha-score-pct">{pct} %</span></span>'
+        f'<span class="q-score" id="ficha-score-pct">{pct} %</span></button>'
         f'<button type="button" class="q-i-btn" popovertarget="ficha-score-pop" '
-        f'aria-label="Qué se comprueba en esta factura" aria-expanded="false">i</button>'
+        f'aria-label="Qué se comprueba en esta factura" aria-expanded="false">'
+        f"{_INFO_SVG}<span class=\"q-i-label\">Detalle</span></button>"
         f"</div>"
-        f'<ul class="q-checks q-solo-fallos" id="ficha-score-fails"{fails_hidden}>{fallos_html}</ul>'
-        f'<div id="ficha-score-pop" popover="auto" class="q-pop q-pop-score" role="tooltip">'
-        f"<strong>Comprobaciones de la factura</strong>"
-        f'<ul class="q-checks q-pop-list" id="ficha-score-list">{"".join(items)}</ul>'
+        f'<div id="ficha-score-pop" popover="auto" class="q-pop q-pop-score" role="dialog" '
+        f'aria-labelledby="ficha-score-pop-title">'
+        f'<strong id="ficha-score-pop-title">Comprobaciones</strong>'
+        f'<p class="q-pop-summary" id="ficha-score-summary">{escape(summary)}</p>'
+        f'<div id="ficha-score-fails-wrap"{" hidden" if not fail_n else ""}>'
+        f'<ul class="q-pop-fails" id="ficha-score-fails">{"".join(fails)}</ul>'
+        f"</div>"
+        f'<p class="q-pop-all-ok" id="ficha-score-all-ok"{" hidden" if fail_n else ""}>'
+        f"Todo correcto</p>"
+        f'<details class="q-pop-ok-details" id="ficha-score-ok-wrap"{" hidden" if not ok_n else ""}>'
+        f'<summary>Ver correctas (<span id="ficha-score-ok-n">{ok_n}</span>)</summary>'
+        f'<ul class="q-pop-ok" id="ficha-score-ok">{"".join(oks)}</ul>'
+        f"</details>"
         "</div>"
         "</div>"
     )
@@ -1580,6 +1857,106 @@ def _unique_labels(values: list[str]) -> list[tuple[str, str]]:
         if text and text not in seen:
             seen.append(text)
     return [(item, item) for item in seen]
+
+
+def _smart_config(
+    *,
+    filters: list[tuple[str, str]] | None = None,
+    ranges: list[tuple[str, str, str]] | None = None,
+    default_sort: str = "id",
+) -> str:
+    payload = {
+        "filters": [{"fg": fg, "field": field} for fg, field in (filters or [])],
+        "ranges": [{"field": field, "minId": min_id, "maxId": max_id} for field, min_id, max_id in (ranges or [])],
+        "defaultSort": default_sort,
+    }
+    return escape(json.dumps(payload, separators=(",", ":")))
+
+
+def _asiento_table_choices(
+    items: list[dict],
+    *,
+    gemelos: list[tuple[str, str]] | None = None,
+    motivos: list[tuple[str, str]] | None = None,
+) -> dict[str, list[tuple[str, str]]]:
+    choices: dict[str, list[tuple[str, str]]] = {
+        "id": [(str(item["id"]), f"#{item['id']}") for item in sorted(items, key=lambda row: row["id"])],
+        "emisor": _unique_labels([item.get("emisor") or "—" for item in items]),
+        "numero": _unique_labels([item.get("numero") or "—" for item in items]),
+        "fecha": _unique_labels([item.get("fecha_label") or "—" for item in items]),
+    }
+    if gemelos is not None:
+        choices["gemelo"] = gemelos
+    if motivos is not None:
+        choices["motivo"] = motivos
+    return choices
+
+
+def _asiento_smart_filters(prefix: str, *, gemelo: bool = False, motivo: bool = False) -> list[tuple[str, str]]:
+    filters = [
+        (f"{prefix}-id", "id"),
+        (f"{prefix}-emisor", "emisor"),
+        (f"{prefix}-numero", "numero"),
+        (f"{prefix}-fecha", "fecha"),
+    ]
+    if gemelo:
+        filters.append((f"{prefix}-gemelo", "gemelo"))
+    if motivo:
+        filters.append((f"{prefix}-motivo", "motivo"))
+    return filters
+
+
+def _asiento_table_thead(
+    prefix: str,
+    choices: dict[str, list[tuple[str, str]]],
+    *,
+    gemelo: bool = False,
+    motivo: bool = False,
+    actions: str = "",
+) -> str:
+    parts = [
+        _filter_th("Id", f"pop-{prefix}-id", _filter_checks(f"{prefix}-id", choices["id"]), sort="id", sort_type="num"),
+        _filter_th("Emisor", f"pop-{prefix}-emisor", _filter_checks(f"{prefix}-emisor", choices["emisor"]), sort="emisor"),
+        _filter_th("Nº", f"pop-{prefix}-numero", _filter_checks(f"{prefix}-numero", choices["numero"]), sort="numero"),
+        _filter_th("Fecha", f"pop-{prefix}-fecha", _filter_checks(f"{prefix}-fecha", choices["fecha"]), sort="fecha"),
+        _filter_th(
+            "Total",
+            f"pop-{prefix}-total",
+            _filter_amount(f"f-{prefix}-total-min", f"f-{prefix}-total-max"),
+            "num",
+            sort="total",
+            sort_type="num",
+        ),
+    ]
+    if gemelo:
+        parts.append(
+            _filter_th(
+                "Gemelo",
+                f"pop-{prefix}-gemelo",
+                _filter_checks(f"{prefix}-gemelo", choices.get("gemelo", [])),
+                sort="gemelo",
+                sort_type="num",
+            )
+        )
+    if motivo:
+        parts.append(
+            _filter_th(
+                "Por qué revisar",
+                f"pop-{prefix}-motivo",
+                _filter_checks(f"{prefix}-motivo", choices.get("motivo", [])),
+                sort="motivo",
+            )
+        )
+    if actions:
+        parts.append(f'<th class="th-plain th-actions" aria-hidden="true"><span class="th-label"></span></th>')
+    return "<thead><tr>" + "".join(parts) + "</tr></thead>"
+
+
+def _smart_row_attrs(**fields: object) -> str:
+    attrs = ['data-smart-row="1"']
+    for key, value in fields.items():
+        attrs.append(f'data-{key}="{escape(str(value if value is not None else ""))}"')
+    return " ".join(attrs)
 
 
 def _tipo_visible(value: object) -> str:
@@ -1689,10 +2066,6 @@ def _lineas_rows_html(lineas: list[dict]) -> str:
             + '<td class="line-actions cell-estado"><div class="row-actions">'
             + f'<button type="button" class="row-edit line-edit-btn" title="Editar línea" '
             + f'aria-label="Editar línea {idx}">{_PENCIL_SVG}</button>'
-            + f'<button type="button" class="row-edit line-save" title="Guardar línea" '
-            + f'aria-label="Guardar línea {idx}">{_DISK_SVG}</button>'
-            + f'<button type="button" class="row-edit line-del" title="Eliminar línea" '
-            + f'aria-label="Eliminar línea {idx}">{_TRASH_SVG}</button>'
             + f'<button type="button" class="row-edit line-restore" title="Recuperar línea" '
             + f'aria-label="Recuperar línea {idx}">{_RESTORE_SVG}</button>'
             + "</div></td></tr>"
@@ -1803,7 +2176,7 @@ def _iva_por_tipo(rows: list[Asiento]) -> list[dict]:
         slot["cuota"] += q2(row.iva_cuota) or ZERO
         slot["total"] += q2(row.total) or ZERO
     return [
-        {"label": IVA_TIPOS_LABEL[key], **buckets[key]}
+        {"key": key, "label": IVA_TIPOS_LABEL[key], **buckets[key]}
         for key in IVA_TIPOS_ORDEN
         if key in buckets
     ]
@@ -1979,6 +2352,15 @@ def _masthead(data: dict) -> str:
 """
 
 
+def _kpi_carousel(cards: str, carousel_id: str) -> str:
+    return (
+        f'<div class="kpi-carousel" id="{escape(carousel_id)}">'
+        f'<div class="kpi-grid kpi-track">{cards}</div>'
+        f'<div class="kpi-dots" hidden></div>'
+        f"</div>"
+    )
+
+
 def _kpis(data: dict) -> str:
     mejora_note = ""
     if data["regimen"] == REGIMEN_CI:
@@ -1986,14 +2368,17 @@ def _kpis(data: dict) -> str:
             '<p class="hint wrap">En capital inmobiliario las <strong>mejoras no restan</strong> '
             "del rendimiento del año: se capitalizan y se amortizan.</p>"
         )
+    cards = (
+        f'{_kpi_btn("Gastos del ejercicio", data["gastos"], "gasto")}'
+        f'{_kpi_btn("Ingresos", data["ingresos"], "ingreso")}'
+        f'{_kpi_btn("Mejoras (inversión)", data["mejoras"], "mejora")}'
+        f'{_kpi_btn("Rendimiento neto", data["resultado"], "neto")}'
+        f'{_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], kpi_id="mast-kpi-revisar")}'
+    )
     return f"""
 <section class="kpis" aria-label="Resumen del ejercicio">
-  <div class="wrap kpi-grid">
-    {_kpi_btn("Gastos del ejercicio", data["gastos"], "gasto")}
-    {_kpi_btn("Ingresos", data["ingresos"], "ingreso")}
-    {_kpi_btn("Mejoras (inversión)", data["mejoras"], "mejora")}
-    {_kpi_btn("Rendimiento neto", data["resultado"], "neto")}
-    {_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], kpi_id="insight-kpi-revisar")}
+  <div class="wrap">
+    {_kpi_carousel(cards, "mast-kpis")}
   </div>
   {mejora_note}
 </section>
@@ -2064,6 +2449,7 @@ def _quality_cell(item: dict, *, prefix: str) -> str:
         f"<div><dt>Rubro</dt><dd>{escape(rubro)}</dd></div>"
         f"<div><dt>Casilla</dt><dd>{escape(casilla)}</dd></div></dl>"
         f"<p>{escape(hint)}</p>"
+        f'<p><a href="/asiento/{item["id"]}">Abrir ficha</a></p>'
         f"</div></div>"
     )
 
@@ -2150,8 +2536,16 @@ def _panel_revision(data: dict) -> str:
         total = item.get("total")
         total_label = escape(format_euro(total)) if total is not None else "—"
         faltas = " · ".join(item.get("calidad_faltas") or [])[:90] or "—"
+        row_attrs = _smart_row_attrs(
+            id=item["id"],
+            emisor=item.get("emisor") or "",
+            numero=item.get("numero") or "",
+            fecha=item.get("fecha_label") or "",
+            total=total if total is not None else "",
+            motivo=faltas,
+        )
         return (
-            "<tr>"
+            f"<tr {row_attrs}>"
             f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
             f"<td>{escape(item['emisor'])}</td>"
             f"<td>{escape(item['numero'])}</td>"
@@ -2193,9 +2587,8 @@ def _panel_revision(data: dict) -> str:
     {_columna("rechazado", "Rechazadas", rechazadas, "Sin documentos rechazados.", "recuperar")}
   </div>
   <div class="rev-tabla" id="revision-tabla" hidden>
-    <div class="table-wrap"><table class="dup-tabla">
-      <thead><tr><th>Id</th><th>Emisor</th><th>Nº</th><th>Fecha</th>
-      <th class="num">Total</th><th>Por qué revisar</th><th></th></tr></thead>
+    <div class="table-wrap"><table class="dup-tabla smart-table" id="rev-pend-tabla" data-smart-config="{_smart_config(filters=_asiento_smart_filters("rev-pend", motivo=True), ranges=[("total", "f-rev-pend-total-min", "f-rev-pend-total-max")], default_sort="id")}">
+      {_asiento_table_thead("rev-pend", _asiento_table_choices(pendientes_ordenadas, motivos=_unique_labels([" · ".join(item.get("calidad_faltas") or [])[:90] or "—" for item in pendientes_ordenadas])), motivo=True, actions="1")}
       <tbody id="rev-tabla-body">{tabla_rows}</tbody></table></div>
     <nav class="pager" aria-label="Páginas de pendientes">
       <button type="button" class="ghost" id="rev-prev">Anterior</button>
@@ -2203,11 +2596,10 @@ def _panel_revision(data: dict) -> str:
       <button type="button" class="ghost" id="rev-next">Siguiente</button>
     </nav>
   </div>
-  <dialog class="edit-dialog" id="rechazo-dialog" aria-labelledby="rechazo-title">
-    <div class="dup-gestor-cuerpo">
-      <p class="dup-gestor-eyebrow">Rechazar factura</p>
+  <dialog class="app-sheet sheet-form" id="rechazo-dialog" aria-labelledby="rechazo-title">
+      <p class="sheet-eyebrow">Rechazar factura</p>
       <h2 id="rechazo-title">¿Por qué se rechaza?</h2>
-      <p class="hint">Queda fuera del libro y del Excel. El motivo alimenta las estadísticas
+      <p class="sheet-lead">Queda fuera del libro y del Excel. El motivo alimenta las estadísticas
       de aprendizaje del pipeline.</p>
       <div class="rechazo-opciones">
         <label class="filter-opt"><input type="radio" name="rechazo-motivo" value="No es una factura" checked><span>No es una factura (confirmación, publicidad…)</span></label>
@@ -2218,11 +2610,11 @@ def _panel_revision(data: dict) -> str:
       </div>
       <label class="dup-campo">Detalle (opcional)
         <input id="rechazo-detalle" type="text" maxlength="140" placeholder="p. ej. escaneo torcido, página en inglés…"></label>
-      <div class="edit-actions" style="border:0; margin:12px 0 0; padding:0;">
+      <p class="sheet-error" id="rechazo-error" hidden></p>
+      <div class="sheet-foot">
         <button type="button" class="ghost" id="rechazo-cancel">Cancelar</button>
-        <button type="button" class="export-btn" id="rechazo-ok">Rechazar</button>
+        <button type="button" class="export-btn is-warn" id="rechazo-ok">Rechazar</button>
       </div>
-    </div>
   </dialog>
 
   {_footer(data)}
@@ -2308,8 +2700,16 @@ def _dup_card(item: dict, gemelo_view: dict | None, gemelo_id: int | None) -> st
     )
     total = item.get("total")
     total_label = escape(format_euro(total)) if total is not None else "—"
+    row_attrs = _smart_row_attrs(
+        id=item["id"],
+        emisor=item.get("emisor") or "",
+        numero=item.get("numero") or "",
+        fecha=item.get("fecha_label") or "",
+        total=total if total is not None else "",
+        gemelo=gemelo_id or "",
+    )
     return (
-        f'<tr tabindex="0" role="button" {_dup_attrs(item, gemelo_view, gemelo_id)}>'
+        f'<tr tabindex="0" role="button" {_dup_attrs(item, gemelo_view, gemelo_id)} {row_attrs}>'
         f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
         f"<td>{escape(item['emisor'])}</td>"
         f"<td>{escape(item['numero'])}</td>"
@@ -2326,20 +2726,30 @@ def _panel_duplicados(data: dict) -> str:
     fusionados = [item for item in data["asientos"] if item["estado"] == "duplicado"]
     sospechosos = data.get("sospechosos") or []
 
-    def _tabla(rows: list[dict], aria: str) -> str:
+    def _tabla(rows: list[dict], aria: str, prefix: str) -> str:
         if not rows:
             return (
                 '<p class="dup-vacio">Nada por aquí. Cuando el modelo detecte '
                 "la misma compra dos veces, aparecerá aquí para que decidas.</p>"
             )
         filas = []
+        gemelos: list[tuple[str, str]] = []
         for item in rows:
             gemelo_id = item.get("duplicado_de_id") or _gemelo_que_apunta(item["id"], data)
+            if gemelo_id:
+                gemelos.append((str(gemelo_id), f"#{gemelo_id}"))
             filas.append(_dup_card(item, por_id.get(gemelo_id) if gemelo_id else None, gemelo_id))
+        gemelos = sorted(set(gemelos), key=lambda pair: int(pair[0]))
+        choices = _asiento_table_choices(rows, gemelos=gemelos)
+        config = _smart_config(
+            filters=_asiento_smart_filters(prefix, gemelo=True),
+            ranges=[("total", f"f-{prefix}-total-min", f"f-{prefix}-total-max")],
+            default_sort="id",
+        )
         return (
-            f'<div class="table-wrap" aria-label="{escape(aria)}"><table class="dup-tabla">'
-            "<thead><tr><th>Id</th><th>Emisor</th><th>Nº</th><th>Fecha</th>"
-            '<th class="num">Total</th><th>Gemelo</th><th></th></tr></thead>'
+            f'<div class="table-wrap" aria-label="{escape(aria)}">'
+            f'<table class="dup-tabla smart-table" data-smart-config="{config}">'
+            f'{_asiento_table_thead(prefix, choices, gemelo=True, actions="1")}'
             f'<tbody>{"".join(filas)}</tbody></table></div>'
         )
 
@@ -2356,30 +2766,27 @@ def _panel_duplicados(data: dict) -> str:
       <h2 id="dup-fusionados">Duplicados fusionados</h2>
       <p>Marcados (por el modelo o por ti) y fuera de los totales. Se deshacen desde «Gestionar».</p>
     </div>
-    {_tabla(fusionados, "Duplicados fusionados")}
+    {_tabla(fusionados, "Duplicados fusionados", "dup-fus")}
   </section>
   <section class="insight-block" aria-labelledby="dup-sospechosos">
     <div class="review-head">
       <h2 id="dup-sospechosos">Sospechosos pendientes</h2>
       <p>Compara con su gemelo y decide: fusionar o abrir la ficha.</p>
     </div>
-    {_tabla(sospechosos, "Sospechosos pendientes")}
+    {_tabla(sospechosos, "Sospechosos pendientes", "dup-sos")}
   </section>
-  <dialog class="edit-dialog" id="dup-gestor" aria-labelledby="dup-gestor-title">
-    <div class="dup-gestor-cuerpo">
-      <p class="dup-gestor-eyebrow" id="dup-gestor-eyebrow">Duplicado</p>
-      <h2 id="dup-gestor-title">Gestionar duplicado</h2>
-      <p class="dup-motivo-caja" id="dup-gestor-motivo"></p>
-      <div class="dup-par" id="dup-gestor-par"></div>
+  <dialog class="app-sheet sheet-compare" id="dup-gestor" aria-labelledby="dup-gestor-title">
+    <p class="sheet-eyebrow" id="dup-gestor-eyebrow">Duplicado</p>
+    <h2 id="dup-gestor-title">Gestionar duplicado</h2>
+    <p class="sheet-lead" id="dup-gestor-motivo"></p>
+    <p class="sheet-error" id="dup-gestor-error" hidden></p>
+    <div class="dup-par" id="dup-gestor-par"></div>
+    <div class="sheet-foot">
+      <a class="ghost sheet-aside sheet-link" id="dup-gestor-ficha" target="_blank" rel="noopener">Abrir ficha ↗</a>
+      <button type="button" class="ghost" id="dup-gestor-cerrar">Cerrar</button>
+      <button type="button" class="export-btn" id="dup-gestor-fusionar" hidden>Fusionar</button>
+      <button type="button" class="export-btn is-warn" id="dup-gestor-quitar" hidden>Quitar duplicado</button>
     </div>
-    <footer class="dup-gestor-pie">
-      <a class="dup-ficha-link" id="dup-gestor-ficha" target="_blank" rel="noopener">Abrir ficha ↗</a>
-      <div class="dup-gestor-acciones">
-        <button type="button" class="ghost" id="dup-gestor-cerrar">Cerrar</button>
-        <button type="button" class="export-btn" id="dup-gestor-fusionar" hidden>Fusionar</button>
-        <button type="button" class="ghost" id="dup-gestor-quitar" hidden>Quitar duplicado</button>
-      </div>
-    </footer>
   </dialog>
   {_footer(data)}
 </div>
@@ -2400,17 +2807,18 @@ def _panel_insights(data: dict) -> str:
             '<p class="hint">En capital inmobiliario las <strong>mejoras no restan</strong> '
             "del rendimiento del año: se capitalizan y se amortizan.</p>"
         )
+    cards = (
+        f'{_kpi_btn("Gastos", data["gastos"], "gasto", kpi_id="insight-kpi-gastos")}'
+        f'{_kpi_btn("Ingresos", data["ingresos"], "ingreso", kpi_id="insight-kpi-ingresos")}'
+        f'{_kpi_btn("Mejoras", data["mejoras"], "mejora", kpi_id="insight-kpi-mejoras")}'
+        f'{_kpi_btn("Neto", data["resultado"], "neto", kpi_id="insight-kpi-neto")}'
+        f'{_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], kpi_id="insight-kpi-revisar")}'
+    )
     return f"""
 <section class="panel" role="tabpanel" id="panel-insights" data-panel="insights"
   aria-labelledby="tab-insights">
   <p class="panel-lead">Arriba, cómo va el ejercicio. Abajo, el borrador de la Renta.</p>
-  <div class="kpi-grid">
-    {_kpi_btn("Gastos", data["gastos"], "gasto", kpi_id="insight-kpi-gastos")}
-    {_kpi_btn("Ingresos", data["ingresos"], "ingreso", kpi_id="insight-kpi-ingresos")}
-    {_kpi_btn("Mejoras", data["mejoras"], "mejora", kpi_id="insight-kpi-mejoras")}
-    {_kpi_btn("Neto", data["resultado"], "neto", kpi_id="insight-kpi-neto")}
-    {_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], kpi_id="insight-kpi-revisar")}
-  </div>
+  {_kpi_carousel(cards, "insight-kpis")}
   <p class="hint" id="insight-kpi-hint" hidden>KPIs y tablas siguen el rango de fechas de abajo; la Renta usa el ejercicio completo.</p>
   {mejora_note}
   {_aviso_linea(data)}
@@ -2459,13 +2867,32 @@ def _insights_html(data: dict) -> str:
   </div>
   <div class="insight-range" id="insight-range">
     <span class="insight-range-year">Ejercicio {data["year"]}</span>
-    <button type="button" class="ghost" id="insight-range-all">Año completo</button>
-    <label>Desde <input id="insight-desde" type="date"></label>
-    <label>Hasta <input id="insight-hasta" type="date"></label>
-    <label>Nombre <input id="insight-range-name" type="text" maxlength="40" placeholder="Agosto" autocomplete="off"></label>
+    <div class="insight-range-picker">
+      <button type="button" class="insight-range-trigger" id="insight-range-trigger"
+        popovertarget="insight-range-pop" aria-expanded="false" aria-haspopup="dialog">
+        {_CALENDAR_SVG}<span id="insight-range-label">Todo el ejercicio</span>
+        <span class="insight-range-caret" aria-hidden="true">▾</span>
+      </button>
+      <button type="button" class="ghost insight-range-clear" id="insight-range-clear" hidden>Limpiar</button>
+    </div>
+    <div id="insight-range-pop" popover="auto" class="filter-pop insight-range-pop" role="dialog"
+      aria-labelledby="insight-range-pop-title">
+      <p class="filter-pop-title" id="insight-range-pop-title">Rango de fechas</p>
+      <div class="insight-range-fields">
+        <label>Desde <input id="insight-desde" type="date"></label>
+        <label>Hasta <input id="insight-hasta" type="date"></label>
+      </div>
+      <div class="filter-pop-foot insight-range-foot">
+        <button type="button" class="ghost" id="insight-range-all">Año completo</button>
+        <button type="button" class="filter-done" id="insight-range-apply">Aplicar</button>
+      </div>
+    </div>
+    <label class="insight-range-name">Nombre
+      <input id="insight-range-name" type="text" maxlength="40" placeholder="Agosto" autocomplete="off">
+    </label>
     <button type="button" class="ghost" id="insight-range-save">Guardar rango</button>
     <div class="insight-presets insight-trims" id="insight-trims"></div>
-  <div class="insight-presets" id="insight-presets"></div>
+    <div class="insight-presets" id="insight-presets"></div>
   </div>
   {frase_html}
   {_charts(data)}
@@ -2492,9 +2919,11 @@ def _charts(data: dict) -> str:
 
 def _iva_html(data: dict) -> str:
     filas = data.get("iva_tipos") or []
+    tipos = [(item["key"], item["label"]) for item in filas]
     if filas:
         body = "".join(
-            f'<tr><td>{escape(item["label"])}</td>'
+            f'<tr {_smart_row_attrs(tipo=item["key"], base=item["base"], cuota=item["cuota"], total=item["total"])}>'
+            f'<td>{escape(item["label"])}</td>'
             f'<td class="num">{escape(format_euro(item["base"]))}</td>'
             f'<td class="num">{escape(format_euro(item["cuota"]))}</td>'
             f'<td class="num">{escape(format_euro(item["total"]))}</td></tr>'
@@ -2502,6 +2931,15 @@ def _iva_html(data: dict) -> str:
         )
     else:
         body = '<tr class="iva-vacia"><td colspan="4">Sin IVA registrado.</td></tr>'
+    iva_config = _smart_config(
+        filters=[("iva-tipo", "tipo")],
+        ranges=[
+            ("base", "f-iva-base-min", "f-iva-base-max"),
+            ("cuota", "f-iva-cuota-min", "f-iva-cuota-max"),
+            ("total", "f-iva-total-min", "f-iva-total-max"),
+        ],
+        default_sort="tipo",
+    )
     return f"""
 <section class="iva-block insight-block" id="iva-soportado" aria-labelledby="iva-titulo">
   <div class="review-head">
@@ -2509,13 +2947,13 @@ def _iva_html(data: dict) -> str:
     <p>Base, cuota y total de gastos y mejoras por tipo de IVA. Apunta al borrador 303.</p>
   </div>
   <div class="table-wrap">
-    <table class="iva-tabla" id="iva-tabla">
+    <table class="iva-tabla smart-table" id="iva-tabla" data-smart-config="{iva_config}">
       <thead>
         <tr>
-          <th scope="col"><span class="th-label">Tipo</span></th>
-          <th scope="col" class="num"><span class="th-label">Base</span></th>
-          <th scope="col" class="num"><span class="th-label">Cuota</span></th>
-          <th scope="col" class="num"><span class="th-label">Total</span></th>
+          {_filter_th("Tipo", "pop-iva-tipo", _filter_checks("iva-tipo", tipos), sort="tipo")}
+          {_filter_th("Base", "pop-iva-base", _filter_amount("f-iva-base-min", "f-iva-base-max"), "num", sort="base", sort_type="num")}
+          {_filter_th("Cuota", "pop-iva-cuota", _filter_amount("f-iva-cuota-min", "f-iva-cuota-max"), "num", sort="cuota", sort_type="num")}
+          {_filter_th("Total", "pop-iva-total", _filter_amount("f-iva-total-min", "f-iva-total-max"), "num", sort="total", sort_type="num")}
         </tr>
       </thead>
       <tbody>{body}</tbody>
@@ -2627,6 +3065,7 @@ def _irpf_html(data: dict) -> str:
         mark = "Sí" if item["resta_del_ano"] else "No"
         rows.append(
             "<tr "
+            f'{_smart_row_attrs(concepto=item["etiqueta"], n=item["n"], importe=item["total"] or "", resta="si" if item["resta_del_ano"] else "no", nota=item["notas"])} '
             f'data-irpf-concepto="{escape(item["etiqueta"])}" '
             f'data-irpf-resta="{"si" if item["resta_del_ano"] else "no"}" '
             f'data-irpf-importe="{escape(str(item["total"] or ""))}">'
@@ -2639,6 +3078,11 @@ def _irpf_html(data: dict) -> str:
         )
     conceptos = _unique_labels([item["etiqueta"] for item in irpf["filas"] if not (item["n"] == 0 and item["clave"] not in {"ingresos", "mejoras"})])
     resta = [("si", "Sí"), ("no", "No")]
+    irpf_config = _smart_config(
+        filters=[("irpf-concepto", "concepto"), ("irpf-resta", "resta")],
+        ranges=[("importe", "f-irpf-min", "f-irpf-max")],
+        default_sort="concepto",
+    )
     return f"""
 <section class="irpf insight-block" id="irpf" aria-labelledby="insight-renta">
   <div class="review-head">
@@ -2652,14 +3096,14 @@ def _irpf_html(data: dict) -> str:
     <article><span>Mejoras (fuera del año)</span><strong>{escape(format_euro(irpf["mejoras"]))}</strong></article>
   </div>
   <div class="table-wrap">
-    <table class="irpf-table">
+    <table class="irpf-table smart-table" data-smart-config="{irpf_config}">
       <thead>
         <tr>
-          {_filter_th("Concepto", "pop-irpf-concepto", _filter_checks("irpf-concepto", conceptos))}
-          <th class="num"><span class="th-label">Asientos</span></th>
-          {_filter_th("Importe", "pop-irpf-importe", _filter_amount("f-irpf-min", "f-irpf-max"), "num")}
-          {_filter_th("Resta del año", "pop-irpf-resta", _filter_checks("irpf-resta", resta))}
-          <th><span class="th-label">Nota</span></th>
+          {_filter_th("Concepto", "pop-irpf-concepto", _filter_checks("irpf-concepto", conceptos), sort="concepto")}
+          <th class="num th-plain" data-sort="n" data-sort-type="num"><span class="th-label">Asientos</span></th>
+          {_filter_th("Importe", "pop-irpf-importe", _filter_amount("f-irpf-min", "f-irpf-max"), "num", sort="importe", sort_type="num")}
+          {_filter_th("Resta del año", "pop-irpf-resta", _filter_checks("irpf-resta", resta), sort="resta")}
+          <th data-sort="nota"><span class="th-label">Nota</span></th>
         </tr>
       </thead>
       <tbody>{"".join(rows)}</tbody>
@@ -2772,6 +3216,18 @@ _CLOCK_SVG = (
     '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M8 5.2V8l2 1.6"/>'
     "</svg>"
 )
+_INFO_SVG = (
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    '<circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" stroke-width="1.35"/>'
+    '<path fill="currentColor" d="M7.45 7.1h1.1V11.2H7.45zm0-2.45h1.1v1.1H7.45z"/>'
+    "</svg>"
+)
+_CALENDAR_SVG = (
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    '<rect x="2.4" y="3.6" width="11.2" height="10" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.3"/>'
+    '<path fill="none" stroke="currentColor" stroke-width="1.3" d="M2.4 6.8h11.2M5.4 2.4v2.4M10.6 2.4v2.4"/>'
+    "</svg>"
+)
 
 
 def _filter_date_range() -> str:
@@ -2816,11 +3272,12 @@ def _edit_dialog(data: dict | None = None) -> str:
         f'<option value="{escape(nombre)}">{escape(nombre)}</option>' for nombre in nombres
     )
     return f"""
-<dialog class="edit-dialog" id="edit-dialog" aria-labelledby="edit-title">
+<dialog class="edit-dialog app-sheet sheet-form" id="edit-dialog" aria-labelledby="edit-title">
   <form method="dialog" id="edit-form">
     <div id="edit-form-pane">
+      <p class="sheet-eyebrow">Asiento</p>
       <h2 id="edit-title">Editar asiento</h2>
-      <p class="edit-meta" id="edit-meta"></p>
+      <p class="sheet-lead edit-meta" id="edit-meta"></p>
       <label>Emisor
         <input id="edit-emisor" name="emisor" maxlength="200" autocomplete="organization">
       </label>
@@ -2841,23 +3298,27 @@ def _edit_dialog(data: dict | None = None) -> str:
       </label>
       <p class="edit-log-title">Historial</p>
       <ol class="edit-log" id="edit-log"></ol>
-      <div class="edit-actions">
+      <div class="sheet-foot">
         <button type="button" class="ghost" id="edit-cancel" value="cancel">Cancelar</button>
         <button type="button" class="export-btn" id="edit-review">Revisar cambio</button>
       </div>
     </div>
     <div id="edit-confirm" hidden>
+      <p class="sheet-eyebrow">Confirmar cambio</p>
       <h2>¿Seguro que quieres modificar este asiento?</h2>
-      <p>Comprueba el antes y el después. Esta acción queda en el log del libro.</p>
-      <table class="edit-diff">
-        <thead><tr><th>Campo</th><th>Antes</th><th>Después</th></tr></thead>
-        <tbody id="edit-diff-body"></tbody>
-      </table>
+      <p class="sheet-lead">Comprueba el antes y el después. Esta acción queda en el log del libro.</p>
+      <div class="table-wrap table-wrap--dialog">
+        <table class="edit-diff">
+          <thead><tr><th>Campo</th><th>Antes</th><th>Después</th></tr></thead>
+          <tbody id="edit-diff-body"></tbody>
+        </table>
+      </div>
       <label class="edit-check">
         <input id="edit-ack" type="checkbox">
         He revisado el documento y confirmo que los datos son correctos.
       </label>
-      <div class="edit-actions">
+      <p class="sheet-error" id="edit-error" hidden></p>
+      <div class="sheet-foot">
         <button type="button" class="ghost" id="edit-back">Volver</button>
         <button type="button" class="export-btn" id="edit-commit" disabled>Sí, modificar</button>
       </div>
@@ -2867,12 +3328,28 @@ def _edit_dialog(data: dict | None = None) -> str:
 """
 
 
+def _decision_dialog() -> str:
+    return """
+<dialog class="app-sheet sheet-decision" id="app-decision" aria-labelledby="app-decision-title">
+  <p class="sheet-eyebrow" id="app-decision-eyebrow">Decisión</p>
+  <h2 id="app-decision-title">Confirmar</h2>
+  <p class="sheet-lead" id="app-decision-text"></p>
+  <p class="sheet-error" id="app-decision-error" hidden></p>
+  <div class="sheet-foot">
+    <button type="button" class="ghost" id="app-decision-cancel">Cancelar</button>
+    <button type="button" class="export-btn" id="app-decision-ok">Aceptar</button>
+  </div>
+</dialog>
+"""
+
+
 def _mast_dialog() -> str:
     return """
-<dialog class="edit-dialog" id="mast-dialog" aria-labelledby="mast-title">
+<dialog class="edit-dialog app-sheet sheet-form" id="mast-dialog" aria-labelledby="mast-title">
   <form method="dialog" id="mast-form">
+    <p class="sheet-eyebrow">Expediente</p>
     <h2 id="mast-title">Títulos del libro</h2>
-    <p class="edit-meta">Cabecera de este expediente. El código (CI-VA-001) y el régimen fiscal no se cambian aquí.</p>
+    <p class="sheet-lead edit-meta">Cabecera de este expediente. El código (CI-VA-001) y el régimen fiscal no se cambian aquí.</p>
     <label>Expediente
       <input id="mast-input-nombre" maxlength="200" autocomplete="off">
     </label>
@@ -2882,7 +3359,7 @@ def _mast_dialog() -> str:
     <label id="mast-inmueble-field">Inmueble
       <input id="mast-input-inmueble" maxlength="200" autocomplete="off">
     </label>
-    <div class="edit-actions">
+    <div class="sheet-foot">
       <button type="button" class="ghost" id="mast-cancel">Cancelar</button>
       <button type="button" class="export-btn" id="mast-save">Guardar</button>
     </div>
@@ -3141,7 +3618,9 @@ def _row_html(item: dict) -> str:
     emisor = f'<a class="row-go" href="{href}">{emisor}</a>'
     numero = escape(item["numero"])
     factura = (
+        f'<div class="cell-clip-inner">'
         f'<a class="row-go" href="{href}" title="{numero}">{numero}</a>{_docs_chip(item)}'
+        f"</div>"
     )
     calidad = _quality_cell(item, prefix="libro")
     baja_flag = "1" if item["baja"] else "0"
@@ -3190,20 +3669,40 @@ def _row_html(item: dict) -> str:
     )
 
 
+_FONT_LINKS = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
+    '<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">\n'
+)
+
 _CSS = r"""
 :root {
-  --ink: #1c1814;
-  --muted: #6e655c;
-  --paper: #efe7d9;
-  --sheet: #fbf7ef;
-  --line: #ddcfc0;
-  --gasto: #9c3d2e;
-  --ingreso: #2c5f52;
-  --mejora: #7a6236;
-  --neto: #243447;
-  --warn: #a35b12;
-  --link: #1d5f8c;
-  --link-hover: #134868;
+  --night: #0C0A3E;
+  --purple: #7B1E7A;
+  --rose: #B33F62;
+  --coral: #F9564F;
+  --gold: #F3C677;
+  --ink: var(--night);
+  --muted: #6B6888;
+  --paper: #FAF8F4;
+  --sheet: #FFFFFF;
+  --line: rgba(12, 10, 62, 0.10);
+  --line-strong: rgba(12, 10, 62, 0.16);
+  --head-text: rgba(248, 246, 255, 0.94);
+  --head-muted: rgba(248, 246, 255, 0.62);
+  --row-zebra: rgba(243, 198, 119, 0.09);
+  --row-hover: rgba(123, 30, 122, 0.06);
+  --gasto: var(--coral);
+  --ingreso: var(--purple);
+  --mejora: var(--gold);
+  --neto: var(--night);
+  --warn: var(--rose);
+  --link: var(--purple);
+  --link-hover: #5E1660;
+  --font-body: "DM Sans", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Space Grotesk", "DM Sans", system-ui, sans-serif;
+  --shadow: 0 10px 28px rgba(12, 10, 62, 0.14);
+  --shadow-lg: 0 16px 40px rgba(12, 10, 62, 0.20);
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -3214,14 +3713,15 @@ body {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  font: 15px/1.45 "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  font: 15px/1.45 var(--font-body);
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
   padding-bottom: env(safe-area-inset-bottom);
 }
 .wrap { width: min(1680px, calc(100% - 24px)); margin-inline: auto; max-width: 100%; }
 .mast {
-  background: var(--sheet);
+  background: linear-gradient(180deg, var(--sheet) 0%, var(--paper) 100%);
+  border-bottom: 1px solid var(--line);
   padding: 28px 0 0;
 }
 .mast-grid { padding-bottom: 22px; }
@@ -3230,11 +3730,12 @@ body {
   letter-spacing: .14em;
   text-transform: uppercase;
   font-size: 11px;
-  color: var(--muted);
+  font-weight: 600;
+  color: var(--purple);
 }
 h1 {
   margin: 0;
-  font: 600 34px/1.1 "Iowan Old Style", Palatino, "Palatino Linotype", serif;
+  font: 600 34px/1.1 var(--font-display);
 }
 .mast-h1 {
   display: flex;
@@ -3274,9 +3775,9 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 }
 .tab:hover { color: var(--ink); }
 .tab[aria-selected="true"] {
-  color: var(--ink);
+  color: var(--purple);
   font-weight: 600;
-  border-bottom-color: var(--ink);
+  border-bottom-color: var(--coral);
 }
 .tab:focus-visible {
   outline: none;
@@ -3288,18 +3789,26 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   margin-left: 6px;
   padding: 0 6px;
   border-radius: 999px;
-  background: var(--warn);
+  background: var(--coral);
   color: #fff;
   font-size: 11px;
   font-weight: 600;
   text-align: center;
 }
-.tab[aria-selected="true"] .tab-badge { background: var(--ink); }
+.tab[aria-selected="true"] .tab-badge { background: var(--purple); }
 .panel-lead { margin: 0 0 14px; color: var(--muted); font-size: 13px; max-width: 62ch; }
 .panel-head { margin: 0 0 14px; }
-.panel-head h2 { margin: 0 0 4px; font: 600 22px/1 Palatino, serif; }
+.panel-head h2 { margin: 0 0 4px; font: 600 22px/1 var(--font-display); }
 .panel-head p { margin: 0; color: var(--muted); font-size: 13px; max-width: 62ch; }
-.review-table-wrap { overflow: auto; border: 1px solid var(--line); background: #fff; }
+.review-table-wrap {
+  overflow: auto;
+  padding: 0 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--sheet);
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
 .review-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .review-table th, .review-table td {
   padding: 12px 14px;
@@ -3310,12 +3819,12 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   text-align: left;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: .04em;
-  color: var(--muted);
-  background: var(--sheet);
+  letter-spacing: .06em;
+  color: var(--head-muted);
+  background: var(--night);
 }
 .review-table .sub { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
-.review-row.review-baja { background: #fff8f0; }
+.review-row.review-baja { background: rgba(249, 86, 79, 0.06); }
 .q-chip-wrap { position: relative; display: inline-flex; }
 .q-chip {
   display: inline-flex;
@@ -3349,7 +3858,7 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   border: 1px solid var(--line);
   font-size: 10px;
   font-style: italic;
-  font-family: Palatino, serif;
+  font-family: var(--font-display);
   color: var(--muted);
 }
 .q-pop {
@@ -3361,37 +3870,68 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   max-height: min(70vh, 420px);
   overflow: auto;
   padding: 12px 14px;
-  background: var(--ink);
-  color: var(--sheet);
+  background: #fff;
+  color: var(--ink);
   font-size: 12px;
   line-height: 1.45;
-  border: 0;
-  box-shadow: 0 10px 28px rgba(28, 24, 20, .28);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
 }
 .q-pop strong { display: block; margin-bottom: 8px; font-size: 13px; }
 .q-pop dl { margin: 0; display: grid; gap: 6px; }
 .q-pop dl div { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
-.q-pop dt { color: #c9c2b6; flex: 0 0 auto; }
+.q-pop dt { color: var(--muted); flex: 0 0 auto; }
 .q-pop dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
-.q-pop p { margin: 10px 0 0; color: #d8d0c4; white-space: normal; overflow-wrap: anywhere; }
+.q-pop p { margin: 10px 0 0; color: var(--muted); white-space: normal; overflow-wrap: anywhere; }
+.q-pop a { color: var(--purple); }
 .resumen-kpis { margin-bottom: 12px; }
 .empty.ok { color: var(--ingreso); padding: 16px; border: 1px solid var(--line); background: #fff; }
 .kpis { padding: 22px 0 8px; }
-.kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.kpis .kpi-carousel { margin: 0; }
+.kpi-grid.kpi-track {
+  display: flex;
+  gap: 12px;
+  margin: 0;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  cursor: grab;
+}
+.kpi-grid.kpi-track.is-dragging {
+  cursor: grabbing;
+  scroll-behavior: auto;
+  scroll-snap-type: none;
+  user-select: none;
+}
+.kpi-grid.kpi-track::-webkit-scrollbar { display: none; }
+.kpi-track > .kpi,
+.kpi-track > .kpi-btn {
+  flex: 0 0 calc((100% - 48px) / 5);
+  min-width: clamp(8.5rem, 38vw, 11rem);
+  scroll-snap-align: start;
+  width: auto;
+}
 .kpi, .kpi-btn {
   background: var(--sheet);
   border: 1px solid var(--line);
   border-top-width: 3px;
+  border-radius: 8px;
   padding: 14px 14px 12px;
   text-align: left;
   width: 100%;
+  min-width: 0;
   cursor: default;
 }
 .kpi span, .kpi-btn span { display: block; margin: 0; font-size: 12px; color: var(--muted); }
 .kpi strong, .kpi-btn strong {
   display: block;
   margin-top: 8px;
-  font: 600 26px/1 "Iowan Old Style", Palatino, serif;
+  font: 600 26px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
 }
 .kpi em, .kpi-btn em { display: block; margin-top: 4px; font-style: normal; font-size: 12px; color: var(--muted); }
 .kpi-btn:hover { transform: translateY(-1px); box-shadow: 0 2px 0 var(--line); }
@@ -3400,11 +3940,11 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   outline-offset: 2px;
 }
 .kpi-btn[aria-pressed="true"] {
-  background: var(--ink);
+  background: var(--night);
   color: var(--sheet);
-  border-color: var(--ink);
+  border-color: var(--night);
 }
-.kpi-btn[aria-pressed="true"] span, .kpi-btn[aria-pressed="true"] em { color: #d8d0c4; }
+.kpi-btn[aria-pressed="true"] span, .kpi-btn[aria-pressed="true"] em { color: rgba(248, 246, 255, 0.72); }
 .kpi-gasto { border-top-color: var(--gasto); }
 .kpi-ingreso { border-top-color: var(--ingreso); }
 .kpi-mejora { border-top-color: var(--mejora); }
@@ -3419,7 +3959,7 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   margin: 8px 0 20px;
 }
 .review-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; margin-bottom: 12px; }
-.review-head h2 { margin: 0; font: 600 20px/1 Palatino, serif; }
+.review-head h2 { margin: 0; font: 600 20px/1 var(--font-display); }
 .review-head p { margin: 0; color: var(--muted); font-size: 13px; }
 .review ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .action {
@@ -3498,24 +4038,86 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .insight-range {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 12px;
-  align-items: end;
+  gap: 8px 10px;
+  align-items: center;
   margin: 12px 0 4px;
 }
-.insight-range-year { font-size: 13px; padding-bottom: 8px; }
-.insight-range label {
+.insight-range-year {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.insight-range-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.insight-range-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.insight-range-trigger svg { flex-shrink: 0; color: var(--purple); }
+.insight-range-caret { color: var(--muted); font-size: 11px; }
+.insight-range-trigger:hover,
+.insight-range-trigger[aria-expanded="true"] {
+  border-color: var(--purple);
+  color: var(--purple);
+}
+.insight-range-clear {
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.insight-range-pop {
+  inset: auto;
+  margin: 0;
+  width: min(300px, calc(100vw - 24px));
+}
+.insight-range-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.insight-range-fields label,
+.insight-range-name {
   display: grid;
   gap: 4px;
   font-size: 12px;
   color: var(--muted);
 }
-.insight-range input {
+.insight-range-fields input,
+.insight-range-name input {
   font: inherit;
   color: var(--ink);
-  padding: 6px 8px;
+  padding: 7px 8px;
   border: 1px solid var(--line);
+  border-radius: 8px;
   background: #fff;
 }
+.insight-range-foot {
+  justify-content: space-between;
+  align-items: center;
+}
+.insight-range-foot .filter-done {
+  border: 0;
+  background: var(--purple);
+  color: #fff;
+  font: 600 13px/1 inherit;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.insight-range-name input { min-width: 8rem; }
 .insight-presets { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
 .insight-preset {
   display: inline-flex;
@@ -3528,19 +4130,19 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   font-size: 12px;
   cursor: pointer;
 }
-.insight-preset.is-on { border-color: var(--ink); background: var(--paper); }
+.insight-preset.is-on { border-color: var(--purple); background: rgba(123, 30, 122, 0.08); color: var(--purple); }
 .insight-trims { width: auto; }
 .filter-trims { display: flex; gap: 6px; }
 .kan-embudo { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin: 0 0 14px; padding: 10px 14px; background: #fff; border: 1px solid var(--line); }
 .kan-embudo > div { display: grid; gap: 2px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.kan-embudo strong { font: 600 20px/1 Palatino, serif; color: var(--ink); }
+.kan-embudo strong { font: 600 20px/1 var(--font-display); color: var(--ink); }
 .kan-progreso { grid-template-columns: auto auto auto; align-items: center; gap: 8px !important; margin-left: auto; }
 .kan-barra { width: 120px; height: 6px; background: var(--paper); border: 1px solid var(--line); }
-.kan-barra i { display: block; height: 100%; background: var(--ingreso); }
+.kan-barra i { display: block; height: 100%; background: linear-gradient(90deg, var(--purple), var(--coral)); }
 .kan-board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: start; }
 .kan-col { border: 1px solid var(--line); background: var(--sheet); min-height: 120px; }
 .kan-col-cab { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-.kan-num { font: 600 16px/1 Palatino, serif; color: var(--ink); }
+.kan-num { font: 600 16px/1 var(--font-display); color: var(--ink); }
 .kan-cuerpo { display: grid; gap: 8px; padding: 10px; }
 .kan-card { background: #fff; border: 1px solid var(--line); padding: 8px 10px; display: grid; gap: 3px; cursor: grab; }
 .kan-card:active { cursor: grabbing; }
@@ -3549,16 +4151,25 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .kan-ref { font-weight: 600; font-size: 13px; color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kan-ref:hover { text-decoration: underline; }
 .kan-datos { font-size: 11.5px; }
-.kan-card strong { font: 600 16px/1.1 Palatino, serif; }
+.kan-card strong { font: 600 16px/1.1 var(--font-display); }
 .kan-acciones { display: flex; gap: 6px; margin-top: 4px; }
 .kan-act { width: 24px; height: 22px; border: 1px solid var(--line); background: #fff; cursor: pointer; font: inherit; font-size: 12px; color: var(--muted); }
 .kan-act:hover { border-color: var(--ink); color: var(--ink); }
 .kan-vacio { margin: 0; padding: 14px 10px; font-size: 12px; color: var(--muted); }
 .rev-vistas { display: flex; gap: 6px; margin: 0 0 10px; }
-.rev-vistas .ghost[aria-pressed="true"] { border-color: var(--ink); background: var(--paper); }
+.rev-vistas .ghost[aria-pressed="true"] { border-color: var(--purple); background: rgba(123, 30, 122, 0.08); color: var(--purple); }
 .kan-mas { border: 1px dashed var(--line); background: transparent; padding: 6px; font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; }
-.rechazo-opciones { display: grid; gap: 6px; margin: 10px 0; }
-.rechazo-opciones .filter-opt { align-items: baseline; }
+.rechazo-opciones {
+  display: grid;
+  gap: 0;
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 4px 0;
+}
+.rechazo-opciones .filter-opt { align-items: baseline; margin: 0; padding: 8px 12px; }
+.rechazo-opciones .filter-opt + .filter-opt { border-top: 1px solid var(--line); }
 .rev-tabla .kan-celda-act { white-space: nowrap; }
 .ficha-dup { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .ficha-dup .hint { margin: 0; }
@@ -3569,18 +4180,36 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .dup-emisor { margin: 0; }
 .dup-vinclo { color: var(--muted); font-size: 20px; }
 .dup-vacio { border: 1px dashed var(--line); background: var(--sheet); padding: 18px; color: var(--muted); }
-.dup-tabla { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
-.dup-tabla th { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.dup-tabla {
+  width: 920px;
+  min-width: 920px;
+  font-size: 13px;
+}
+.dup-tabla :is(th, td) { white-space: nowrap; }
+.dup-tabla td:nth-child(6) {
+  white-space: normal;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.dup-tabla .kan-celda-act,
+.dup-tabla td:last-child { overflow: visible; text-overflow: clip; }
+.dup-tabla th {
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--head-muted);
+  background: var(--night);
+  white-space: nowrap;
+}
 .dup-tabla .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dup-tabla tbody tr { cursor: pointer; }
-.dup-tabla tbody tr:hover, .dup-tabla tbody tr:focus { background: var(--paper); outline: none; }
+.dup-tabla tbody tr:hover, .dup-tabla tbody tr:focus { background: var(--row-hover); outline: none; }
 .dup-tabla a, #dup-gestor .dup-ref { color: inherit; text-decoration: none; }
 .dup-tabla a:hover, #dup-gestor .dup-ref:hover { text-decoration: underline; }
 .dup-abrir { color: var(--muted); text-align: right; width: 24px; }
-#dup-gestor .dup-gestor-cuerpo { padding: 20px 20px 4px; }
-#dup-gestor h2 { margin: 0 0 2px; font-size: 22px; }
-#dup-gestor .dup-gestor-eyebrow { margin: 0 0 4px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
-#dup-gestor .dup-motivo-caja {
+.sheet-compare .dup-motivo-caja {
   border-left: 3px solid var(--warn);
   background: var(--paper);
   padding: 8px 12px;
@@ -3588,43 +4217,36 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   font-size: 13px;
   color: var(--muted);
 }
-#dup-gestor .dup-par { gap: 10px; margin: 0; align-items: stretch; }
-#dup-gestor .dup-lado {
+.sheet-compare .dup-par { gap: 10px; margin: 0; align-items: stretch; }
+.sheet-compare .dup-lado {
   border: 1px solid var(--line);
+  border-radius: 10px;
   background: #fff;
   padding: 0 14px 12px;
   gap: 3px;
   display: grid;
+  overflow: hidden;
 }
-#dup-gestor .dup-lado-cab {
+.sheet-compare .dup-lado-cab {
   display: flex; align-items: center; justify-content: space-between;
   margin: 0 -14px 10px; padding: 7px 14px;
   border-bottom: 1px solid var(--line);
 }
-#dup-gestor .dup-lado-bueno .dup-lado-cab { background: #eef7f3; border-bottom-color: #9bc4b8; }
-#dup-gestor .dup-lado-fuera .dup-lado-cab { background: #f3f0ea; border-bottom-color: var(--line); }
-#dup-gestor .dup-lado-revisar .dup-lado-cab { background: #fff6eb; border-bottom-color: #d4a574; }
-#dup-gestor .dup-ref { font-weight: 600; font-size: 13px; }
-#dup-gestor .dup-datos { font-size: 12px; }
-#dup-gestor .dup-importe { font: 600 22px/1.2 Palatino, serif; margin-top: 6px; }
-#dup-gestor .dup-vinclo {
+.sheet-compare .dup-lado-bueno .dup-lado-cab { background: rgba(123, 30, 122, 0.10); border-bottom-color: rgba(123, 30, 122, 0.28); }
+.sheet-compare .dup-lado-fuera .dup-lado-cab { background: rgba(12, 10, 62, 0.05); border-bottom-color: var(--line); }
+.sheet-compare .dup-lado-revisar .dup-lado-cab { background: rgba(249, 86, 79, 0.10); border-bottom-color: rgba(249, 86, 79, 0.30); }
+.sheet-compare .dup-ref { font-weight: 600; font-size: 13px; }
+.sheet-compare .dup-datos { font-size: 12px; }
+.sheet-compare .dup-importe { font: 600 22px/1.2 var(--font-display); margin-top: 6px; }
+.sheet-compare .dup-vinclo {
   align-self: center; display: grid; place-items: center;
   width: 34px; height: 34px; border-radius: 50%;
   background: var(--sheet); border: 1px solid var(--line);
   color: var(--muted); font-size: 15px;
 }
-#dup-gestor .dup-gestor-pie {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  border-top: 1px solid var(--line);
-  margin: 16px 0 0; padding: 12px 20px;
-  background: var(--paper);
-}
-#dup-gestor .dup-ficha-link { font-size: 13px; color: var(--link); }
-#dup-gestor .dup-gestor-acciones { display: flex; gap: 8px; }
-#dup-gestor .dup-gestor-acciones .export-btn { margin-top: 0; }
 @media (max-width: 640px) {
   .dup-par { grid-template-columns: 1fr; }
-  #dup-gestor .dup-vinclo { display: none; }
+  .sheet-compare .dup-vinclo { display: none; }
 }
 .dup-campo { display: grid; gap: 4px; margin: 10px 0 0; font-size: 13px; color: var(--muted); }
 .dup-select, .dup-manual {
@@ -3640,12 +4262,33 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   font-size: 12px;
   cursor: pointer;
 }
-.filter-trim.is-on { border-color: var(--ink); background: var(--paper); }
-.iva-tabla { width: 100%; border-collapse: collapse; background: #fff; }
-.iva-tabla th, .iva-tabla td { border: 1px solid var(--line); padding: 6px 10px; font-size: 13px; text-align: left; }
-.iva-tabla th { background: var(--paper); font-size: 12px; color: var(--muted); }
+.filter-trim.is-on { border-color: var(--purple); background: rgba(123, 30, 122, 0.08); color: var(--purple); }
+.iva-tabla {
+  width: 100%;
+  min-width: 420px;
+  background: var(--sheet);
+}
+.iva-tabla th, .iva-tabla td {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+}
+.iva-tabla th { background: var(--night); font-size: 12px; color: var(--head-muted); }
 .iva-tabla .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .iva-vacia td { color: var(--muted); font-style: italic; }
+.irpf-table {
+  width: 820px;
+  min-width: 820px;
+  font-size: 13px;
+}
+.irpf-table th, .irpf-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.irpf-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .insight-frase {
   margin: 14px 0 4px;
   font: 600 22px/1.3 Palatino, "Iowan Old Style", serif;
@@ -3658,7 +4301,7 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
 .irpf-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
 .irpf-kpis article { border: 1px solid var(--line); padding: 10px 12px; background: #fff; }
 .irpf-kpis span { display: block; font-size: 12px; color: var(--muted); }
-.irpf-kpis strong { display: block; margin-top: 6px; font: 600 20px/1 Palatino, serif; }
+.irpf-kpis strong { display: block; margin-top: 6px; font: 600 20px/1 var(--font-display); }
 .muted { color: var(--muted); font-size: 12px; }
 .foot {
   margin-top: auto;
@@ -3682,12 +4325,12 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   display: inline-block;
   margin-top: 10px;
   padding: 10px 16px;
-  background: var(--neto);
-  color: #f4efe6;
-  font: 600 14px/1 "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  background: var(--purple);
+  color: #fff;
+  font: 600 14px/1 var(--font-body);
   text-decoration: none;
   border: 0;
-  border-radius: 2px;
+  border-radius: 8px;
   cursor: pointer;
 }
 .export-btn:hover { filter: brightness(1.08); }
@@ -3699,7 +4342,7 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   right: 16px;
   bottom: 16px;
   max-width: min(440px, calc(100% - 32px));
-  background: var(--ink);
+  background: var(--night);
   color: var(--sheet);
   padding: 10px 12px;
   font-size: 13px;
@@ -3707,7 +4350,7 @@ h1 span { color: var(--muted); font-size: 22px; font-weight: 500; }
   white-space: pre-wrap;
   z-index: 90;
 }
-tbody tr.flash { background: rgba(163, 91, 18, .12); }
+tbody tr.flash { background: rgba(243, 198, 119, .28); }
 .charts {
   display: grid;
   grid-template-columns: 1.3fr 0.7fr;
@@ -3716,8 +4359,9 @@ tbody tr.flash { background: rgba(163, 91, 18, .12); }
 }
 figure {
   margin: 0;
-  background: #fff;
-  border: 1px solid var(--line);
+  background: var(--sheet);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
   padding: 14px 14px 8px;
 }
 figcaption {
@@ -3752,7 +4396,7 @@ figure svg { width: 100%; height: auto; display: block; }
 .bar-g { fill: var(--gasto); }
 .bar-i { fill: var(--ingreso); }
 .bar-m { fill: var(--mejora); }
-.ledger { background: var(--sheet); border: 1px solid var(--line); padding: 16px 16px 8px; margin-bottom: 12px; }
+.ledger { background: var(--sheet); border: 1px solid var(--line-strong); border-radius: 12px; padding: 16px 16px 8px; margin-bottom: 12px; }
 .libro-kpis {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -3762,6 +4406,7 @@ figure svg { width: 100%; height: auto; display: block; }
 .libro-kpis > div {
   background: #fff;
   border: 1px solid var(--line);
+  border-radius: 8px;
   padding: 12px 14px 11px;
   min-width: 0;
 }
@@ -3775,7 +4420,7 @@ figure svg { width: 100%; height: auto; display: block; }
 .libro-kpis strong {
   display: block;
   margin-top: 6px;
-  font: 600 22px/1.15 "Iowan Old Style", Palatino, serif;
+  font: 600 22px/1.15 var(--font-display);
   font-variant-numeric: tabular-nums;
 }
 .libro-kpis em:empty { display: none; }
@@ -3805,7 +4450,7 @@ figure svg { width: 100%; height: auto; display: block; }
   font-size: 13px;
   cursor: pointer;
 }
-.pager-num.is-on { background: var(--ink); color: var(--sheet); border-color: var(--ink); }
+.pager-num.is-on { background: var(--night); color: var(--sheet); border-color: var(--night); }
 .pager-label {
   min-width: 7em;
   text-align: center;
@@ -3823,41 +4468,94 @@ figure svg { width: 100%; height: auto; display: block; }
   font-size: 12px;
   color: var(--muted);
 }
+:is(.table-wrap, .review-table-wrap, .edit-lines-wrap, .libro-kpis) {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+:is(.table-wrap, .review-table-wrap, .edit-lines-wrap, .libro-kpis):hover {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(12, 10, 62, 0.16) rgba(12, 10, 62, 0.05);
+}
+:is(.table-wrap, .review-table-wrap, .edit-lines-wrap, .libro-kpis)::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+:is(.table-wrap, .review-table-wrap, .edit-lines-wrap, .libro-kpis):hover::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+:is(.table-wrap, .review-table-wrap, .edit-lines-wrap, .libro-kpis):hover::-webkit-scrollbar-track {
+  background: rgba(12, 10, 62, 0.04);
+}
+:is(.table-wrap, .review-table-wrap, .edit-lines-wrap, .libro-kpis):hover::-webkit-scrollbar-thumb {
+  background: rgba(12, 10, 62, 0.16);
+  border-radius: 999px;
+}
 .table-wrap {
+  display: block;
+  width: 100%;
+  max-width: 100%;
   overflow: auto;
   max-height: min(70vh, 720px);
-  border: 1px solid var(--line);
-  background: #fff;
+  padding: 0 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--sheet);
+  overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  scrollbar-gutter: stable both-edges;
+}
+.dup-tabla thead th.th-filter,
+.iva-tabla thead th.th-filter,
+.irpf-table thead th.th-filter {
+  background: var(--night);
+  color: var(--head-muted);
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.table-wrap--dialog {
+  max-height: min(42vh, 360px);
+  margin: 0 0 14px;
+}
+.table-wrap > table {
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.table-wrap > table thead th:first-child {
+  border-top-left-radius: 9px;
+}
+.table-wrap > table thead th:last-child {
+  border-top-right-radius: 9px;
+}
+.table-wrap > table :is(th, td) {
+  overflow: hidden;
+  box-sizing: border-box;
+  text-overflow: ellipsis;
 }
 .ledger-table {
-  width: 100%;
-  min-width: 1080px;
+  width: 1180px;
+  min-width: 1180px;
   table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
 }
-.col-id { width: 6%; }
-.col-factura { width: 11%; }
-.col-fecha { width: 10%; }
-.col-emisor { width: 14%; }
-.col-calidad { width: 10%; }
-.col-total { width: 7%; }
-.col-articulos { width: 7%; }
-.col-nif { width: 9%; }
-.col-base, .col-iva { width: 6%; }
-.col-doc { width: 4%; }
-.col-estado { width: 12%; }
-th[data-col="id"], td[data-col="id"] { min-width: 6.4em; }
-th[data-col="factura"], td[data-col="factura"] { min-width: 9em; }
-th[data-col="fecha"], td[data-col="fecha"] { min-width: 10em; }
-th[data-col="emisor"], td[data-col="emisor"] { min-width: 8em; }
-th[data-col="confianza"], td[data-col="confianza"] { min-width: 8em; }
-th[data-col="estado"], td[data-col="estado"] { min-width: 9.5em; }
-th[data-col="total"], td[data-col="total"] { min-width: 5.5em; }
-th[data-col="articulos"], td[data-col="articulos"] { min-width: 6.4em; }
-th[data-col="nif"], td[data-col="nif"] { min-width: 7em; }
+.col-id { width: 3.4rem; }
+.col-factura { width: 7.8rem; }
+.col-fecha { width: 5.6rem; }
+.col-emisor { width: 9.5rem; }
+.col-calidad { width: 6.8rem; }
+.col-total { width: 4.8rem; }
+.col-articulos { width: 4.6rem; }
+.col-nif { width: 5.6rem; }
+.col-base, .col-iva { width: 4.6rem; }
+.col-doc { width: 3.1rem; }
+.col-estado { width: 9.8rem; }
+.ledger-table :is(th, td) {
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.ledger-table .cell-estado { overflow: visible; }
 .ledger-table.col-off-factura [data-col="factura"],
 .ledger-table.col-off-confianza [data-col="confianza"],
 .ledger-table.col-off-nif [data-col="nif"],
@@ -3915,26 +4613,112 @@ th[data-col="nif"], td[data-col="nif"] { min-width: 7em; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: #f3f0ea;
+  background: rgba(12, 10, 62, 0.06);
   color: var(--muted);
   cursor: default;
 }
-.edit-dialog {
-  width: min(560px, calc(100vw - 24px));
+.edit-dialog,
+.app-sheet {
+  width: min(520px, calc(100vw - 24px));
   max-height: min(88vh, 720px);
   overflow: auto;
   border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 0;
   background: var(--sheet);
   color: var(--ink);
-  box-shadow: 0 16px 40px rgba(28, 24, 20, .22);
+  box-shadow: var(--shadow-lg);
 }
-.edit-dialog::backdrop { background: rgba(28, 24, 20, .42); }
-.app-confirm { width: min(420px, calc(100vw - 32px)); }
+.edit-dialog::backdrop,
+.app-sheet::backdrop { background: rgba(12, 10, 62, .45); }
+.app-sheet.sheet-decision { width: min(440px, calc(100vw - 24px)); }
+.app-sheet.sheet-compare { width: min(720px, calc(100vw - 24px)); }
+.sheet-eyebrow {
+  margin: 0 0 4px;
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sheet-lead { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+.sheet-error {
+  margin: 8px 0 0;
+  color: var(--gasto);
+  font-size: 13px;
+}
+.app-sheet .sheet-foot,
+.edit-dialog form .sheet-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px -18px -16px;
+  padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+  position: sticky;
+  bottom: -16px;
+  z-index: 2;
+}
+.sheet-foot .sheet-aside { margin-right: auto; }
+.sheet-foot :is(.ghost, .export-btn, .sheet-link) {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
+  text-decoration: none;
+}
+.sheet-foot .export-btn {
+  padding: 9px 16px;
+  font-weight: 600;
+  border: 0;
+}
+.sheet-foot .ghost,
+.sheet-foot .sheet-link {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+}
+.sheet-foot .sheet-link:hover { border-color: var(--ink); }
+.app-sheet:not(.edit-dialog) { padding: 18px 18px 16px; }
+.app-sheet h2 { margin: 0 0 8px; font: 600 20px/1.2 var(--font-display); }
+.app-sheet label { display: block; margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+.app-sheet label input:not([type=checkbox]),
+.app-sheet label select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  padding: 8px 10px;
+  box-sizing: border-box;
+}
+.sheet-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin: 4px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.sheet-totals strong { font-variant-numeric: tabular-nums; }
+.app-confirm { width: min(440px, calc(100vw - 32px)); }
 .app-confirm h2 { font-size: 18px; }
 .export-btn.is-warn { background: var(--gasto); }
 .edit-dialog form { padding: 18px 18px 16px; }
-.edit-dialog h2 { margin: 0 0 8px; font: 600 20px/1.2 Palatino, serif; }
+.edit-dialog h2 { margin: 0 0 8px; font: 600 20px/1.2 var(--font-display); }
 .edit-dialog p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
 .edit-meta { font-size: 13px; }
 .edit-dialog label { display: block; margin: 0 0 10px; font-size: 12px; color: var(--muted); }
@@ -3952,12 +4736,44 @@ th[data-col="nif"], td[data-col="nif"] { min-width: 7em; }
 .edit-check input { margin-top: 2px; }
 .edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .edit-actions .export-btn { margin-top: 0; }
+.edit-actions :is(.ghost, .export-btn) {
+  min-height: 38px;
+  padding: 9px 14px;
+  border-radius: 8px;
+}
+.edit-actions .export-btn { padding: 9px 16px; }
 .edit-log-title { margin: 14px 0 6px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
 .edit-log { margin: 0; padding-left: 18px; max-height: 120px; overflow: auto; font-size: 12px; color: var(--muted); }
 .edit-log li { margin: 0 0 4px; }
-.edit-lines-wrap { max-height: 160px; overflow: auto; border: 1px solid var(--line); background: #fff; margin: 0 0 6px; }
-.edit-lines { width: 100%; border-collapse: collapse; font-size: 12px; }
-.edit-lines th, .edit-lines td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.edit-lines-wrap {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  max-height: 160px;
+  overflow: auto;
+  padding: 0 0 10px;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  margin: 0 0 6px;
+  -webkit-overflow-scrolling: touch;
+}
+.edit-lines {
+  width: 640px;
+  min-width: 640px;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.edit-lines th, .edit-lines td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .edit-lines th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
 .edit-lines td:last-child, .edit-lines th:last-child { text-align: right; white-space: nowrap; }
 .edit-lines td:first-child, .edit-lines th:first-child { width: 2.2em; color: var(--muted); }
@@ -4043,7 +4859,7 @@ a.row-go:hover { text-decoration: underline; }
   margin: 0 0 18px;
 }
 .ficha-kicker { margin: 0 0 4px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.ficha h1 { margin: 0 0 8px; font: 600 28px/1.2 Palatino, serif; }
+.ficha h1 { margin: 0 0 8px; font: 600 28px/1.2 var(--font-display); }
 .ficha-sub { margin: 0; }
 .doc-open {
   display: inline-flex;
@@ -4115,21 +4931,21 @@ a.row-go:hover { text-decoration: underline; }
   padding: 0;
   border: 0;
   border-radius: 999px;
-  background: #b7ad9f;
+  background: rgba(12, 10, 62, 0.22);
   cursor: pointer;
 }
-.kpi-dot.is-on { width: 18px; background: var(--ink); }
+.kpi-dot.is-on { width: 18px; background: var(--purple); }
 .ficha h2, .ficha-h2 {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 8px 0 10px;
-  font: 600 18px/1.2 Palatino, serif;
+  font: 600 18px/1.2 var(--font-display);
 }
 .ficha-h2 svg { color: var(--muted); flex-shrink: 0; }
 .ficha-count {
   margin-left: 2px;
-  font: 500 13px/1.2 "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  font: 500 13px/1.2 var(--font-body);
   color: var(--muted);
   letter-spacing: 0;
   text-transform: none;
@@ -4140,11 +4956,27 @@ a.row-go:hover { text-decoration: underline; }
   flex-direction: column;
   gap: 8px;
   margin: 0 0 12px;
-  padding: 10px 12px;
-  background: #fff;
-  border: 1px solid var(--line);
 }
 .ficha-score .q-chip { cursor: default; }
+.ficha-score-cab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  max-width: 100%;
+  padding: 3px;
+  background: var(--sheet);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  box-shadow: 0 1px 0 rgba(12, 10, 62, 0.04);
+}
+.q-chip-btn {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 999px;
+  padding-right: 2px;
+}
+.q-chip-btn:hover { filter: brightness(0.98); }
 .q-checks {
   display: flex;
   flex-wrap: wrap;
@@ -4155,28 +4987,122 @@ a.row-go:hover { text-decoration: underline; }
   width: 100%;
 }
 .q-i-btn {
-  align-self: flex-start;
-  width: 20px; height: 20px;
-  display: inline-grid; place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: #fff;
-  color: var(--muted);
-  font: 600 11px/1 "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 30px;
+  margin-left: 2px;
+  padding: 0 11px 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(123, 30, 122, 0.08);
+  color: var(--purple);
+  font: 600 12px/1 var(--font-body);
   cursor: pointer;
-  padding: 0;
+  white-space: nowrap;
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
 }
-.ficha-score-cab { display: flex; align-items: center; gap: 8px; }
-.q-i-btn:hover, .q-i-btn[aria-expanded="true"] { border-color: var(--ink); color: var(--ink); }
+.q-i-btn svg { flex-shrink: 0; display: block; }
+.q-i-label { letter-spacing: .01em; }
+.q-i-btn:hover,
+.q-i-btn[aria-expanded="true"] {
+  background: var(--purple);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(123, 30, 122, 0.24);
+}
+.q-i-btn:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
 .q-solo-fallos { gap: 4px; margin-top: 2px; }
-.q-pop-score { width: min(400px, calc(100vw - 24px)); }
-.q-pop-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
-.q-pop-list li { display: grid; gap: 1px; padding: 4px 0; border-bottom: 1px solid rgba(251, 247, 239, .12); }
-.q-pop-list li:last-child { border-bottom: 0; }
-.q-pop-list li span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sheet); }
-.q-pop-list li span::before { content: "✓"; color: #9bc4b8; font-size: 11px; }
-.q-pop-list li.is-bad span::before { content: "✕"; color: #d98c6a; }
-.q-pop-list li em { font-style: normal; font-size: 11px; color: #c9c2b6; }
+.q-pop-score {
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(60vh, 360px);
+  overflow: auto;
+}
+.q-pop-summary {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.q-pop-fails,
+.q-pop-ok {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.q-pop-fails li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.q-pop-fails li:last-child { border-bottom: 0; }
+.q-pop-fails li span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gasto);
+}
+.q-pop-fails li span::before {
+  content: "✕";
+  color: var(--gasto);
+  font-size: 11px;
+}
+.q-pop-fails li em {
+  display: block;
+  margin-top: 3px;
+  padding-left: 17px;
+  font-style: normal;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.q-pop-fails li em:empty { display: none; }
+.q-pop-all-ok {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ingreso);
+}
+.q-pop-ok-details {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.q-pop-ok-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--purple);
+  list-style: none;
+}
+.q-pop-ok-details summary::-webkit-details-marker { display: none; }
+.q-pop-ok-details summary::before {
+  content: "▸ ";
+  color: var(--muted);
+}
+.q-pop-ok-details[open] summary::before { content: "▾ "; }
+.q-pop-ok {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 10px;
+  margin-top: 8px;
+}
+.q-pop-ok li {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.q-pop-ok li span::before {
+  content: "✓ ";
+  color: var(--ingreso);
+}
+.q-pop-ok li em { display: none; }
 .q-checks li {
   display: inline-flex;
   align-items: baseline;
@@ -4191,27 +5117,69 @@ a.row-go:hover { text-decoration: underline; }
 .q-checks li.is-bad {
   flex-basis: 100%;
   color: var(--ink);
-  border-color: #e4c2b8;
-  background: #fbf6f3;
+  border-color: rgba(249, 86, 79, 0.28);
+  background: rgba(249, 86, 79, 0.06);
 }
 .q-checks li.is-bad span { color: var(--gasto); font-weight: 600; }
 .q-checks em { font-style: normal; }
 .q-score { font-weight: 600; font-variant-numeric: tabular-nums; }
 .q-chip.q-muted .q-dot { background: var(--muted); }
 .ficha-lines { max-height: min(70vh, 720px); }
-.fl-n { width: 4%; }
-.fl-id { width: 14%; }
-.fl-concepto { width: 32%; }
-.fl-uds { width: 6%; }
-.fl-money { width: 8%; }
-.fl-rate { width: 8%; }
-.fl-act { width: 12%; }
-.ficha-ledger td.line-actions .row-actions { justify-content: flex-end; }
-.ficha-ledger th.line-actions { text-align: right; white-space: nowrap; }
+.table-wrap.ficha-lines > .ficha-ledger {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100%;
+  table-layout: fixed;
+}
+.table-wrap.ficha-lines > .ficha-ledger col.fl-n { width: 3%; }
+.table-wrap.ficha-lines > .ficha-ledger col.fl-id { width: 9%; }
+.table-wrap.ficha-lines > .ficha-ledger col.fl-concepto { width: 43%; }
+.table-wrap.ficha-lines > .ficha-ledger col.fl-uds { width: 5%; }
+.table-wrap.ficha-lines > .ficha-ledger col.fl-money { width: 9%; }
+.table-wrap.ficha-lines > .ficha-ledger col.fl-rate { width: 7%; }
+.table-wrap.ficha-lines > .ficha-ledger col.fl-act { width: 6%; }
+.ficha-ledger thead th.col-sticky,
+.ficha-ledger tbody td.col-sticky,
+.ficha-ledger thead th.col-estado,
+.ficha-ledger tbody td.cell-estado,
+.ficha-ledger thead th.line-actions,
+.ficha-ledger tbody td.line-actions {
+  position: static;
+  right: auto;
+  left: auto;
+  box-shadow: none;
+}
+.ficha-ledger :is(th.col-estado, td.cell-estado, th.line-actions, td.line-actions) {
+  width: auto !important;
+  min-width: 0;
+  max-width: none;
+}
+.ficha-ledger thead th.col-sticky:first-child::before,
+.ficha-ledger thead th.col-sticky:first-child::after,
+.ficha-ledger thead th.col-estado::after,
+.ficha-ledger thead th.line-actions::after,
+.ficha-ledger tbody td.line-actions::after { display: none; }
+.ficha-ledger td.line-actions .row-actions {
+  justify-content: center;
+  padding-right: 0;
+}
+.ficha-ledger th.line-actions,
+.ficha-ledger td.line-actions {
+  text-align: center;
+  white-space: nowrap;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.ficha-ledger .cell-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 #ficha-lines-editor tr.is-editing td.col-sticky,
-#ficha-lines-editor tr.is-editing td.cell-estado { background: #fff6eb; }
+#ficha-lines-editor tr.is-editing td.cell-estado { background: rgba(243, 198, 119, 0.18); }
 #ficha-lines-editor.show-deleted tr.is-deleted td.col-sticky,
-#ficha-lines-editor.show-deleted tr.is-deleted td.cell-estado { background: #f3efe8; }
+#ficha-lines-editor.show-deleted tr.is-deleted td.cell-estado { background: rgba(12, 10, 62, 0.05); }
 #ficha-lines-editor tr:not(.is-editing) .line-edit { display: none; }
 #ficha-lines-editor tr:not(.is-editing) .line-save,
 #ficha-lines-editor tr:not(.is-deleted) .line-restore,
@@ -4220,10 +5188,10 @@ a.row-go:hover { text-decoration: underline; }
 #ficha-lines-editor tr.is-deleted .line-del { display: none; }
 #ficha-lines-editor tr.is-deleted { display: none; }
 #ficha-lines-editor.show-deleted tr[data-line]:not(.is-deleted) { display: none; }
-#ficha-lines-editor.show-deleted tr.is-deleted { display: table-row; background: #f3efe8; }
+#ficha-lines-editor.show-deleted tr.is-deleted { display: table-row; background: rgba(12, 10, 62, 0.05); }
 #ficha-lines-editor tr.is-editing .line-view,
 #ficha-lines-editor tr.is-editing .line-edit-btn { display: none; }
-#ficha-lines-editor tr.is-editing { background: #fff6eb; }
+#ficha-lines-editor tr.is-editing { background: rgba(243, 198, 119, 0.18); }
 #ficha-lines-editor tr.is-editing .line-edit {
   width: 100%;
   box-sizing: border-box;
@@ -4239,9 +5207,9 @@ a.row-go:hover { text-decoration: underline; }
   color: var(--muted);
 }
 .ficha-h2 #ficha-lines-eye { margin-left: 8px; }
-.ficha-h2 #ficha-lines-eye.is-on { border-color: var(--ink); background: #ece4d6; }
+.ficha-h2 #ficha-lines-eye.is-on { border-color: var(--purple); background: rgba(123, 30, 122, 0.08); }
 .line-del { color: var(--gasto); }
-.ficha-log-dialog { width: min(720px, calc(100vw - 32px)); padding: 18px 18px 16px; }
+.ficha-log-dialog { width: min(720px, calc(100vw - 32px)); }
 .ficha-log-dialog h2 {
   display: flex;
   align-items: center;
@@ -4250,46 +5218,107 @@ a.row-go:hover { text-decoration: underline; }
 .ficha-log-dialog h2 svg { color: var(--muted); }
 .log-table { margin: 0; }
 .log-table td, .log-table th { vertical-align: top; }
-.edit-diff { width: 100%; border-collapse: collapse; font-size: 13px; margin: 0 0 14px; background: #fff; }
-.edit-diff th, .edit-diff td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
+.edit-diff {
+  width: 560px;
+  min-width: 560px;
+  font-size: 13px;
+  background: #fff;
+}
+.table-wrap > .edit-diff {
+  width: 560px;
+  min-width: 560px;
+}
+.edit-diff th, .edit-diff td {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.edit-diff td:nth-child(2),
+.edit-diff td:nth-child(3) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .edit-diff th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
 thead th {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #fff;
-  box-shadow: 0 1px 0 var(--line);
+  background: var(--night);
+  color: var(--head-muted);
+  box-shadow: 0 1px 0 rgba(243, 198, 119, 0.22);
   vertical-align: middle;
   white-space: nowrap;
   overflow: hidden;
 }
 thead th.col-sticky {
   left: 0;
-  z-index: 4;
+  z-index: 5;
+  overflow: visible;
+  background: var(--night);
+}
+thead th.col-sticky:first-child::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 100%;
+  width: 16px;
+  background: var(--night);
+  border-top-left-radius: 9px;
+}
+thead th.col-sticky:first-child::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: 300vw;
+  background: var(--night);
+  z-index: -1;
+  pointer-events: none;
 }
 tbody td.col-sticky {
   position: sticky;
   left: 0;
   z-index: 1;
-  background: #fff;
+  background: var(--sheet);
   box-shadow: 1px 0 0 var(--line);
 }
-tbody tr.is-band td.col-sticky { background: #f6f1e8; }
-tbody tr:hover td.col-sticky { background: #faf6ef; }
-thead th.col-estado {
+tbody tr.is-band td.col-sticky { background: var(--row-zebra); }
+tbody tr:hover td.col-sticky { background: var(--row-hover); }
+thead th.col-estado,
+thead th.line-actions {
   right: 0;
-  z-index: 4;
-  box-shadow: -8px 0 8px -8px rgba(28, 24, 20, .16);
+  z-index: 5;
+  overflow: visible;
+  background: var(--night);
+  box-shadow: -8px 0 8px -8px rgba(12, 10, 62, .18);
+  padding-right: 14px;
+  border-top-right-radius: 9px;
 }
-tbody td.cell-estado {
+thead th.col-estado::after,
+thead th.line-actions::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: 16px;
+  background: var(--night);
+  border-top-right-radius: 9px;
+}
+tbody td.cell-estado,
+tbody td.line-actions {
   position: sticky;
   right: 0;
   z-index: 1;
-  background: #fff;
-  box-shadow: -8px 0 8px -8px rgba(28, 24, 20, .16);
+  background: var(--sheet);
+  box-shadow: -8px 0 8px -8px rgba(12, 10, 62, .18);
+  padding-right: 14px;
 }
-tbody tr.is-band td.cell-estado { background: #f6f1e8; }
-tbody tr:hover td.cell-estado { background: #faf6ef; }
+tbody tr.is-band td.cell-estado { background: var(--row-zebra); }
+tbody tr:hover td.cell-estado { background: var(--row-hover); }
 th, td {
   text-align: left;
   padding: 10px 8px;
@@ -4317,8 +5346,8 @@ thead th {
   white-space: nowrap;
 }
 th[data-sort] .th-label { cursor: pointer; }
-th.is-sorted .th-label::after { content: " ↑"; }
-th.is-sorted.is-desc .th-label::after { content: " ↓"; }
+th.is-sorted .th-label::after { content: " ↑"; color: var(--gold); }
+th.is-sorted.is-desc .th-label::after { content: " ↓"; color: var(--gold); }
 .funnel {
   flex: 0 0 22px;
   width: 22px;
@@ -4332,13 +5361,14 @@ th.is-sorted.is-desc .th-label::after { content: " ↓"; }
   border-radius: 999px;
   cursor: pointer;
 }
+thead th .funnel { color: var(--head-muted); }
 .funnel:hover, .funnel[aria-expanded="true"] {
-  background: #ece4d6;
-  color: var(--ink);
+  background: rgba(243, 198, 119, 0.22);
+  color: var(--gold);
 }
 .funnel.on {
-  background: #d7eee6;
-  color: var(--ingreso);
+  background: rgba(123, 30, 122, 0.38);
+  color: #fff;
 }
 .funnel svg {
   width: 13px;
@@ -4355,7 +5385,7 @@ th.is-sorted.is-desc .th-label::after { content: " ↓"; }
   border-radius: 10px;
   background: #fff;
   color: var(--ink);
-  box-shadow: 0 10px 28px rgba(28, 24, 20, .16);
+  box-shadow: var(--shadow);
   text-transform: none;
   letter-spacing: 0;
   font-weight: 400;
@@ -4385,7 +5415,7 @@ th.is-sorted.is-desc .th-label::after { content: " ↓"; }
   min-width: 0;
   border: 0;
   background: transparent;
-  font: 14px/1.3 "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  font: 14px/1.3 var(--font-body);
   color: var(--ink);
   outline: none;
 }
@@ -4431,7 +5461,7 @@ th.is-sorted.is-desc .th-label::after { content: " ↓"; }
   color: var(--muted);
 }
 .filter-field input {
-  font: 14px/1.3 "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  font: 14px/1.3 var(--font-body);
   padding: 7px 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -4454,21 +5484,39 @@ th.is-sorted.is-desc .th-label::after { content: " ↓"; }
   cursor: pointer;
   padding: 4px 0;
 }
-.cell-clip,
-.cell-nowrap {
+.cell-clip {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 0;
-}
-.cell-clip {
   white-space: nowrap;
 }
-.cell-clip .row-go,
-.cell-clip .cell-text {
-  display: block;
+.cell-nowrap {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.cell-clip-inner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.cell-clip-inner .row-go,
+.cell-clip .row-go,
+.cell-clip .cell-text {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-clip-inner .row-go {
+  flex: 1 1 auto;
+}
+.cell-clip-inner .docs-chip {
+  flex: 0 0 auto;
 }
 .cell-rubro { white-space: nowrap; }
 .cell-nowrap { white-space: nowrap; }
@@ -4482,19 +5530,19 @@ thead th.col-estado .th-head { justify-content: flex-start; }
 thead th.cell-doc .th-head { justify-content: center; }
 thead th.col-sticky { text-align: left; }
 tbody td.col-sticky { text-align: center; }
-tbody tr.is-band { background: #f6f1e8; }
-tbody tr:hover { background: #faf6ef; }
+tbody tr.is-band { background: var(--row-zebra); }
+tbody tr:hover { background: var(--row-hover); }
 #ficha-lines-editor tr.is-editing,
 #ficha-lines-editor tr.is-editing td.col-sticky,
-#ficha-lines-editor tr.is-editing td.cell-estado { background: #fff6eb; }
+#ficha-lines-editor tr.is-editing td.cell-estado { background: rgba(243, 198, 119, 0.18); }
 #ficha-lines-editor.show-deleted tr.is-deleted,
 #ficha-lines-editor.show-deleted tr.is-deleted td.col-sticky,
-#ficha-lines-editor.show-deleted tr.is-deleted td.cell-estado { background: #f3efe8; }
+#ficha-lines-editor.show-deleted tr.is-deleted td.cell-estado { background: rgba(12, 10, 62, 0.05); }
 th {
-  color: var(--muted);
+  color: var(--head-muted);
   font-weight: 600;
   font-size: 11px;
-  letter-spacing: .04em;
+  letter-spacing: .06em;
   text-transform: uppercase;
 }
 .num { font-variant-numeric: tabular-nums; }
@@ -4508,24 +5556,24 @@ th {
   border-radius: 999px;
   background: #fff;
 }
-.pill.pendiente { color: var(--warn); border-color: #d4a574; background: #fff6eb; }
-.pill.confirmado { color: var(--ingreso); border-color: #9bc4b8; background: #eef7f3; }
-.pill.duplicado { color: var(--muted); background: #f3f0ea; }
+.pill.pendiente { color: var(--rose); border-color: rgba(179, 63, 98, 0.35); background: rgba(249, 86, 79, 0.08); }
+.pill.confirmado { color: var(--purple); border-color: rgba(123, 30, 122, 0.35); background: rgba(123, 30, 122, 0.08); }
+.pill.duplicado { color: var(--muted); background: rgba(12, 10, 62, 0.06); }
 .docs-chip {
   display: inline-block;
-  margin-left: 4px;
+  margin-left: 0;
   padding: 1px 7px;
   border-radius: 999px;
   font-size: 10px;
   font-family: inherit;
   letter-spacing: .02em;
-  background: #f3f0ea;
+  background: rgba(12, 10, 62, 0.06);
   color: var(--muted);
   vertical-align: 1px;
 }
-.docs-chip.warn { background: #fff6eb; color: var(--warn); }
-.doc-link { font-weight: 600; color: var(--neto); text-decoration: none; border-bottom: 1px solid transparent; }
-.doc-link:hover { border-bottom-color: var(--neto); }
+.docs-chip.warn { background: rgba(249, 86, 79, 0.10); color: var(--coral); }
+.doc-link { font-weight: 600; color: var(--purple); text-decoration: none; border-bottom: 1px solid transparent; }
+.doc-link:hover { border-bottom-color: var(--purple); }
 .empty { color: var(--muted); padding: 12px; }
 @media (max-width: 1100px) {
   .kan-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -4534,17 +5582,66 @@ th {
   h1 { font-size: 28px; }
   .mast { padding-top: 20px; }
   .mast-h1 #mast-kicker, h1 span { font-size: 18px; }
-  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi-grid { gap: 10px; }
+  .kpi, .kpi-btn { padding: 12px; }
+  .kpi strong, .kpi-btn strong { font-size: 22px; margin-top: 6px; }
   .ledger-table th, .ledger-table td { padding: 5px 8px; font-size: 12px; }
   .ledger-table .th-label { font-size: 10px; letter-spacing: .04em; }
   .ledger-table .funnel { width: 22px; height: 22px; }
-  .kpi-grid > :last-child { grid-column: 1 / -1; }
   .irpf-kpis, .charts { grid-template-columns: 1fr 1fr; display: grid; }
   .charts figure:last-child { grid-column: auto; }
   .ledger { padding: 12px 12px 8px; }
-  .ledger-table { min-width: 980px; font-size: 12px; }
+  .libro-kpis { gap: 8px; margin-bottom: 10px; }
+  .libro-kpis > div { padding: 9px 10px 8px; }
+  .libro-kpis strong { font-size: 19px; margin-top: 4px; }
+  .ledger-table { min-width: 1180px; width: 1180px; font-size: 12px; }
+  .table-wrap.ficha-lines > .ficha-ledger {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
   .table-wrap { max-height: min(68vh, 640px); }
   .edit-dialog { width: min(560px, calc(100vw - 20px)); max-height: min(90dvh, 720px); }
+}
+@media (max-width: 820px) {
+  .libro-kpis {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    padding: 4px 6px 8px;
+  }
+  .kpi-track > .kpi,
+  .kpi-track > .kpi-btn {
+    flex: 0 0 clamp(8.2rem, 42vw, 10.5rem);
+    min-width: 0;
+    padding: 10px 12px 9px;
+  }
+  .libro-kpis > div {
+    flex: 0 0 clamp(7.2rem, 38vw, 9.25rem);
+    scroll-snap-align: start;
+    padding: 8px 10px 7px;
+  }
+  .kpi span, .kpi-btn span,
+  .libro-kpis span {
+    font-size: 10px;
+    letter-spacing: .06em;
+    white-space: nowrap;
+  }
+  .kpi strong, .kpi-btn strong,
+  .libro-kpis strong {
+    font-size: 17px;
+    margin-top: 4px;
+    white-space: nowrap;
+  }
+  .kpi em, .kpi-btn em,
+  .libro-kpis em {
+    font-size: 11px;
+    margin-top: 2px;
+    white-space: nowrap;
+  }
 }
 @media (max-width: 700px) {
   .kan-board { grid-template-columns: 1fr; }
@@ -4557,9 +5654,6 @@ th {
   .ledger-table th, .ledger-table td { padding: 4px 6px; font-size: 11.5px; }
   .ledger-table .th-label { font-size: 9.5px; }
   .kpis { padding: 14px 0 4px; }
-  .kpi, .kpi-btn { padding: 12px; }
-  .kpi strong, .kpi-btn strong { font-size: 22px; }
-  .kpi-grid, .libro-kpis { grid-template-columns: 1fr 1fr; gap: 8px; }
   .irpf-kpis, .charts { grid-template-columns: 1fr; display: grid; }
   .tabs-row { gap: 0; }
   .tab { flex: 1 1 auto; text-align: center; padding: 14px 10px 12px; }
@@ -4570,39 +5664,37 @@ th {
   .action { align-items: flex-start; }
   body { overflow-x: hidden; }
   .table-scroll-hint { display: block; }
-  .ledger .table-wrap {
+  .table-wrap {
     max-width: 100%;
-    max-height: min(70dvh, 640px);
-    overflow-x: auto;
-    overflow-y: auto;
-    border: 1px solid var(--line);
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-x: contain;
-    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
   }
-  .ledger .table-wrap::-webkit-scrollbar { height: 8px; }
-  .ledger .table-wrap::-webkit-scrollbar-thumb {
-    background: #c8bfb2;
-    border-radius: 999px;
-  }
-  .ledger-table {
-    min-width: 980px;
-    width: max-content;
-    font-size: 12px;
+  .ledger .table-wrap { max-height: min(70dvh, 640px); }
+  .ledger-table { font-size: 12px; }
+  .table-wrap.ficha-lines > .ficha-ledger {
+    width: 100% !important;
+    min-width: 0 !important;
   }
   .ledger-table thead th.col-sticky,
   .ledger-table tbody td.col-sticky,
   .ledger-table thead th.col-estado,
-  .ledger-table tbody td.cell-estado {
+  .ledger-table tbody td.cell-estado,
+  .ledger-table thead th.line-actions,
+  .ledger-table tbody td.line-actions {
     position: static;
     box-shadow: none;
+    padding-right: 10px;
   }
+  thead th.col-sticky:first-child::before,
+  thead th.col-sticky:first-child::after,
+  thead th.col-estado::after,
+  thead th.line-actions::after { display: none; }
   .ficha { padding-bottom: 28px; }
   .ficha h1 { font-size: 22px; }
   .ficha-grid > div { flex-basis: calc((100% - 10px) / 2); }
   .ficha-lines input { width: 100%; box-sizing: border-box; font: inherit; }
-  .ficha .edit-lines { min-width: 560px; }
   .ficha-score { align-items: flex-start; }
+  .q-i-label { display: none; }
+  .q-i-btn { width: 30px; padding: 0; }
   .doc-open { width: 100%; }
   .site-foot { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
 }
@@ -4799,18 +5891,7 @@ _JS = r"""
   };
 
   const applyIrpf = () => {
-    const irpfRows = [...document.querySelectorAll("#irpf tbody tr")];
-    if (!irpfRows.length) return;
-    const min = parseAmount(document.getElementById("f-irpf-min")?.value);
-    const max = parseAmount(document.getElementById("f-irpf-max")?.value);
-    for (const row of irpfRows) {
-      const amount = Number(row.dataset.irpfImporte || 0);
-      const show = matchesGroup("irpf-concepto", row.dataset.irpfConcepto || "")
-        && matchesGroup("irpf-resta", row.dataset.irpfResta || "")
-        && (min === null || amount >= min)
-        && (max === null || amount <= max);
-      row.hidden = !show;
-    }
+    window.smartTableRefresh?.(document.querySelector("table.irpf-table"));
   };
 
   const PAGE_SIZE = 15;
@@ -5138,6 +6219,33 @@ _JS = r"""
   document.getElementById("export-visible")?.addEventListener("click", exportVisible);
   document.getElementById("export-visible-top")?.addEventListener("click", exportVisible);
 
+  const decision = document.getElementById("app-decision");
+  const askDecision = (opts) => new Promise((resolve) => {
+    const title = document.getElementById("app-decision-title");
+    const text = document.getElementById("app-decision-text");
+    const ok = document.getElementById("app-decision-ok");
+    const err = document.getElementById("app-decision-error");
+    if (!decision || typeof decision.showModal !== "function") {
+      resolve(window.confirm(opts.text || ""));
+      return;
+    }
+    if (title) title.textContent = opts.title || "Confirmar";
+    if (text) text.textContent = opts.text || "";
+    if (ok) {
+      ok.textContent = opts.ok || "Aceptar";
+      ok.classList.toggle("is-warn", Boolean(opts.warn));
+    }
+    if (err) err.hidden = true;
+    const finish = (value) => {
+      decision.removeEventListener("close", onClose);
+      resolve(value);
+    };
+    const onClose = () => finish(false);
+    decision.addEventListener("close", onClose);
+    document.getElementById("app-decision-cancel").onclick = () => { finish(false); decision.close(); };
+    ok.onclick = () => { finish(true); decision.close(); };
+    if (!decision.open) decision.showModal();
+  });
   const kanPost = async (asiento, body) => {
     try {
       const res = await fetch(`/api/asientos/${asiento}`, {
@@ -5149,17 +6257,29 @@ _JS = r"""
       if (!res.ok || payload.ok === false) throw new Error(payload.error || String(res.status));
       window.location.reload();
     } catch (err) {
-      alert("No se pudo guardar: " + err.message);
+      const box = (document.getElementById("rechazo-dialog")?.open
+        ? document.getElementById("rechazo-error")
+        : document.getElementById("app-decision-error"));
+      if (box) { box.hidden = false; box.textContent = "No se pudo guardar: " + err.message; }
+      if (decision && !document.getElementById("rechazo-dialog")?.open && !decision.open) decision.showModal();
     }
   };
-  const kanAccion = (accion, id) => {
+  const kanAccion = async (accion, id) => {
     if (!id) return;
     if (accion === "validar") {
-      if (!window.confirm(`¿Consolidar el asiento #${id}? Revisada y buena.`)) return;
-      kanPost(id, { validado: true, confirmado: true });
+      const ok = await askDecision({
+        title: `Consolidar asiento #${id}`,
+        text: "Revisada y buena. Entra en los totales del libro.",
+        ok: "Consolidar",
+      });
+      if (ok) kanPost(id, { validado: true, confirmado: true });
     } else if (accion === "reabrir" || accion === "recuperar") {
-      if (!window.confirm(`¿Devolver el asiento #${id} a revisión?`)) return;
-      kanPost(id, { validado: false, confirmado: true });
+      const ok = await askDecision({
+        title: `Devolver asiento #${id}`,
+        text: "Vuelve a revisión y deja de contar como consolidado.",
+        ok: "Devolver",
+      });
+      if (ok) kanPost(id, { validado: false, confirmado: true });
     } else if (accion === "rechazar") {
       const dialogo = document.getElementById("rechazo-dialog");
       if (!dialogo) return;
@@ -5167,8 +6287,12 @@ _JS = r"""
       document.getElementById("rechazo-detalle").value = "";
       dialogo.showModal();
     } else if (accion === "quitar-dup") {
-      if (!window.confirm(`¿Quitar el duplicado del asiento #${id}?`)) return;
-      kanPost(id, { quitar_duplicado: true, confirmado: true });
+      const ok = await askDecision({
+        title: `Quitar duplicado #${id}`,
+        text: "Vuelve a revisión y entra otra vez en los totales.",
+        ok: "Quitar duplicado",
+      });
+      if (ok) kanPost(id, { quitar_duplicado: true, confirmado: true });
     }
   };
   for (const boton of document.querySelectorAll(".kan-act")) {
@@ -5263,7 +6387,8 @@ _JS = r"""
   const REV_PAGE = 15;
   let revPagina = 1;
   const revPintar = () => {
-    const filas = [...document.querySelectorAll("#rev-tabla-body tr")];
+    const filas = [...document.querySelectorAll("#rev-tabla-body tr[data-smart-row]")]
+      .filter((fila) => fila.dataset.match !== "0");
     const total = Math.max(1, Math.ceil(filas.length / REV_PAGE));
     revPagina = Math.min(Math.max(1, revPagina), total);
     filas.forEach((fila, idx) => {
@@ -5272,13 +6397,20 @@ _JS = r"""
     const etiqueta = document.getElementById("rev-paginas");
     if (etiqueta) etiqueta.textContent = filas.length ? `Página ${revPagina} de ${total} · ${filas.length} pendientes` : "";
   };
+  document.getElementById("revision-tabla")?.addEventListener("smarttableapply", () => {
+    revPagina = 1;
+    revPintar();
+  });
   document.getElementById("rev-prev")?.addEventListener("click", () => { revPagina -= 1; revPintar(); });
   document.getElementById("rev-next")?.addEventListener("click", () => { revPagina += 1; revPintar(); });
   revPintar();
-  document.getElementById("insight-kpi-revisar")?.addEventListener("click", () => showPanel("revision"));
-  document.getElementById("insight-kpi-revisar")?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showPanel("revision"); }
-  });
+  for (const id of ["insight-kpi-revisar", "mast-kpi-revisar"]) {
+    const revisar = document.getElementById(id);
+    revisar?.addEventListener("click", () => showPanel("revision"));
+    revisar?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showPanel("revision"); }
+    });
+  }
   for (const enlace of document.querySelectorAll(".kan-ir-revisar")) {
     enlace.addEventListener("click", (event) => {
       event.preventDefault();
@@ -5296,7 +6428,8 @@ _JS = r"""
       if (!res.ok || payload.ok === false) throw new Error(payload.error || String(res.status));
       window.location.reload();
     } catch (err) {
-      alert("No se pudo guardar: " + err.message);
+      const box = document.getElementById("dup-gestor-error");
+      if (box) { box.hidden = false; box.textContent = "No se pudo guardar: " + err.message; }
     }
   };
   const gestor = document.getElementById("dup-gestor");
@@ -5321,7 +6454,13 @@ _JS = r"""
       ${lado(d.estado === "duplicado" ? "Asiento bueno" : "Posible gemelo", "dup-lado-bueno",
           pillHTML("confirmado", d.estado === "duplicado" ? "Cuenta en el libro" : "Candidato"),
           d.gemelo, d.gemeloEmisor, d.gemeloNif, d.gemeloNumero, d.gemeloFecha, d.gemeloTotal)}`;
-    document.getElementById("dup-gestor-motivo").textContent = d.motivo || "";
+    const motivo = document.getElementById("dup-gestor-motivo");
+    const consecuencia = d.estado === "duplicado"
+      ? "Quitar el duplicado devuelve el asiento a revisión y a los totales."
+      : "Fusionar saca este asiento de los totales. El otro se queda.";
+    if (motivo) motivo.textContent = [d.motivo, consecuencia].filter(Boolean).join(" ");
+    const dupErr = document.getElementById("dup-gestor-error");
+    if (dupErr) dupErr.hidden = true;
     document.getElementById("dup-gestor-eyebrow").textContent =
       d.estado === "duplicado" ? "Duplicado fusionado" : "Sospechoso pendiente";
     const titulo = document.getElementById("dup-gestor-title");
@@ -5353,13 +6492,11 @@ _JS = r"""
     const id = gestor?.dataset.dupId;
     const gemelo = gestor?.dataset.gemelo;
     if (!id || !gemelo) return;
-    if (!window.confirm(`¿Marcar el asiento #${id} como duplicado de #${gemelo}?`)) return;
     dupPost(id, { duplicado_de: gemelo, confirmado: true });
   });
   document.getElementById("dup-gestor-quitar")?.addEventListener("click", () => {
     const id = gestor?.dataset.dupId;
     if (!id) return;
-    if (!window.confirm(`¿Quitar el duplicado del asiento #${id}? Vuelve a Por revisar.`)) return;
     dupPost(id, { quitar_duplicado: true, confirmado: true });
   });
 
@@ -5593,7 +6730,7 @@ _JS = r"""
     }
     return rows;
   };
-  const openEdit = async (row, { onlyValidate = false, onlyReopen = false } = {}) => {
+  const openEdit = async (row) => {
     editingRow = row;
     linesBefore = [];
     showForm();
@@ -5618,14 +6755,31 @@ _JS = r"""
         renderLines(payload);
       }
     } catch { /* historial y líneas opcionales */ }
-    if (onlyValidate) {
-      const validar = document.getElementById("edit-validar");
-      if (validar) validar.checked = true;
-      document.getElementById("edit-review")?.click();
-    } else if (onlyReopen) {
-      const validar = document.getElementById("edit-validar");
-      if (validar) validar.checked = false;
-      document.getElementById("edit-review")?.click();
+  };
+  const decideEstado = async (row, validar) => {
+    const id = row.dataset.id;
+    const hechos = [row.dataset.emisor, row.dataset.numero, row.dataset.fechaLabel].filter(Boolean).join(" · ");
+    const ok = await askDecision({
+      title: validar ? `Validar asiento #${id}` : `Devolver asiento #${id}`,
+      text: validar
+        ? `${hechos}. Entra en los totales del libro.`
+        : `${hechos}. Vuelve a revisión y deja de contar como validado.`,
+      ok: validar ? "Validar" : "Devolver",
+    });
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/asientos/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ validado: validar, confirmado: true }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      applyPayload(row, await res.json());
+      apply({ keepPage: true });
+    } catch (err) {
+      const box = document.getElementById("app-decision-error");
+      if (box) { box.hidden = false; box.textContent = "No se pudo guardar: " + err.message; }
+      if (!decision?.open) decision?.showModal();
     }
   };
   const setRowActions = (row, validado) => {
@@ -5650,14 +6804,14 @@ _JS = r"""
       btn.textContent = "Validado";
       btn.title = "Validado. Pulsa para devolver a revisión";
       btn.setAttribute("aria-label", `Validado. Devolver asiento ${row.dataset.id} a revisión`);
-      btn.addEventListener("click", () => openEdit(row, { onlyReopen: true }));
+      btn.addEventListener("click", () => decideEstado(row, false));
     } else {
       btn.className = "estado-btn estado-pend";
       btn.dataset.validar = row.dataset.id;
       btn.textContent = "Por validar";
       btn.title = "Pendiente de validar. Pulsa para confirmar";
       btn.setAttribute("aria-label", `Por validar. Confirmar asiento ${row.dataset.id}`);
-      btn.addEventListener("click", () => openEdit(row, { onlyValidate: true }));
+      btn.addEventListener("click", () => decideEstado(row, true));
     }
     acciones.appendChild(btn);
   };
@@ -5767,13 +6921,17 @@ _JS = r"""
       closeDialog();
       toast("Cambio guardado. Queda en el log del asiento.");
     } catch {
-      toast("No se pudo guardar. Abre el dashboard con `aeat-hub dashboard` (servidor local).");
+      const box = document.getElementById("edit-error");
+      if (box) {
+        box.hidden = false;
+        box.textContent = "No se pudo guardar. Abre el dashboard con el servidor local.";
+      }
     }
   });
   for (const row of rows) {
     row.querySelector("[data-edit]")?.addEventListener("click", () => openEdit(row));
-    row.querySelector("[data-validar]")?.addEventListener("click", () => openEdit(row, { onlyValidate: true }));
-    row.querySelector("[data-reopen]")?.addEventListener("click", () => openEdit(row, { onlyReopen: true }));
+    row.querySelector("[data-validar]")?.addEventListener("click", () => decideEstado(row, true));
+    row.querySelector("[data-reopen]")?.addEventListener("click", () => decideEstado(row, false));
     row.addEventListener("click", (event) => {
       if (event.target.closest("a, button, input, label, [popover], .row-actions")) return;
       const href = row.dataset.href;
@@ -5941,8 +7099,9 @@ _JS = r"""
       }
       ivaBody.innerHTML = keys.map((key) => {
         const item = buckets.get(key);
-        return `<tr><td>${esc(item.label)}</td><td class="num">${esc(formatEuro(item.base))}</td><td class="num">${esc(formatEuro(item.cuota))}</td><td class="num">${esc(formatEuro(item.total))}</td></tr>`;
+        return `<tr data-smart-row="1" data-tipo="${esc(key)}" data-base="${item.base}" data-cuota="${item.cuota}" data-total="${item.total}" data-match="1"><td>${esc(item.label)}</td><td class="num">${esc(formatEuro(item.base))}</td><td class="num">${esc(formatEuro(item.cuota))}</td><td class="num">${esc(formatEuro(item.total))}</td></tr>`;
       }).join("");
+      window.smartTableRefresh?.(document.getElementById("iva-tabla"));
     };
     const trimsEl = document.getElementById("insight-trims");
     const anio = String(document.body.dataset.year || "");
@@ -5959,6 +7118,7 @@ _JS = r"""
         button.addEventListener("click", () => {
           if (desdeEl) desdeEl.value = `${anio}-${desde}`;
           if (hastaEl) hastaEl.value = `${anio}-${hasta}`;
+          updateRangeLabel();
           applyRange(name);
         });
         trimsEl.appendChild(button);
@@ -5970,6 +7130,40 @@ _JS = r"""
     const hastaEl = document.getElementById("insight-hasta");
     const nameEl = document.getElementById("insight-range-name");
     const presetsEl = document.getElementById("insight-presets");
+    const rangePop = document.getElementById("insight-range-pop");
+    const rangeTrigger = document.getElementById("insight-range-trigger");
+    const rangeLabel = document.getElementById("insight-range-label");
+    const rangeClear = document.getElementById("insight-range-clear");
+    const formatDateEs = (iso) => {
+      if (!iso) return "";
+      const [year, month, day] = iso.split("-");
+      return `${day}/${month}/${year}`;
+    };
+    const updateRangeLabel = () => {
+      const desde = desdeEl?.value || "";
+      const hasta = hastaEl?.value || "";
+      if (!rangeLabel) return;
+      if (!desde && !hasta) {
+        rangeLabel.textContent = "Todo el ejercicio";
+        if (rangeClear) rangeClear.hidden = true;
+        return;
+      }
+      if (rangeClear) rangeClear.hidden = false;
+      if (desde && hasta) rangeLabel.textContent = `${formatDateEs(desde)} – ${formatDateEs(hasta)}`;
+      else if (desde) rangeLabel.textContent = `Desde ${formatDateEs(desde)}`;
+      else rangeLabel.textContent = `Hasta ${formatDateEs(hasta)}`;
+    };
+    const placeRangePop = () => {
+      if (!rangePop || !rangeTrigger) return;
+      const rect = rangeTrigger.getBoundingClientRect();
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - rangePop.offsetWidth - 8));
+      const top = Math.min(rect.bottom + 8, window.innerHeight - rangePop.offsetHeight - 8);
+      rangePop.style.left = `${left}px`;
+      rangePop.style.top = `${top}px`;
+    };
+    const closeRangePop = () => {
+      if (rangePop?.matches(":popover-open")) rangePop.hidePopover();
+    };
     const storeKey = `aeat-hub-rangos:${document.body.dataset.actividad}:${document.body.dataset.year}`;
     const esc = (value) => String(value)
       .replace(/&/g, "&amp;")
@@ -6117,6 +7311,7 @@ _JS = r"""
         button.addEventListener("click", () => {
           if (desdeEl) desdeEl.value = preset.desde || "";
           if (hastaEl) hastaEl.value = preset.hasta || "";
+          updateRangeLabel();
           applyRange(preset.name);
         });
         const drop = document.createElement("button");
@@ -6161,16 +7356,27 @@ _JS = r"""
       paintIva(rows);
       paintTrims(activeName);
       paintPresets(activeName);
+      updateRangeLabel();
     };
-    document.getElementById("insight-range-all")?.addEventListener("click", () => {
+    const clearRange = () => {
       if (desdeEl) desdeEl.value = "";
       if (hastaEl) hastaEl.value = "";
+      updateRangeLabel();
       applyRange();
+      closeRangePop();
+    };
+    rangePop?.addEventListener("toggle", (event) => {
+      const open = event.newState === "open";
+      rangeTrigger?.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) placeRangePop();
     });
-    desdeEl?.addEventListener("change", () => applyRange());
-    hastaEl?.addEventListener("change", () => applyRange());
-    desdeEl?.addEventListener("input", () => applyRange());
-    hastaEl?.addEventListener("input", () => applyRange());
+    rangeTrigger?.addEventListener("click", placeRangePop);
+    document.getElementById("insight-range-apply")?.addEventListener("click", () => {
+      applyRange();
+      closeRangePop();
+    });
+    document.getElementById("insight-range-all")?.addEventListener("click", clearRange);
+    rangeClear?.addEventListener("click", clearRange);
     document.getElementById("insight-range-save")?.addEventListener("click", () => {
       const name = (nameEl?.value || "").trim();
       const desde = desdeEl?.value || "";
@@ -6191,10 +7397,11 @@ _JS = r"""
     });
     paintTrims("");
     paintPresets("");
+    updateRangeLabel();
   }
   } catch (err) {
     const frase = document.getElementById("insight-frase");
     if (frase) frase.dataset.error = err.message;
   }
 })();
-"""
+""" + _SMART_TABLE_JS + _KPI_CAROUSEL_JS

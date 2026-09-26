@@ -268,14 +268,16 @@ def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     assert 'data-col="rubro"' not in html
     assert "Acción" not in thead
     assert "table-layout: fixed" in html
-    assert ".col-emisor { width: 14%; }" in html
+    assert ".col-emisor { width: 9.5rem; }" in html
+    assert "width: 1180px" in html
     assert ".col-emisor { width: auto; }" not in html
     assert "viewport-fit=cover" in html
     assert "@media (max-width: 1100px)" in html
     assert "@media (max-width: 700px)" in html
     assert "@media (pointer: coarse)" in html
+    assert ".table-wrap {" in html and "overflow: auto" in html.split(".table-wrap {", 1)[1].split("}", 1)[0]
     mobile = html.split("@media (max-width: 700px)", 1)[1].split("@media", 1)[0]
-    assert "overflow-x: auto" in mobile
+    assert "overscroll-behavior: contain" in mobile
     assert "tbody td::before" not in mobile
     assert "position: static" in mobile
     assert ".ledger-table tbody tr {\n    display: block" not in html
@@ -309,8 +311,8 @@ def test_ficha_asiento_tiene_volver_y_compra(session):
     assert 'id="ficha-kpis"' in html
     assert 'class="kpi-dots"' in html
     assert 'id="ficha-lines-save"' in html
+    assert 'id="ficha-line-dialog"' in html
     assert 'aria-label="Editar línea 1"' not in html
-    assert 'id="ficha-line-tools" hidden' in html
     assert "cambios sin guardar" in html
     assert "Qué se compró" not in html
     assert 'class="th-label">Id</span>' in html
@@ -326,8 +328,9 @@ def test_ficha_asiento_tiene_volver_y_compra(session):
     assert "Sin líneas extraídas" in html
     assert "0 elementos" in html
     assert '<dt>Elementos</dt><dd id="kpi-elementos">0</dd>' in html
-    assert 'data-check="ids" data-ok="0"' in html
-    assert "No hay líneas, así que no hay ids de artículo." in html
+    assert 'data-check="lineas" data-ok="0"' in html
+    assert "No hay líneas extraídas." in html
+    assert "No hay líneas, así que no hay ids" not in html
     assert "total del libro" in html
     assert "No es software oficial de la AEAT" not in html
     assert 'class="site-foot"' in html
@@ -725,7 +728,8 @@ def test_pestanha_duplicados_y_toggle_del_libro(session, layout):
     assert "Duplicados fusionados" in html
     assert "Sospechosos pendientes" in html
     # tabla compacta: filas clicables con datos para el pop-up
-    assert 'class="dup-tabla"' in html
+    assert 'class="dup-tabla smart-table"' in html
+    assert "data-smart-config" in html
     assert f'href="/asiento/{dup.id}"' in html
     assert 'id="dup-gestor"' in html
     assert f'data-dup-id="{dup.id}"' in html
@@ -748,24 +752,21 @@ def test_pestanha_duplicados_y_toggle_del_libro(session, layout):
 
 
 def test_ficha_score_colapsado_con_popover_de_explicaciones(session, layout):
-    """Todo en orden: solo chip + (i); la lista completa vive en el popover."""
+    """Solo chip + (i); el popover muestra fallos y deja las OK en un desplegable."""
     actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
     _seed_asientos(session, actividad)
     asiento = session.scalars(select(Asiento).order_by(Asiento.id)).first()
     data = collect_asiento_ficha(session, asiento, dashboard_name="dashboard_CI-VA-001_2026.html")
     html = render_asiento_page(data)
-    # botón (i) con popover y la lista completa dentro (contrato del JS)
     assert 'class="q-i-btn" popovertarget="ficha-score-pop"' in html
     assert 'id="ficha-score-pop"' in html
-    assert 'id="ficha-score-list"' in html
-    assert "Comprobaciones de la factura" in html
+    assert 'id="ficha-score-fails"' in html
+    assert 'id="ficha-score-ok"' in html
+    assert 'id="ficha-score-summary"' in html
+    assert "Ver correctas" in html
     assert 'data-check="numero"' in html
-    assert 'data-check="suma"' in html
-    # con fallos (el asiento semilla no tiene líneas) la tira los muestra inline
-    assert 'id="ficha-score-fails">' in html
+    assert 'data-check="lineas"' in html
     assert 'class="is-bad"' in html
-    # y el JS recalcula y oculta la tira cuando no hay fallos
-    assert "failsEl.hidden = malos.length === 0" in html
 
 
 def test_libro_cabeceras_con_ayuda_y_compactan(session, layout):
