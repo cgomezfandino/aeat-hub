@@ -14,6 +14,7 @@
 | [Referencia de código](referencia-codigo.md) | Módulos Python y esquema SQLite |
 | [Desarrollo](desarrollo.md) | Tests, convenciones, ramas (`develop` / `main`) |
 | [Hoja de ruta](hoja-de-ruta.md) | Qué hay, qué no, cortes año/trimestre y siguiente bloque |
+| [Handoff dashboard UI (26 sep)](handoff-dashboard-ui-2026-09-26.md) | Pulido de hojas modales, tablas smart, ficha y KPIs |
 | [Rubros de gestor (spec)](superpowers/specs/2026-09-20-rubros-gestor-design.md) | Nombres cortos, casilla de la Renta, alta por CLI |
 | [ER de facturas (spec)](superpowers/specs/2026-09-21-er-facturas-design.md) | Raw, factura canónica y tabla de relaciones |
 | [Seguridad](../SECURITY.md) | Qué no subir nunca a git |

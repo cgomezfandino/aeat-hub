@@ -54,6 +54,22 @@ El mismo titular puede tener varios expedientes. El ingest siempre lleva
 
 No mezclar gastos del piso con ads, dominio o Stripe de una web.
 
+## Dónde quedó el 26 sep 2026
+
+Pulido grande del dashboard HTML en `develop` (commit `61dde97`, **sin push**
+aún). Detalle en `docs/handoff-dashboard-ui-2026-09-26.md`.
+
+- Pop-ups unificados (`app-sheet`): editar línea, duplicados, rechazo,
+  confirmaciones.
+- Tablas con filtro/orden en duplicados, revisión, IVA e IRPF (`smart-table`).
+- Carrusel de KPIs con arrastre (masthead e Insights).
+- Scrollbars de tablas ocultas salvo hover; cabecera oscura sin hueco a la
+  izquierda.
+- Tabla de líneas en ficha: columnas al 100 %, sin sticky del libro (arreglo
+  Safari/Mac — **pendiente confirmar** en el equipo del usuario).
+
+Siguiente paso inmediato: `git push` y validar `/asiento/{id}` en Safari.
+
 ## Dónde quedó el 23 sep 2026
 
 Ramas: solo `develop` y `main`. El corte de Insights y del desglose OCR está
