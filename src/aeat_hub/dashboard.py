@@ -427,9 +427,9 @@ def render_asiento_page(data: dict) -> str:
         '<dl class="ficha-grid">'
         f"<div><dt>NIF emisor</dt><dd class=\"mono\">{escape(data['nif'])}</dd></div>"
         f"<div><dt>Rubro</dt><dd>{escape(data['cuenta_nombre'])}</dd></div>"
-        f"<div><dt>Base</dt><dd id=\"kpi-base\">{escape(format_euro(data['base']))}</dd></div>"
-        f"<div><dt>IVA</dt><dd id=\"kpi-iva\">{escape(format_euro(data['iva']))}</dd></div>"
-        f"<div><dt>Total</dt><dd id=\"kpi-total\">{escape(format_euro(data['total']))}</dd></div>"
+        f"<div><dt>Base</dt><dd id=\"kpi-base\" data-initial=\"{escape(format_euro(data['base']))}\">{escape(format_euro(data['base']))}</dd></div>"
+        f"<div><dt>IVA</dt><dd id=\"kpi-iva\" data-initial=\"{escape(format_euro(data['iva']))}\">{escape(format_euro(data['iva']))}</dd></div>"
+        f"<div><dt>Total</dt><dd id=\"kpi-total\" data-initial=\"{escape(format_euro(data['total']))}\">{escape(format_euro(data['total']))}</dd></div>"
         f"<div><dt>Elementos</dt><dd id=\"kpi-elementos\">{escape(articulos_label(lineas))}</dd></div>"
         f"<div><dt>Casilla</dt><dd>{escape(data['casilla_etiqueta'])}</dd></div>"
         "</dl>\n"
@@ -906,7 +906,12 @@ def _ficha_lines_script() -> str:
     }
     const put = (id, amount, has) => {
       const el = document.getElementById(id);
-      if (el) el.textContent = has ? euro(round2(amount)) : "—";
+      if (el) {
+        if (!has && el.dataset.initial && el.dataset.initial !== "—") {
+          return;
+        }
+        el.textContent = has ? euro(round2(amount)) : "—";
+      }
     };
     put("kpi-base", base, nBase);
     put("kpi-iva", iva, nIva);
@@ -1577,14 +1582,11 @@ def _asiento_view(
     ]
     conf_ocr = q2(documento.confianza) if documento is not None else None
     conf_class = q2(asiento.confianza_clasificacion)
-    baja = (not asiento.validado) and (
-        (conf_ocr is not None and conf_ocr < Decimal("0.80"))
-        or (conf_class is not None and conf_class < Decimal("0.80"))
-        or conf_class is None
-        or asiento.estado == "pendiente"
-    )
     conf_scores = [value for value in (conf_ocr, conf_class) if value is not None]
-    conf_min = min(conf_scores) if conf_scores else None
+    conf_min = conf_ocr if (conf_class is None or conf_class == 0) else (min(conf_scores) if conf_scores else None)
+    baja = (not asiento.validado) and (
+        conf_min is None or conf_min < Decimal("0.80")
+    )
     return {
         "id": asiento.id,
         "fecha": asiento.fecha.isoformat() if asiento.fecha else "",
@@ -2576,9 +2578,22 @@ def _panel_revision(data: dict) -> str:
       <div class="kan-barra"><i style="width: {progreso}%"></i></div>
       <strong>{progreso} %</strong></div>
   </div>
-  <div class="rev-vistas" role="group" aria-label="Vista de revisión">
-    <button type="button" class="ghost" id="rev-vista-tablero" aria-pressed="true">Tablero</button>
-    <button type="button" class="ghost" id="rev-vista-tabla" aria-pressed="false">Tabla</button>
+  <div class="rev-vistas" role="group" aria-label="Vista de revisión" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+    <div style="display:flex; gap:6px;">
+      <button type="button" class="ghost" id="rev-vista-tablero" aria-pressed="true">Tablero</button>
+      <button type="button" class="ghost" id="rev-vista-tabla" aria-pressed="false">Tabla</button>
+    </div>
+    <div class="rev-upload-wrap">
+      <input type="file" id="factura-upload-input" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" style="display:none">
+      <button type="button" class="export-btn" id="btn-subir-factura" style="font-size:12px; padding:6px 12px; display:inline-flex; align-items:center; gap:6px; cursor:pointer;" title="Cargar factura con Gemini Vision AI">
+        <span>↑</span> <span>Cargar factura</span>
+      </button>
+    </div>
+  </div>
+  <div class="drop-banner" id="drop-banner" style="border: 2px dashed var(--line); border-radius: 6px; padding: 10px 14px; text-align: center; margin: 0 0 12px; background: #faf9f6; cursor: pointer; transition: all 0.2s ease;">
+    <p style="margin: 0; font-size: 13px; color: var(--muted);" id="drop-banner-text">
+      Arrastra aquí tu factura en <strong>PDF o imagen</strong> (o haz clic para examinar)
+    </p>
   </div>
   <div class="kan-board" id="kan-board">
     {_columna("pendiente", "Por revisar", pendientes_ordenadas, "Nada pendiente. Ingresa facturas y vuelve.", "validar|rechazar")}
@@ -6404,6 +6419,75 @@ _JS = r"""
   document.getElementById("rev-prev")?.addEventListener("click", () => { revPagina -= 1; revPintar(); });
   document.getElementById("rev-next")?.addEventListener("click", () => { revPagina += 1; revPintar(); });
   revPintar();
+
+  const dropBanner = document.getElementById("drop-banner");
+  const fileInput = document.getElementById("factura-upload-input");
+  const btnSubir = document.getElementById("btn-subir-factura");
+  const dropText = document.getElementById("drop-banner-text");
+
+  const procesarFichero = (file) => {
+    if (!file) return;
+    if (dropText) dropText.innerHTML = `⏳ Analizando <strong>${file.name}</strong> con Gemini Vision AI...`;
+    if (dropBanner) {
+      dropBanner.style.borderColor = "var(--purple)";
+      dropBanner.style.background = "#f7f1f7";
+    }
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: file.name,
+            data: e.target.result,
+            ocr: "gemini"
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || "Fallo en la ingesta");
+        const emisor = data.asiento?.emisor ? ` · ${data.asiento.emisor}` : "";
+        if (dropText) dropText.innerHTML = `✓ Factura procesada (Asiento #${data.asiento_id}${emisor}). Actualizando libro...`;
+        setTimeout(() => {
+          window.location.hash = "#revisar";
+          window.location.reload();
+        }, 900);
+      } catch (err) {
+        alert("Error al cargar la factura: " + err.message);
+        if (dropText) dropText.innerHTML = "Arrastra aquí tu factura en <strong>PDF o imagen</strong> (o haz clic para examinar)";
+        if (dropBanner) {
+          dropBanner.style.borderColor = "var(--line)";
+          dropBanner.style.background = "#faf9f6";
+        }
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  btnSubir?.addEventListener("click", () => fileInput?.click());
+  dropBanner?.addEventListener("click", () => fileInput?.click());
+  fileInput?.addEventListener("change", (e) => {
+    if (e.target.files?.length) procesarFichero(e.target.files[0]);
+  });
+  dropBanner?.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropBanner.style.background = "#f1e9f1";
+    dropBanner.style.borderColor = "var(--purple)";
+  });
+  dropBanner?.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    dropBanner.style.background = "#faf9f6";
+    dropBanner.style.borderColor = "var(--line)";
+  });
+  dropBanner?.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropBanner.style.background = "#faf9f6";
+    dropBanner.style.borderColor = "var(--line)";
+    if (e.dataTransfer?.files?.length) {
+      procesarFichero(e.dataTransfer.files[0]);
+    }
+  });
+
   for (const id of ["insight-kpi-revisar", "mast-kpi-revisar"]) {
     const revisar = document.getElementById(id);
     revisar?.addEventListener("click", () => showPanel("revision"));

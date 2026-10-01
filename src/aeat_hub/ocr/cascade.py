@@ -11,6 +11,7 @@ from pathlib import Path
 
 from aeat_hub.ocr.apple_vision import AppleVisionProvider
 from aeat_hub.ocr.base import OCRResult, OCRProvider, ProviderUnavailable
+from aeat_hub.ocr.gemini import GeminiOCRProvider
 from aeat_hub.ocr.ollama_deepseek import OllamaOCRProvider
 from aeat_hub.ocr.paddle_vl import PaddleVLProvider
 from aeat_hub.ocr.pdf_native import PdfNativeProvider
@@ -19,6 +20,7 @@ from aeat_hub.ocr.tesseract import TesseractProvider
 from aeat_hub.ocr.unlimited import UnlimitedOCRProvider
 
 OPTIONAL = {
+    "gemini": GeminiOCRProvider,
     "unlimited": UnlimitedOCRProvider,
     "paddle": PaddleVLProvider,
     "vision": AppleVisionProvider,

@@ -509,3 +509,31 @@ def test_patch_asiento_duplicado_de_por_api(session):
     session.commit()
     assert reabierto.estado == "pendiente"
     assert reabierto.duplicado_de_id is None
+
+
+def test_patch_lineas_modificadas_registra_cambio(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    row = _asiento(session, actividad)
+    patch_asiento(
+        session,
+        row.id,
+        {
+            "lineas": [{"descripcion": "Línea original", "importe": "10.00", "base": "8.26", "iva_cuota": "1.74", "iva_tipo": "21.00"}],
+            "confirmado": True,
+        },
+    )
+    session.commit()
+    # Modificar contenido de la misma única línea sin alterar la cantidad de líneas
+    patch_asiento(
+        session,
+        row.id,
+        {
+            "lineas": [{"descripcion": "Línea modificada", "importe": "10.00", "base": "8.26", "iva_cuota": "1.74", "iva_tipo": "21.00"}],
+            "confirmado": True,
+        },
+    )
+    session.commit()
+    logs = list(session.scalars(select(Cambio).where(Cambio.asiento_id == row.id, Cambio.campo == "lineas")))
+    assert len(logs) >= 1
+    assert any(item.despues == "1 líneas (editadas)" for item in logs)
+

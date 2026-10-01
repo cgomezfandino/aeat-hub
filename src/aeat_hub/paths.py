@@ -6,6 +6,13 @@ import json
 import os
 from pathlib import Path
 
+try:
+    import dotenv
+
+    dotenv.load_dotenv()
+except ImportError:
+    pass
+
 DEFAULT_DATA_DIR = Path("/Volumes/SSDCX9/data/aeat-hub")
 ENV_DATA_DIR = "AEAT_HUB_DATA_DIR"
 

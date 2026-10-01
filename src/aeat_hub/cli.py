@@ -205,7 +205,7 @@ def ingest(
     ocr: str = typer.Option(
         "auto",
         "--ocr",
-        help="auto|native|rapid|vision|deepseek|unlimited|paddle|tesseract",
+        help="auto|native|rapid|vision|gemini|deepseek|unlimited|paddle|tesseract",
     ),
     path: Optional[Path] = typer.Option(None, "--path", help="Un fichero concreto (si no, el inbox)"),
 ) -> None:

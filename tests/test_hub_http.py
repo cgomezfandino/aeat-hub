@@ -114,8 +114,48 @@ def test_api_asiento_devuelve_calidad_y_numero(session, layout):
             payload = json.loads(resp.read().decode("utf-8"))
         assert payload["numero"] == "F-1"
         ids_calidad = [c["id"] for c in payload["calidad"]]
-        assert "numero" in ids_calidad and "suma" in ids_calidad
+        assert "numero" in ids_calidad and "lineas" in ids_calidad
         assert all({"id", "label", "ok", "detail"} <= set(c) for c in payload["calidad"])
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_api_upload_procesa_factura_y_crea_asiento(session, layout, tmp_path):
+    import base64
+    from tests.samples import FACTURA_LUZ, write_pdf
+
+    sample_pdf = write_pdf(tmp_path / "upload_sample.pdf", FACTURA_LUZ)
+    b64_pdf = base64.b64encode(sample_pdf.read_bytes()).decode("ascii")
+
+    factory = session_factory(make_engine(layout))
+    httpd, port = bind_server(layout, factory, "dashboard_CI-VA-001_2026.html", port=18764)
+    thread = Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        req = request.Request(
+            f"http://127.0.0.1:{port}/api/upload",
+            data=json.dumps({
+                "filename": "luz_subida.pdf",
+                "data": b64_pdf,
+                "ocr": "native"
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with request.urlopen(req) as resp:
+            status = resp.status
+            body = json.loads(resp.read().decode("utf-8"))
+
+        assert status == 200
+        assert body["ok"] is True
+        assert body["asiento_id"] is not None
+        session.expire_all()
+        nuevo_asiento = session.get(Asiento, body["asiento_id"])
+        assert nuevo_asiento is not None
+        assert "IBERDROLA" in nuevo_asiento.emisor.upper()
+        assert nuevo_asiento.total is not None
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+

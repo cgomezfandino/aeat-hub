@@ -100,6 +100,19 @@ REF_TOKEN = re.compile(r"^[A-Za-z0-9]{5,14}$")
 
 
 def parse_invoice(text: str, *, motor: str = "") -> InvoiceExtract:
+    stripped = (text or "").strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            import json
+
+            data = json.loads(stripped)
+            if isinstance(data, dict) and any(
+                k in data for k in ("emisor", "total", "lineas", "nif_emisor")
+            ):
+                return _parse_json_extract(data, motor=motor)
+        except Exception:
+            pass
+
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     nifs = find_nifs(text or "")
     nif_emisor, nif_receptor = pick_emisor_receptor(nifs)
@@ -123,6 +136,89 @@ def parse_invoice(text: str, *, motor: str = "") -> InvoiceExtract:
         iva_cuota=iva_cuota,
         total=total,
         lineas=_find_lineas(lines, total=total, base=base, iva_tipo=iva_tipo),
+        motor=motor,
+    )
+    extract.confianza = _confidence(extract)
+    return extract
+
+
+def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
+    nif_emisor = str(data.get("nif_emisor") or "").strip() or None
+    nif_receptor = str(data.get("nif_receptor") or "").strip() or None
+    if nif_emisor:
+        nif_emisor = normalize_nif(nif_emisor)
+    if nif_receptor:
+        nif_receptor = normalize_nif(nif_receptor)
+
+    numero = str(data.get("numero") or "").strip() or None
+    emisor = str(data.get("emisor") or "").strip() or None
+    receptor = str(data.get("receptor") or "").strip() or None
+
+    fecha_val = data.get("fecha")
+    fecha: date | None = None
+    if fecha_val:
+        try:
+            fecha = parse_date(str(fecha_val), dayfirst=False, yearfirst=True).date()
+        except Exception:
+            pass
+
+    def _dec(v) -> Decimal | None:
+        if v is None:
+            return None
+        try:
+            s = str(v).replace(",", ".").replace("€", "").strip()
+            return q2(Decimal(s))
+        except Exception:
+            return None
+
+    base = _dec(data.get("base"))
+    iva_tipo = _dec(data.get("iva_tipo"))
+    iva_cuota = _dec(data.get("iva_cuota"))
+    total = _dec(data.get("total"))
+
+    raw_lineas = data.get("lineas") or []
+    lineas: list[InvoiceLine] = []
+    if isinstance(raw_lineas, list):
+        for idx, item in enumerate(raw_lineas, start=1):
+            if not isinstance(item, dict):
+                continue
+            desc = str(item.get("descripcion") or "").strip() or None
+            imp = _dec(item.get("importe"))
+            cod = str(item.get("codigo") or "").strip() or None
+            cant = _dec(item.get("cantidad") or 1)
+            lineas.append(
+                InvoiceLine(
+                    posicion=idx,
+                    codigo=cod,
+                    descripcion=desc,
+                    cantidad=cant,
+                    importe=imp,
+                )
+            )
+
+    if lineas:
+        lineas = _completar_desglose(
+            lineas,
+            total=total,
+            base=base,
+            iva_tipo=iva_tipo,
+            lines=[],
+        )
+
+    extract = InvoiceExtract(
+        emisor=emisor,
+        nif_emisor=nif_emisor,
+        nif_emisor_valido=bool(nif_emisor and is_valid_nif(nif_emisor)),
+        receptor=receptor,
+        nif_receptor=nif_receptor,
+        fecha=fecha,
+        numero=numero,
+        numero_norm=normalize_numero(numero),
+        base=base,
+        iva_tipo=iva_tipo,
+        iva_cuota=iva_cuota,
+        total=total,
+        lineas=lineas,
         motor=motor,
     )
     extract.confianza = _confidence(extract)

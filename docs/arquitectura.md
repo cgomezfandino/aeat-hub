@@ -77,3 +77,19 @@ flowchart TD
 ## Hardware de diseño
 
 MacBook Pro **M1 Pro, 16 GB, sin NVIDIA**. Por eso el OCR pesado (Unlimited-OCR oficial CUDA) no es el motor por defecto. Detalle en [ocr.md](ocr.md).
+
+## Ingesta Web desde el Dashboard (`/api/upload`)
+
+Además del procesamiento en lote por terminal (`aeat-hub ingest`), la interfaz web del dashboard incorpora una zona de arrastrar y soltar (drag & drop) o selector de ficheros que:
+1. Recibe el archivo PDF o imagen vía `POST /api/upload`.
+2. Guarda el archivo temporalmente y ejecuta el pipeline de ingestión completo (`run_ingest`).
+3. Si el entorno tiene `GEMINI_API_KEY` configurado, utiliza Google Gemini multimodal (`--ocr gemini`) como motor preferente, permitiendo extracción precisa y estructurada tanto en facturas con texto nativo como escaneadas.
+4. Devuelve el número de facturas procesadas y el ID del asiento creado para navegar directamente a la ficha.
+
+## Registro de Auditoría e Historial de Cambios (`Cambio`)
+
+Toda modificación manual sobre asientos o desgloses queda registrada en la tabla `cambios`:
+- **Campos monitorizados:** Emisor, NIF emisor, Fecha, Base imponible, Cuota de IVA, Total, Rubro contable, estado de Validación y Duplicados.
+- **Líneas y desgloses:** Modificaciones en artículos o importes de línea recalculan la base, IVA y total de la factura, y registran el cambio en la tabla de cambios (`Líneas`, `Base`, `IVA`, `Total`).
+- **Consultas UI:** Accesible desde la Ficha de Asiento (botón 🕒 en la cabecera) y en el panel lateral de edición del Libro principal.
+

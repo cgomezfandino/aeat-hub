@@ -319,12 +319,16 @@ def _guardar_lineas(session: Session, asiento: Asiento, payload: list) -> bool:
     despues = _serialize_lineas(nuevas)
     if antes == despues:
         return False
+    antes_txt = f"{len(antes)} líneas"
+    despues_txt = f"{len(despues)} líneas"
+    if antes_txt == despues_txt:
+        despues_txt = f"{len(despues)} líneas (editadas)"
     _registrar(
         session,
         asiento,
         "lineas",
-        f"{len(antes)} líneas",
-        f"{len(despues)} líneas",
+        antes_txt,
+        despues_txt,
     )
     replace_lineas(session, asiento, nuevas)
     return True

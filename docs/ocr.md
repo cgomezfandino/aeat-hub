@@ -73,6 +73,25 @@ uv run aeat-hub ingest --actividad CI-VA-001 --ocr deepseek
 
 Variables: `AEAT_HUB_OLLAMA_URL` (default `http://127.0.0.1:11434`) y `AEAT_HUB_OLLAMA_OCR_MODEL` (default `deepseek-ocr`). Si Ollama no está o falta el modelo, cascada local. En 16 GB va justo; no es el auto.
 
+### Google Gemini (`--ocr gemini`)
+
+Proveedor multimodal opcional de alta precisión para facturas complejas o escaneos con tablas de artículos difíciles.
+Utiliza **Gemini 2.5 Flash** (o configurable con `AEAT_HUB_GEMINI_MODEL=gemini-1.5-flash`).
+
+Configuración en `.env`:
+```bash
+GEMINI_API_KEY=tu-api-key-de-google
+# o bien
+GOOGLE_API_KEY=tu-api-key-de-google
+```
+
+Ejecución vía CLI:
+```bash
+uv run aeat-hub ingest --actividad CI-VA-001 --ocr gemini
+```
+
+A diferencia de los OCRs tradicionales basados en texto plano, Gemini extrae directamente el JSON estructurado fiscal español (emisor, NIF emisor, receptor, fecha, número, bases, tipos de IVA y desgloses completos de artículos y líneas de producto), completando automáticamente los cálculos fiscales cuando vienen desglosados con IVA incluido.
+
 ### Apple Vision (`--ocr vision`)
 
 En macOS usa Vision.framework (reconocimiento `accurate`, `es-ES`). Compila un binario local con `swiftc` la primera vez. No descarga pesos. Si `swiftc` falla, cascada local.

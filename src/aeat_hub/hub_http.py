@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import mimetypes
+import os
 import re
 import socket
 from decimal import Decimal
@@ -78,6 +80,9 @@ class HubHandler(BaseHTTPRequestHandler):
         if _API_EXPEDIENTE.fullmatch(parsed.path):
             self._post_expediente()
             return
+        if parsed.path == "/api/upload":
+            self._post_upload()
+            return
         self.send_error(404, "No encontrado")
 
     def _read_json_body(self) -> dict | None:
@@ -140,6 +145,95 @@ class HubHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": str(err)})
             return
         self._send_json(200, body)
+
+    def _post_upload(self) -> None:
+        length = int(self.headers.get("Content-Length") or "0")
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            payload = json.loads(raw.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self._send_json(400, {"ok": False, "error": "JSON inválido"})
+            return
+        if not isinstance(payload, dict):
+            self._send_json(400, {"ok": False, "error": "Cuerpo inválido"})
+            return
+
+        filename = payload.get("filename") or "factura.pdf"
+        b64_data = payload.get("data") or payload.get("content_base64")
+        if not b64_data:
+            self._send_json(400, {"ok": False, "error": "Falta el contenido del fichero"})
+            return
+
+        if "," in b64_data:
+            b64_data = b64_data.split(",", 1)[1]
+
+        try:
+            file_bytes = base64.b64decode(b64_data)
+        except Exception as exc:
+            self._send_json(400, {"ok": False, "error": f"Base64 inválido: {exc}"})
+            return
+
+        codigo, year = _parse_dashboard_name(self.dashboard_name)
+        if not codigo:
+            self._send_json(400, {"ok": False, "error": "No hay expediente activo en este servidor"})
+            return
+
+        inbox_dest = self.layout.inbox / filename
+        stem = Path(filename).stem
+        suffix = Path(filename).suffix
+        counter = 1
+        while inbox_dest.exists():
+            inbox_dest = self.layout.inbox / f"{stem}_{counter}{suffix}"
+            counter += 1
+
+        inbox_dest.write_bytes(file_bytes)
+
+        from aeat_hub.ingest import ingest_file
+
+        with session_scope(self.factory) as session:
+            actividad = session.scalar(select(Actividad).where(Actividad.codigo == codigo))
+            if actividad is None:
+                self._send_json(404, {"ok": False, "error": f"Actividad {codigo} no existe"})
+                return
+
+            ocr_pref = payload.get("ocr") or (
+                "gemini" if os.environ.get("GEMINI_API_KEY") else "auto"
+            )
+            item = ingest_file(
+                session,
+                self.layout,
+                inbox_dest,
+                actividad,
+                ocr_prefer=ocr_pref,
+                from_inbox=True,
+            )
+            session.flush()
+            session.commit()
+
+            asiento_data = None
+            if item.asiento_id is not None:
+                asiento = session.get(Asiento, item.asiento_id)
+                if asiento is not None:
+                    asiento_data = _asiento_json(session, asiento)
+                    _regenerar_libro(
+                        session,
+                        self.layout,
+                        actividad,
+                        asiento.ejercicio or year or 2026,
+                        asiento_data,
+                    )
+
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "estado": item.estado,
+                    "detalle": item.detalle,
+                    "asiento_id": item.asiento_id,
+                    "asiento": asiento_data,
+                    "warnings": item.warnings,
+                },
+            )
 
     def _send_asiento(self, asiento_id: int) -> None:
         with session_scope(self.factory) as session:
