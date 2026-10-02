@@ -11,7 +11,7 @@ from aeat_hub.dashboard import (
     render_dashboard,
     write_dashboard,
 )
-from aeat_hub.models import Actividad, Asiento, Factura
+from aeat_hub.models import Actividad, Asiento, Documento, Factura
 
 
 def _seed_asientos(session, actividad):
@@ -812,3 +812,113 @@ def test_tablero_kanban_de_revision(session, layout):
     assert '>Revisar' in html  # pestaña del tablero
     # el KPI de Insights lleva al tablero
     assert 'id="insight-kpi-revisar"' in html
+
+
+def test_ficha_asiento_split_view_con_documento(session, layout):
+    """La ficha divide la pantalla con visor PDF a la izquierda y datos a la derecha."""
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    doc_path = layout.archivo / "factura_test.pdf"
+    doc_path.write_bytes(b"%PDF-1.4 mock")
+    doc = Documento(
+        nombre_original="factura_test.pdf",
+        ruta_almacenada=str(doc_path),
+        sha256="mocksha256",
+        mime="application/pdf",
+    )
+    session.add(doc)
+    session.flush()
+
+    asiento = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        cuenta_codigo="CI.GAS.LUZ",
+        fecha=date(2026, 4, 15),
+        ejercicio=2026,
+        emisor="PROVEEDOR SPLIT S.L.",
+        nif_emisor="B99887766",
+        numero_factura="FAC-2026-001",
+        base=Decimal("100.00"),
+        iva_cuota=Decimal("21.00"),
+        total=Decimal("121.00"),
+        estado="pendiente",
+        validado=False,
+        documento_id=doc.id,
+    )
+    session.add(asiento)
+    session.commit()
+
+    data = collect_asiento_ficha(session, asiento, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html = render_asiento_page(data)
+
+    # Contenedor split view y paneles
+    assert 'class="ficha-split"' in html
+    assert 'id="ficha-pane-doc"' in html
+    assert 'id="ficha-pane-data"' in html
+    # Visor PDF embebido con FitH
+    assert f'src="/doc/{asiento.id}#view=FitH"' in html
+    assert 'class="ficha-doc-frame"' in html
+    assert "factura_test.pdf" in html
+    # Herramientas de visualización y alternancia
+    assert 'id="ficha-doc-toggle-btn"' in html
+    assert 'id="ficha-doc-restore-btn"' in html
+    assert 'id="ficha-mob-toggle"' in html
+    # Botón de validación rápida en un clic
+    assert 'id="ficha-btn-validate"' in html
+    assert "Validar asiento" in html
+    assert 'id="ficha-btn-reopen"' not in html
+
+
+def test_ficha_asiento_reabrir_y_alerta_duplicado(session, layout):
+    """Ficha validada permite reabrir y alerta con scoring si hay gemelo sospechoso."""
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    asiento_ok = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        cuenta_codigo="CI.GAS.LUZ",
+        fecha=date(2026, 5, 10),
+        ejercicio=2026,
+        emisor="ENEL ENERGIA",
+        nif_emisor="A12345678",
+        numero_factura="E-001",
+        base=Decimal("50.00"),
+        iva_cuota=Decimal("10.50"),
+        total=Decimal("60.50"),
+        estado="confirmado",
+        validado=True,
+    )
+    session.add(asiento_ok)
+    session.flush()
+
+    gemelo = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        cuenta_codigo="CI.GAS.LUZ",
+        fecha=date(2026, 5, 10),
+        ejercicio=2026,
+        emisor="ENEL ENERGIA",
+        nif_emisor="A12345678",
+        numero_factura="E-002",
+        base=Decimal("50.00"),
+        iva_cuota=Decimal("10.50"),
+        total=Decimal("60.50"),
+        estado="pendiente",
+        validado=False,
+    )
+    session.add(gemelo)
+    session.commit()
+
+    # Asiento validado muestra botón de reabrir
+    data_ok = collect_asiento_ficha(session, asiento_ok, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html_ok = render_asiento_page(data_ok)
+    assert 'id="ficha-btn-reopen"' in html_ok
+    assert "Reabrir" in html_ok
+    assert "Validado" in html_ok
+
+    # Gemelo pendiente muestra banner de sospecha de duplicado
+    data_gemelo = collect_asiento_ficha(session, gemelo, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html_gemelo = render_asiento_page(data_gemelo)
+    assert 'class="ficha-dup-alert"' in html_gemelo
+    assert 'id="ficha-dup-alert-btn"' in html_gemelo
+    assert "Revisar candidato" in html_gemelo
+    assert f"#{asiento_ok.id}" in html_gemelo
+

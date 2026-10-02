@@ -353,6 +353,25 @@ def render_asiento_page(data: dict) -> str:
             '<button type="button" class="ghost" id="ficha-dup-marcar">Marcar duplicado de…</button>'
             "</div>"
         )
+
+    val_btn = ""
+    if data.get("estado") == "duplicado":
+        val_pill = '<span class="pill is-bad" id="ficha-val-pill">Duplicado</span>'
+    elif data.get("validado"):
+        val_pill = '<span class="pill is-ok" id="ficha-val-pill">✓ Validado</span>'
+        val_btn = (
+            f'<button type="button" class="ghost ficha-val-btn" id="ficha-btn-reopen" '
+            f'title="Reabrir este asiento para que vuelva a estar pendiente de revisión">'
+            f'{_RESTORE_SVG}<span>Reabrir</span></button>'
+        )
+    else:
+        val_pill = '<span class="pill is-warn" id="ficha-val-pill">Por revisar</span>'
+        val_btn = (
+            f'<button type="button" class="export-btn ficha-val-btn" id="ficha-btn-validate" '
+            f'title="Confirmar y validar este asiento">'
+            f'{_CHECK_SVG}<span>Validar asiento</span></button>'
+        )
+
     sugeridos = data.get("duplicados_sugeridos") or []
     conocido = data.get("duplicado_conocido")
     opciones_dup: list[tuple[str, str]] = []
@@ -400,6 +419,137 @@ def render_asiento_page(data: dict) -> str:
         '<button type="button" class="export-btn" id="ficha-dup-ok" disabled>Fusionar</button>'
         "</div></dialog>"
     )
+
+    dup_alert = ""
+    if sugeridos and data.get("estado") != "duplicado":
+        top = sugeridos[0]
+        dup_alert = (
+            '<div class="ficha-dup-alert" role="alert">\n'
+            '<div class="ficha-dup-alert-info">\n'
+            '<span class="dup-alert-badge">⚠️ Sospecha de duplicado</span>\n'
+            f'<p class="dup-alert-desc">Coincidencia con el asiento <strong>#{top["id"]}</strong> '
+            f'({escape(top["emisor"])} · {escape(str(top["numero"]))} · {escape(top["fecha"])} · {escape(format_euro(top["total"]))}): '
+            f'<em>{escape(top["motivo"])}</em></p>\n'
+            '</div>\n'
+            '<button type="button" class="ghost is-warn ficha-dup-alert-btn" id="ficha-dup-alert-btn">Revisar candidato</button>\n'
+            '</div>\n'
+        )
+
+    mob_doc_btn = (
+        f'<button type="button" class="ghost ficha-mob-toggle" id="ficha-mob-toggle" aria-label="Alternar documento original">'
+        f'{_FILE_SVG}<span>Ver documento</span></button>'
+    ) if data["has_doc"] else ""
+
+    pane_doc = ""
+    restore_bar = ""
+    if data["has_doc"]:
+        doc_raw_name = (data.get("doc_name") or "").strip()
+        is_pdf = doc_raw_name.lower().endswith(".pdf") or not doc_raw_name.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff")
+        )
+        if is_pdf:
+            doc_viewer = (
+                f'<iframe src="/doc/{data["id"]}#view=FitH" class="ficha-doc-frame" '
+                f'title="Documento {escape(doc_raw_name or "original")}" loading="lazy"></iframe>'
+            )
+        else:
+            doc_viewer = (
+                '<div class="ficha-doc-img-wrap">'
+                f'<img src="/doc/{data["id"]}" alt="Documento {escape(doc_raw_name or "original")}" class="ficha-doc-img" />'
+                "</div>"
+            )
+        pane_doc = (
+            '<aside class="ficha-pane-doc" id="ficha-pane-doc">\n'
+            '<div class="ficha-doc-toolbar">\n'
+            f'<div class="ficha-doc-info">{_FILE_SVG}<span class="ficha-doc-name" title="{escape(doc_raw_name)}">{escape(doc_raw_name or "Documento")}</span></div>\n'
+            '<div class="ficha-doc-tools">\n'
+            f'{doc}\n'
+            f'<a class="doc-tb-btn ghost" href="/doc/{data["id"]}" download="{escape(doc_raw_name)}" title="Descargar documento">{_DOWNLOAD_SVG}<span>Descargar</span></a>\n'
+            f'<button type="button" class="doc-tb-btn ghost" id="ficha-doc-toggle-btn" title="Ocultar visor original">{_SIDEBAR_TOGGLE_SVG}<span>Ocultar visor</span></button>\n'
+            '</div>\n'
+            '</div>\n'
+            f'<div class="ficha-doc-viewport">\n{doc_viewer}\n</div>\n'
+            '</aside>\n'
+        )
+        restore_bar = (
+            '<div class="ficha-doc-restore-bar" id="ficha-doc-restore-bar" hidden>\n'
+            f'<button type="button" class="ghost ficha-doc-restore-btn" id="ficha-doc-restore-btn">{_SIDEBAR_TOGGLE_SVG}<span>Mostrar documento original</span></button>\n'
+            '</div>\n'
+        )
+
+    ficha_head = (
+        '<div class="ficha-head">\n'
+        '<div>\n'
+        f'<p class="ficha-kicker">{escape(data["actividad_codigo"])} · {data["year"]} · asiento #{data["id"]}</p>\n'
+        f"<h1>{escape(data['emisor'])}</h1>\n"
+        f'<p class="ficha-sub">{escape(data["numero"])} · {escape(data["fecha_label"])} · '
+        f'<span class="pill {escape(data["estado"])}">{escape(data["estado_label"])}</span> {val_pill}</p>\n'
+        '</div>\n'
+        '<div class="ficha-actions">\n'
+        f"{val_btn}\n"
+        f"{dup}\n"
+        '</div>\n'
+        '</div>\n'
+    )
+
+    pane_data_content = (
+        f"{restore_bar}"
+        f"{dup_alert}"
+        f"{ficha_head}"
+        '<div class="kpi-carousel" id="ficha-kpis">\n'
+        '<dl class="ficha-grid">\n'
+        f"<div><dt>NIF emisor</dt><dd class=\"mono\">{escape(data['nif'])}</dd></div>\n"
+        f"<div><dt>Rubro</dt><dd>{escape(data['cuenta_nombre'])}</dd></div>\n"
+        f"<div><dt>Base</dt><dd id=\"kpi-base\" data-initial=\"{escape(format_euro(data['base']))}\">{escape(format_euro(data['base']))}</dd></div>\n"
+        f"<div><dt>IVA</dt><dd id=\"kpi-iva\" data-initial=\"{escape(format_euro(data['iva']))}\">{escape(format_euro(data['iva']))}</dd></div>\n"
+        f"<div><dt>Total</dt><dd id=\"kpi-total\" data-initial=\"{escape(format_euro(data['total']))}\">{escape(format_euro(data['total']))}</dd></div>\n"
+        f"<div><dt>Elementos</dt><dd id=\"kpi-elementos\">{escape(articulos_label(lineas))}</dd></div>\n"
+        f"<div><dt>Casilla</dt><dd>{escape(data['casilla_etiqueta'])}</dd></div>\n"
+        "</dl>\n"
+        '<div class="kpi-dots" hidden></div>\n'
+        "</div>\n"
+        f"{_ficha_kpi_script()}\n"
+        '<div id="ficha-lines-editor" class="ledger">\n'
+        f'<h2 class="ficha-h2">{_LIST_SVG} Líneas de la factura'
+        f'<span class="ficha-count" id="ficha-count">{escape(_elementos_label(n_lineas))}</span>'
+        f'<button type="button" class="row-edit" id="ficha-lines-eye" hidden '
+        f'title="Ver líneas eliminadas" aria-pressed="false" aria-label="Ver líneas eliminadas">{_EYE_SVG}</button>'
+        "</h2>\n"
+        f"{score}"
+        '<div class="table-wrap ficha-lines"><table class="ledger-table ficha-ledger">\n'
+        "<colgroup>"
+        '<col class="fl-n"><col class="fl-id"><col class="fl-concepto"><col class="fl-uds">'
+        '<col class="fl-money"><col class="fl-rate"><col class="fl-money"><col class="fl-money"><col class="fl-act">'
+        "</colgroup>\n"
+        f"{_lineas_thead(lineas)}\n"
+        f"<tbody id=\"ficha-lines-body\">{rows}</tbody></table></div>\n"
+        '<nav class="pager" id="ficha-pager" aria-label="Páginas de las líneas">\n'
+        '<button type="button" class="ghost" id="ficha-prev">Anterior</button>\n'
+        '<span class="pager-pages" id="ficha-pages"></span>\n'
+        '<span class="pager-label" id="ficha-pager-label"></span>\n'
+        '<button type="button" class="ghost" id="ficha-next">Siguiente</button>\n'
+        "</nav>\n"
+        '<p class="edit-actions ficha-line-actions">\n'
+        '<button type="button" class="ghost" id="ficha-line-add">Añadir línea</button>\n'
+        "</p>\n"
+        f'<p class="edit-lines-note" id="ficha-lines-note"></p>\n'
+        "</div>\n"
+    )
+
+    if data["has_doc"]:
+        main_content = (
+            '<main class="wrap ficha">\n'
+            '<div class="ficha-split">\n'
+            f"{pane_doc}"
+            f'<div class="ficha-pane-data" id="ficha-pane-data">\n{pane_data_content}</div>\n'
+            "</div>\n"
+        )
+    else:
+        main_content = (
+            '<main class="wrap ficha">\n'
+            f'<div class="ficha-single">\n{pane_data_content}</div>\n'
+        )
+
     return (
         "<!DOCTYPE html>\n"
         '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
@@ -407,60 +557,15 @@ def render_asiento_page(data: dict) -> str:
         f"<title>Factura {escape(str(data['numero']))} · {escape(str(data['emisor']))}</title>\n"
         f"{_FONT_LINKS}<style>{_CSS}</style>\n</head>\n"
         f"<body class=\"ficha-page\" data-asiento=\"{data['id']}\">\n"
-        '<header class="ficha-bar wrap">'
-        f'<a class="back-link" href="{escape(data["dashboard_href"])}">{_BACK_SVG} Volver al libro</a>'
+        '<header class="ficha-bar wrap">\n'
+        f'<a class="back-link" href="{escape(data["dashboard_href"])}">{_BACK_SVG} Volver al libro</a>\n'
+        '<div class="ficha-bar-right">\n'
+        f"{mob_doc_btn}\n"
         f'<button type="button" class="row-edit" id="ficha-log" '
-        f'title="Historial de cambios" aria-haspopup="dialog" aria-label="Historial de cambios">{_CLOCK_SVG}</button>'
+        f'title="Historial de cambios" aria-haspopup="dialog" aria-label="Historial de cambios">{_CLOCK_SVG}</button>\n'
+        "</div>\n"
         "</header>\n"
-        '<main class="wrap ficha">\n'
-        '<div class="ficha-head">'
-        "<div>"
-        f'<p class="ficha-kicker">{escape(data["actividad_codigo"])} · {data["year"]} · asiento #{data["id"]}</p>\n'
-        f"<h1>{escape(data['emisor'])}</h1>\n"
-        f'<p class="ficha-sub">{escape(data["numero"])} · {escape(data["fecha_label"])} · '
-        f'<span class="pill {escape(data["estado"])}">{escape(data["estado_label"])}</span></p>\n'
-        "</div>"
-        f"{doc}"
-        f"{dup}"
-        "</div>\n"
-        '<div class="kpi-carousel" id="ficha-kpis">'
-        '<dl class="ficha-grid">'
-        f"<div><dt>NIF emisor</dt><dd class=\"mono\">{escape(data['nif'])}</dd></div>"
-        f"<div><dt>Rubro</dt><dd>{escape(data['cuenta_nombre'])}</dd></div>"
-        f"<div><dt>Base</dt><dd id=\"kpi-base\" data-initial=\"{escape(format_euro(data['base']))}\">{escape(format_euro(data['base']))}</dd></div>"
-        f"<div><dt>IVA</dt><dd id=\"kpi-iva\" data-initial=\"{escape(format_euro(data['iva']))}\">{escape(format_euro(data['iva']))}</dd></div>"
-        f"<div><dt>Total</dt><dd id=\"kpi-total\" data-initial=\"{escape(format_euro(data['total']))}\">{escape(format_euro(data['total']))}</dd></div>"
-        f"<div><dt>Elementos</dt><dd id=\"kpi-elementos\">{escape(articulos_label(lineas))}</dd></div>"
-        f"<div><dt>Casilla</dt><dd>{escape(data['casilla_etiqueta'])}</dd></div>"
-        "</dl>\n"
-        '<div class="kpi-dots" hidden></div>'
-        "</div>\n"
-        f"{_ficha_kpi_script()}\n"
-        '<div id="ficha-lines-editor" class="ledger">'
-        f'<h2 class="ficha-h2">{_LIST_SVG} Líneas de la factura'
-        f'<span class="ficha-count" id="ficha-count">{escape(_elementos_label(n_lineas))}</span>'
-        f'<button type="button" class="row-edit" id="ficha-lines-eye" hidden '
-        f'title="Ver líneas eliminadas" aria-pressed="false" aria-label="Ver líneas eliminadas">{_EYE_SVG}</button>'
-        "</h2>\n"
-        f"{score}"
-        '<div class="table-wrap ficha-lines"><table class="ledger-table ficha-ledger">'
-        "<colgroup>"
-        '<col class="fl-n"><col class="fl-id"><col class="fl-concepto"><col class="fl-uds">'
-        '<col class="fl-money"><col class="fl-rate"><col class="fl-money"><col class="fl-money"><col class="fl-act">'
-        "</colgroup>"
-        f"{_lineas_thead(lineas)}\n"
-        f"<tbody id=\"ficha-lines-body\">{rows}</tbody></table></div>\n"
-        '<nav class="pager" id="ficha-pager" aria-label="Páginas de las líneas">'
-        '<button type="button" class="ghost" id="ficha-prev">Anterior</button>'
-        '<span class="pager-pages" id="ficha-pages"></span>'
-        '<span class="pager-label" id="ficha-pager-label"></span>'
-        '<button type="button" class="ghost" id="ficha-next">Siguiente</button>'
-        "</nav>\n"
-        '<p class="edit-actions ficha-line-actions">'
-        '<button type="button" class="ghost" id="ficha-line-add">Añadir línea</button>'
-        "</p>\n"
-        f'<p class="edit-lines-note" id="ficha-lines-note"></p>\n'
-        "</div>\n"
+        f"{main_content}"
         '<dialog class="app-sheet sheet-decision app-confirm" id="app-confirm" aria-labelledby="app-confirm-title">'
         '<form method="dialog">'
         '<p class="sheet-eyebrow">Confirmar</p>'
@@ -543,8 +648,67 @@ def render_asiento_page(data: dict) -> str:
         "    } catch (err) {\n"
         "      const box = document.getElementById(\"ficha-dup-error\");\n"
         "      if (box) { box.hidden = false; box.textContent = \"No se pudo guardar: \" + err.message; }\n"
+        "      else { alert(\"No se pudo guardar: \" + err.message); }\n"
         "    }\n"
         "  };\n"
+        "  document.getElementById(\"ficha-btn-validate\")?.addEventListener(\"click\", () => {\n"
+        "    postDup({ validado: true, confirmado: true });\n"
+        "  });\n"
+        "  document.getElementById(\"ficha-btn-reopen\")?.addEventListener(\"click\", () => {\n"
+        "    const confirm = document.getElementById(\"app-confirm\");\n"
+        "    const msg = document.getElementById(\"app-confirm-text\");\n"
+        "    const title = document.getElementById(\"app-confirm-title\");\n"
+        "    const ok = document.getElementById(\"app-confirm-ok\");\n"
+        "    if (!confirm || typeof confirm.showModal !== \"function\") {\n"
+        "      postDup({ validado: false, confirmado: true });\n"
+        "      return;\n"
+        "    }\n"
+        "    title.textContent = \"Reabrir asiento\";\n"
+        "    msg.textContent = \"Este asiento volverá a estar pendiente de revisión y saldrá de la lista de validados.\";\n"
+        "    ok.textContent = \"Reabrir\";\n"
+        "    confirm.addEventListener(\"close\", () => {\n"
+        "      if (confirm.returnValue === \"ok\") postDup({ validado: false, confirmado: true });\n"
+        "    }, { once: true });\n"
+        "    if (!confirm.open) confirm.showModal();\n"
+        "  });\n"
+        "  document.getElementById(\"ficha-dup-alert-btn\")?.addEventListener(\"click\", () => {\n"
+        "    document.getElementById(\"ficha-dup-marcar\")?.click();\n"
+        "  });\n"
+        "  const paneDoc = document.getElementById(\"ficha-pane-doc\");\n"
+        "  const splitWrap = document.querySelector(\".ficha-split\");\n"
+        "  const restoreBar = document.getElementById(\"ficha-doc-restore-bar\");\n"
+        "  const toggleBtn = document.getElementById(\"ficha-doc-toggle-btn\");\n"
+        "  const restoreBtn = document.getElementById(\"ficha-doc-restore-btn\");\n"
+        "  const mobToggle = document.getElementById(\"ficha-mob-toggle\");\n"
+        "  const hideDoc = () => {\n"
+        "    if (!splitWrap) return;\n"
+        "    splitWrap.classList.add(\"is-doc-hidden\");\n"
+        "    if (restoreBar) restoreBar.hidden = false;\n"
+        "    try { sessionStorage.setItem(\"aeat_doc_hidden\", \"1\"); } catch (_) {}\n"
+        "  };\n"
+        "  const showDoc = () => {\n"
+        "    if (!splitWrap) return;\n"
+        "    splitWrap.classList.remove(\"is-doc-hidden\");\n"
+        "    if (paneDoc) paneDoc.classList.remove(\"is-mobile-collapsed\");\n"
+        "    if (restoreBar) restoreBar.hidden = true;\n"
+        "    try { sessionStorage.removeItem(\"aeat_doc_hidden\"); } catch (_) {}\n"
+        "  };\n"
+        "  toggleBtn?.addEventListener(\"click\", hideDoc);\n"
+        "  restoreBtn?.addEventListener(\"click\", showDoc);\n"
+        "  if (mobToggle) {\n"
+        "    mobToggle.addEventListener(\"click\", () => {\n"
+        "      if (!paneDoc) return;\n"
+        "      const isHidden = paneDoc.classList.toggle(\"is-mobile-collapsed\");\n"
+        "      mobToggle.setAttribute(\"aria-pressed\", String(!isHidden));\n"
+        "      const label = mobToggle.querySelector(\"span\");\n"
+        "      if (label) label.textContent = isHidden ? \"Ver documento\" : \"Ocultar doc\";\n"
+        "    });\n"
+        "  }\n"
+        "  try {\n"
+        "    if (window.innerWidth > 1024 && sessionStorage.getItem(\"aeat_doc_hidden\") === \"1\") {\n"
+        "      hideDoc();\n"
+        "    }\n"
+        "  } catch (_) {}\n"
         "  const dialog = document.getElementById(\"ficha-dup-dialog\");\n"
         "  const okBtn = document.getElementById(\"ficha-dup-ok\");\n"
         "  const manualEl = document.getElementById(\"dup-manual\");\n"
@@ -3270,6 +3434,22 @@ _CALENDAR_SVG = (
     '<path fill="none" stroke="currentColor" stroke-width="1.3" d="M2.4 6.8h11.2M5.4 2.4v2.4M10.6 2.4v2.4"/>'
     "</svg>"
 )
+_CHECK_SVG = (
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    '<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m3.5 8.5 3 3 6.5-7"/>'
+    "</svg>"
+)
+_DOWNLOAD_SVG = (
+    '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">'
+    '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M8 2.5v7.5M5 7.5l3 3 3-3M3 13.5h10"/>'
+    "</svg>"
+)
+_SIDEBAR_TOGGLE_SVG = (
+    '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">'
+    '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/>'
+    '<path fill="none" stroke="currentColor" stroke-width="1.3" d="M6.5 2.5v11"/>'
+    "</svg>"
+)
 
 
 def _filter_date_range() -> str:
@@ -4881,6 +5061,20 @@ a.row-go:hover { text-decoration: underline; }
   gap: 12px;
   padding: 18px 0 0;
 }
+.ficha-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ficha-mob-toggle {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
 .back-link {
   display: inline-flex;
   align-items: center;
@@ -4892,6 +5086,201 @@ a.row-go:hover { text-decoration: underline; }
 .back-link svg { flex-shrink: 0; }
 .back-link:hover { color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
 .ficha { flex: 1 1 auto; padding: 12px 0 48px; }
+.ficha-split {
+  display: grid;
+  grid-template-columns: minmax(440px, 48%) 1fr;
+  gap: 28px;
+  align-items: start;
+}
+.ficha-split.is-doc-hidden {
+  grid-template-columns: 1fr;
+}
+.ficha-split.is-doc-hidden .ficha-pane-doc {
+  display: none !important;
+}
+.ficha-pane-doc {
+  position: sticky;
+  top: 14px;
+  height: calc(100vh - 28px);
+  min-height: 600px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+}
+.ficha-doc-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ficha-doc-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+  font-weight: 500;
+  font-size: 13px;
+}
+.ficha-doc-info svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.ficha-doc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 22ch;
+}
+.ficha-doc-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.ficha-doc-tools .doc-open {
+  margin: 0;
+  font-size: 12.5px;
+}
+.doc-tb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.doc-tb-btn:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+.ficha-doc-viewport {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: auto;
+  background: #474b4e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ficha-doc-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+.ficha-doc-img-wrap {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ficha-doc-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  background: #fff;
+}
+.ficha-pane-data {
+  min-width: 0;
+}
+.ficha-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ficha-val-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ficha-val-btn svg {
+  flex-shrink: 0;
+}
+.ficha-dup-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  background: rgba(234, 153, 31, 0.08);
+  border: 1px solid rgba(234, 153, 31, 0.35);
+  border-radius: 10px;
+}
+.ficha-dup-alert-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.dup-alert-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: #c05621;
+}
+.dup-alert-desc {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--text);
+  line-height: 1.4;
+}
+.dup-alert-desc strong {
+  font-weight: 600;
+}
+.dup-alert-desc em {
+  color: var(--muted);
+  font-style: normal;
+}
+.ficha-dup-alert-btn {
+  flex-shrink: 0;
+  font-size: 13px;
+  padding: 7px 12px;
+}
+.ficha-doc-restore-bar {
+  margin-bottom: 14px;
+}
+.ficha-doc-restore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--link);
+  cursor: pointer;
+}
+.ficha-doc-restore-btn:hover {
+  background: var(--bg-alt);
+  border-style: solid;
+}
 .ficha-head {
   display: flex;
   justify-content: space-between;
@@ -4902,7 +5291,7 @@ a.row-go:hover { text-decoration: underline; }
 }
 .ficha-kicker { margin: 0 0 4px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .ficha h1 { margin: 0 0 8px; font: 600 28px/1.2 var(--font-display); }
-.ficha-sub { margin: 0; }
+.ficha-sub { margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .doc-open {
   display: inline-flex;
   align-items: center;
@@ -5617,10 +6006,32 @@ th {
 .doc-link { font-weight: 600; color: var(--purple); text-decoration: none; border-bottom: 1px solid transparent; }
 .doc-link:hover { border-bottom-color: var(--purple); }
 .empty { color: var(--muted); padding: 12px; }
+@media (min-width: 1025px) {
+  .ficha-page .wrap {
+    width: min(1760px, calc(100% - 48px));
+    max-width: 1760px;
+  }
+}
 @media (max-width: 1100px) {
   .kan-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .wrap { width: calc(100% - 20px); }
   .ficha-page .wrap { width: calc(100% - 20px); }
+  .ficha-split {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .ficha-pane-doc {
+    position: static;
+    height: 520px;
+    min-height: 380px;
+    margin-bottom: 12px;
+  }
+  .ficha-pane-doc.is-mobile-collapsed {
+    display: none !important;
+  }
+  .ficha-mob-toggle {
+    display: inline-flex;
+  }
   h1 { font-size: 28px; }
   .mast { padding-top: 20px; }
   .mast-h1 #mast-kicker, h1 span { font-size: 18px; }
@@ -5732,6 +6143,9 @@ th {
   thead th.line-actions::after { display: none; }
   .ficha { padding-bottom: 28px; }
   .ficha h1 { font-size: 22px; }
+  .ficha-pane-doc { height: 400px; }
+  .ficha-dup-alert { flex-direction: column; align-items: flex-start; }
+  .ficha-dup-alert-btn { width: 100%; text-align: center; }
   .ficha-grid > div { flex-basis: calc((100% - 10px) / 2); }
   .ficha-lines input { width: 100%; box-sizing: border-box; font: inherit; }
   .ficha-score { align-items: flex-start; }
