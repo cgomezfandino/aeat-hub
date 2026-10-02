@@ -96,16 +96,20 @@ Para fusionar a mano un duplicado evidente sin cambiar el número: `aeat-hub dup
 
 ## Escaneo de duplicados factura-contra-factura (Splink)
 
-`aeat-hub escaneo` aplica el mismo modelo Fellegi-Sunter a nivel de factura:
-compara NIF, número normalizado, fecha, importe exacto en céntimos y nombre
-limpio de cada par de asientos vivos, y menciona los que superan P≥0,90 con
-su desglose («nif igual +17,9b · numero distinto −6,5b · fecha igual +6,2b …»).
-El NIF pesa mucho porque en bloque casi asegura la misma tienda, pero la
-identidad de factura la deciden fecha+importe+nombre: importes distintos son
-casi demoledores, y números distintos (factura vs servicio IKEA) no descartan.
-Con `--aplicar` los pares quedan como sospechosos (nivel 3) en la pestaña
-Duplicados; fusionar o descartar sigue siendo humano. Excluye los ya
-fusionados y los pares del mismo cluster de factura.
+`aeat-hub escaneo` y el motor de deduplicación aplican el modelo Fellegi-Sunter probabilístico a nivel de factura mediante backend DuckDB en memoria:
+compara NIF, número normalizado, fecha, importe exacto en céntimos, nombre limpio de emisor y **códigos SKU de líneas extraídas**:
+
+1. **SKUs coincidentes (`CustomLevel` en DuckDB):**
+   - $\ge 2$ SKUs idénticos: **+10,81 bits** ($m=0,90, u=0,0005$). Prácticamente asegura que dos documentos corresponden a la misma compra física (incluso si uno es un ticket inicial simplificado y otro una factura canjeada semanas después).
+   - $1$ SKU idéntico: **+3,00 bits** ($m=0,70, u=0,087$).
+   - Sin SKUs coincidentes o artículos sin código: nivel neutro (0 bits).
+2. **Importe y fechas:**
+   - La coincidencia de importe en céntimos aporta **+10,95 bits**.
+   - Un importe distinto penaliza severamente (**−14,28 bits**), eliminando falsos positivos entre compras distintas en la misma tienda el mismo día.
+   - La ventana de detección para tickets de caja canjeados por facturas con mismo emisor y total se extiende hasta **60 días**.
+3. **Explicabilidad:**
+   - Cada par evaluado ofrece un desglose en bits («nif igual +17,9b · skus coincidentes +10,8b · total igual +10,9b …») y probabilidad final $P = 1/(1 + 2^{-\text{peso}})$.
+   - Los pares con $P \ge 0,90$ se señalan con aviso destacado tanto en el dashboard como en la ficha del asiento (`ficha-dup-alert`), permitiendo comparar y fusionar en un solo clic. Con `--aplicar` en CLI los pares quedan como sospechosos (nivel 3) en la pestaña Duplicados. Excluye los ya fusionados y los pares del mismo cluster de factura.
 
 ## Nombres canónicos por NIF
 

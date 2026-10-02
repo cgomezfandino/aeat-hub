@@ -54,6 +54,17 @@ El mismo titular puede tener varios expedientes. El ingest siempre lleva
 
 No mezclar gastos del piso con ads, dominio o Stripe de una web.
 
+## Dónde quedó el 02 oct 2026
+
+Bloque de Split View, Deduplicación Splink con SKUs y OCR Multimodal en `develop` (commits `848b35e`, `3309e3a`, `a91060f`, `d02bc29`). Detalle en `docs/handoff-split-view-y-splink-2026-10-02.md`.
+
+- **Split View en ficha (`/asiento/<id>`):** Doble panel interactivo con visor nativo de documento (PDF/imagen) fijado a la izquierda y datos/líneas a la derecha, con alternancia rápida a pantalla completa y adaptación móvil.
+- **Validación en un clic:** Botones directos `[ Validar asiento ]` y `[ Reabrir ]` en la cabecera de la ficha.
+- **Deduplicación Splink con SKUs:** Record linkage probabilístico con DuckDB que compara listas de SKUs (+10,8b por ≥2 SKUs idénticos), penaliza importes distintos (−14,3b) y detecta canjes ticket-factura en ventanas de hasta 60 días con desglose explicativo y alertas UI.
+- **Unificación de calidad y confianza:** Calibración homogénea entre chips del Libro, tarjetas Kanban y ficha, distinguiendo faltas críticas de avisos no bloqueantes.
+- **OCR Multimodal Gemini 2.5 Flash:** Extracción estructurada y endpoint web `/api/upload` drag-and-drop.
+- **Suite de pruebas:** 177 tests pasando (100 % OK).
+
 ## Dónde quedó el 26 sep 2026
 
 Pulido grande del dashboard HTML en `develop` (commit `61dde97`, **sin push**
