@@ -324,3 +324,47 @@ def test_candidato_duplicado_por_ventana_extendida_60_dias(session):
     assert "ventana 60 días" in cands[0]["motivo"]
 
 
+def test_score_par_splink_con_skus(session):
+    from aeat_hub.linkage_facturas import score_par_splink
+    from aeat_hub.models import Linea
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    ticket = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=date(2026, 9, 9),
+        ejercicio=2026,
+        nif_emisor="A28812618",
+        emisor="IKEA Ibérica S.A.",
+        numero_factura="ESSIM-1",
+        total=Decimal("190.75"),
+        estado="confirmado",
+    )
+    factura = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=date(2026, 9, 24),
+        ejercicio=2026,
+        nif_emisor="A28812618",
+        emisor="IKEA Ibérica S.A.",
+        numero_factura="ESCINV-1",
+        total=Decimal("190.75"),
+        estado="pendiente",
+    )
+    for a in (ticket, factura):
+        a.lineas.append(Linea(posicion=1, codigo="SKU-1", descripcion="Articulo 1", importe=Decimal("100.00")))
+        a.lineas.append(Linea(posicion=2, codigo="SKU-2", descripcion="Articulo 2", importe=Decimal("90.75")))
+    session.add_all([ticket, factura])
+    session.commit()
+
+    res = score_par_splink(ticket, factura)
+    assert res is not None
+    prob, peso, desglose = res
+    assert prob >= 0.99
+    assert peso >= 10.0
+    conceptos = dict(desglose)
+    assert "skus ≥2 coincidentes" in conceptos
+    assert conceptos["skus ≥2 coincidentes"] > 10.0
+
+
+

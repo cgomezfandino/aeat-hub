@@ -248,13 +248,29 @@ def candidatos_duplicado(session: Session, asiento: Asiento) -> list[dict]:
             Asiento.id != asiento.id,
             Asiento.estado != "duplicado",
         )
-        .options(joinedload(Asiento.documento))
+        .options(joinedload(Asiento.documento), joinedload(Asiento.lineas))
         .order_by(Asiento.id)
-    ).all()
+    ).unique().all()
     out: list[dict] = []
     for row in rows:
         motivo = _motivo_gemelo(asiento, row, phash)
         if motivo:
+            splink_meta = {}
+            try:
+                from aeat_hub.linkage_facturas import score_par_splink
+
+                splink_res = score_par_splink(asiento, row)
+                if splink_res:
+                    prob, peso, desglose = splink_res
+                    splink_meta = {
+                        "splink_prob": prob,
+                        "splink_peso": peso,
+                        "splink_desglose": desglose,
+                    }
+                    if prob >= 0.80:
+                        motivo = f"{motivo} · Splink {int(round(prob * 100))} %"
+            except Exception:
+                pass
             out.append(
                 {
                     "id": row.id,
@@ -263,6 +279,7 @@ def candidatos_duplicado(session: Session, asiento: Asiento) -> list[dict]:
                     "fecha": row.fecha.isoformat() if row.fecha else "—",
                     "total": row.total,
                     "motivo": motivo,
+                    **splink_meta,
                 }
             )
     _PRIORIDAD = {
