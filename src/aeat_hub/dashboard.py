@@ -1564,9 +1564,8 @@ def _asiento_view(
         doc_name = documento.nombre_original
     total = q2(asiento.total)
     lineas = lineas_de_asiento(asiento)
-    faltas = [
-        item["detail"]
-        for item in criterios_calidad(
+    calidad = list(
+        criterios_calidad(
             numero=asiento.numero_factura,
             fecha=asiento.fecha.strftime("%d/%m/%Y") if asiento.fecha else "",
             emisor=asiento.emisor,
@@ -1578,14 +1577,25 @@ def _asiento_view(
             lineas=lineas,
             titular_nif=titular_nif,
         )
+    )
+    faltas_criticas = [
+        item["detail"]
+        for item in calidad
+        if not item["ok"] and item["id"] in {"numero", "fecha", "emisor", "nif", "total", "base", "desglose", "suma", "conceptos", "importes"}
+    ]
+    faltas = [
+        item["detail"]
+        for item in calidad
         if not item["ok"]
     ]
     conf_ocr = q2(documento.confianza) if documento is not None else None
     conf_class = q2(asiento.confianza_clasificacion)
-    conf_scores = [value for value in (conf_ocr, conf_class) if value is not None]
-    conf_min = conf_ocr if (conf_class is None or conf_class == 0) else (min(conf_scores) if conf_scores else None)
+    sin_cuenta = not codigo or not cuenta_nombre
+    conf_min = conf_ocr if conf_class is None else min([v for v in (conf_ocr, conf_class) if v is not None])
     baja = (not asiento.validado) and (
-        conf_min is None or conf_min < Decimal("0.80")
+        (conf_ocr is not None and conf_ocr < Decimal("0.70"))
+        or sin_cuenta
+        or bool(faltas_criticas)
     )
     return {
         "id": asiento.id,
@@ -1627,7 +1637,8 @@ def _asiento_view(
         "n_docs": n_docs,
         "er_estado": er_estado,
         "n_articulos": articulos_label(lineas),
-        "calidad_faltas": faltas,
+        "calidad_faltas": faltas_criticas,
+        "calidad_todas": faltas,
     }
 
 
@@ -2097,8 +2108,8 @@ def _cola_revision(asientos: list[dict]) -> list[dict]:
     def sort_key(item: dict) -> tuple:
         min_pct = item["conf_min_pct"]
         return (
-            0 if item["baja"] else 1,
             0 if item["estado"] == "pendiente" else 1,
+            0 if item["baja"] else 1,
             min_pct if min_pct is not None else -1,
             item["id"],
         )
@@ -2406,35 +2417,55 @@ def _kpi_btn_count(label: str, pendientes: int, total: int, *, kpi_id: str = "")
     )
 
 
+def _asiento_badge(item: dict) -> tuple[str, str, str]:
+    """Calcula unívocamente (label, tone, hint) para sincronizar tabla y kanban.
+
+    Tones:
+      - 'ok': Verde (Validada, 99 %, etc.)
+      - 'warn': Ámbar (Sin rubro, Revisar)
+      - 'err': Rojo (OCR dudoso, Rechazada)
+      - 'dup': Pizarra/Gris (Duplicado)
+    """
+    estado = item.get("estado")
+    if estado == "duplicado":
+        dup_id = item.get("duplicado_de_id") or "—"
+        return f"de #{dup_id}", "dup", f"Duplicado económico o fiscal vinculado al asiento #{dup_id}."
+    if estado == "rechazado":
+        motivo = (item.get("motivo_rechazo") or "").strip()
+        label = motivo[:40] or "Rechazada"
+        return label, "err", f"Factura descartada: {motivo or 'No deducible o error irrecuperable'}"
+    if item.get("validado"):
+        return "Validada ✓", "ok", "Bloqueado: revisada, cuadrada y consolidada en el libro."
+
+    ocr_pct = item.get("conf_ocr_pct")
+    faltas = item.get("calidad_faltas") or []
+    sin_cuenta = not item.get("cuenta") or item.get("cuenta") in ("sin-cuenta", "")
+
+    if ocr_pct is not None and ocr_pct < 70:
+        return f"OCR {ocr_pct} %", "err", "Calidad de extracción baja. Verifica NIF, fecha e importes con el documento."
+    if faltas:
+        return "Revisar", "warn", "En la ficha: " + " ".join(faltas[:3])
+    if sin_cuenta:
+        return "Sin rubro", "warn", "Extracción completa pero falta asignar la cuenta contable o rubro de gasto."
+
+    pct = ocr_pct if ocr_pct is not None else 99
+    return f"{pct} %", "ok", "Número, fecha, emisor, NIF, importes y cuadre fiscal completos."
+
+
 def _quality_pct_label(pct: int | None) -> str:
     return "—" if pct is None else f"{pct} %"
 
 
 def _quality_cell(item: dict, *, prefix: str) -> str:
-    faltas = item.get("calidad_faltas") or []
-    if item["validado"]:
-        tone = "ok"
-        label = "Validado"
-        hint = "Bloqueado: reparse y OCR no pisan fecha, emisor, importes ni rubro."
-    elif faltas:
-        tone = "warn"
-        label = "Revisar"
-        hint = "En la ficha: " + " ".join(faltas[:4])
-    elif item["baja"]:
-        tone = "warn"
-        label = "Revisar"
-        hint = (
-            "El modelo no está seguro. Abre el documento, corrige NIF o importes "
-            "si hace falta y pulsa Por validar."
-        )
-    else:
-        tone = "ok"
-        label = "Aceptable"
-        hint = "Número, fecha, emisor, NIF, importes, ids y suma están rellenos."
-    ocr = _quality_pct_label(item["conf_ocr_pct"])
-    clasificacion = _quality_pct_label(item["conf_class_pct"])
-    rubro = item["cuenta_nombre"]
-    casilla = item["casilla_etiqueta"]
+    label, tone, hint = _asiento_badge(item)
+    ocr_pct = item.get("conf_ocr_pct")
+    class_pct = item.get("conf_class_pct")
+    sin_cuenta = not item.get("cuenta") or item.get("cuenta") in ("sin-cuenta", "")
+
+    ocr = _quality_pct_label(ocr_pct)
+    clasificacion = "Sin asignar" if sin_cuenta else _quality_pct_label(class_pct)
+    rubro = item.get("cuenta_nombre") or "Sin rubro"
+    casilla = item.get("casilla_etiqueta") or "Sin casilla"
     pop_id = f"q-pop-{prefix}-{item['id']}"
     return (
         f'<div class="q-chip-wrap">'
@@ -2466,19 +2497,15 @@ def _kan_card(item: dict) -> str:
     estado = item["estado"]
     total = item.get("total")
     total_label = escape(format_euro(total)) if total is not None else "—"
-    if estado == "duplicado":
-        chip = f'<span class="pill duplicado">de #{item.get("duplicado_de_id") or "—"}</span>'
-    elif estado == "rechazado":
-        motivo = (item.get("motivo_rechazo") or "").strip()
-        chip = (
-            '<span class="pill rechazado">'
-            f"{escape(motivo[:40] or 'Rechazada')}</span>"
-        )
-    elif item["baja"]:
-        chip = '<span class="pill pendiente">Confianza baja</span>'
-    else:
-        pct = item.get("conf_min_pct")
-        chip = f'<span class="pill confirmado">{pct if pct is not None else "—"} %</span>'
+
+    label, tone, _ = _asiento_badge(item)
+    pill_class = {
+        "ok": "confirmado",
+        "warn": "pendiente",
+        "err": "rechazado",
+        "dup": "duplicado",
+    }.get(tone, "pendiente")
+    chip = f'<span class="pill {pill_class}">{escape(label)}</span>'
     acciones = []
     if estado == "pendiente":
         acciones.append(f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar: revisada y buena">✓</button>')

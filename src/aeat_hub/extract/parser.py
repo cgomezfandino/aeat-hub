@@ -99,19 +99,45 @@ def _codigo_de_token(token: str) -> str | None:
 REF_TOKEN = re.compile(r"^[A-Za-z0-9]{5,14}$")
 
 
-def parse_invoice(text: str, *, motor: str = "") -> InvoiceExtract:
+def _try_load_json(text: str) -> dict | None:
     stripped = (text or "").strip()
-    if stripped.startswith("{") and stripped.endswith("}"):
-        try:
-            import json
+    if stripped.startswith("```json"):
+        stripped = stripped.removeprefix("```json").removesuffix("```").strip()
+    elif stripped.startswith("```"):
+        stripped = stripped.removeprefix("```").removesuffix("```").strip()
 
-            data = json.loads(stripped)
-            if isinstance(data, dict) and any(
-                k in data for k in ("emisor", "total", "lineas", "nif_emisor")
-            ):
-                return _parse_json_extract(data, motor=motor)
-        except Exception:
-            pass
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return None
+
+    import json
+
+    try:
+        data = json.loads(stripped)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    # Reparaciones comunes en JSON devuelto por LLMs:
+    # 1. Falta de llave de cierre antes de una coma en listas de objetos
+    fixed = re.sub(r'([0-9a-zA-Z\"\'])\s*\n\s*,\s*\n?\s*\{', r'\1\n    },\n    {', stripped)
+    # 2. Comas huérfanas antes de cierre de corchete o llave
+    fixed = re.sub(r',\s*([\}\]])', r'\1', fixed)
+
+    try:
+        data = json.loads(fixed)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    return None
+
+
+def parse_invoice(text: str, *, motor: str = "") -> InvoiceExtract:
+    data = _try_load_json(text)
+    if data and any(k in data for k in ("emisor", "total", "lineas", "nif_emisor")):
+        return _parse_json_extract(data, motor=motor)
 
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     nifs = find_nifs(text or "")
@@ -143,6 +169,8 @@ def parse_invoice(text: str, *, motor: str = "") -> InvoiceExtract:
 
 
 def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
+    from aeat_hub.extract.schema import DesgloseIVA
+
     nif_emisor = str(data.get("nif_emisor") or "").strip() or None
     nif_receptor = str(data.get("nif_receptor") or "").strip() or None
     if nif_emisor:
@@ -153,6 +181,8 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
     numero = str(data.get("numero") or "").strip() or None
     emisor = str(data.get("emisor") or "").strip() or None
     receptor = str(data.get("receptor") or "").strip() or None
+    tipo_doc = str(data.get("tipo_documento") or "").strip() or None
+    factura_rect = str(data.get("factura_rectificada") or "").strip() or None
 
     fecha_val = data.get("fecha")
     fecha: date | None = None
@@ -175,6 +205,65 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
     iva_tipo = _dec(data.get("iva_tipo"))
     iva_cuota = _dec(data.get("iva_cuota"))
     total = _dec(data.get("total"))
+    retencion_tipo = _dec(data.get("retencion_tipo"))
+    retencion_cuota = _dec(data.get("retencion_cuota"))
+
+    desglose_raw = data.get("desglose_iva") or []
+    desglose_iva: list[DesgloseIVA] = []
+    if isinstance(desglose_raw, list):
+        for d in desglose_raw:
+            if isinstance(d, dict):
+                desglose_iva.append(
+                    DesgloseIVA(
+                        base=_dec(d.get("base")),
+                        iva_tipo=_dec(d.get("iva_tipo")),
+                        iva_cuota=_dec(d.get("iva_cuota")),
+                    )
+                )
+
+    # Reconciliación aritmética de retención IRPF si se indicó tipo pero no cuota
+    if retencion_tipo is not None and retencion_cuota is None and base is not None:
+        retencion_cuota = q2(base * (retencion_tipo / Decimal("100")))
+
+    ret = retencion_cuota or Decimal("0.00")
+
+    # Si hay desglose multi-IVA pero faltan base o cuota generales:
+    if desglose_iva and (base is None or iva_cuota is None):
+        calc_b = sum((d.base for d in desglose_iva if d.base is not None), Decimal("0.00"))
+        calc_i = sum((d.iva_cuota for d in desglose_iva if d.iva_cuota is not None), Decimal("0.00"))
+        if base is None and calc_b > 0:
+            base = q2(calc_b)
+        if iva_cuota is None and calc_i > 0:
+            iva_cuota = q2(calc_i)
+
+    # Reconciliación determinista de la ecuación fiscal: Base + IVA - Retención = Total
+    if total is not None and base is not None and iva_cuota is None:
+        iva_cuota = q2(total - base + ret)
+        if iva_tipo is None and base > 0 and iva_cuota is not None:
+            iva_tipo = q2((iva_cuota / base) * 100)
+    elif total is not None and iva_cuota is not None and base is None:
+        base = q2(total - iva_cuota + ret)
+    elif base is not None and iva_tipo is not None and iva_cuota is None:
+        iva_cuota = q2(base * (iva_tipo / Decimal("100")))
+        if total is None:
+            total = q2(base + iva_cuota - ret)
+    elif total is not None and iva_tipo is not None and base is None and iva_cuota is None:
+        factor = Decimal("1") + (iva_tipo / Decimal("100"))
+        base = q2((total + ret) / factor)
+        iva_cuota = q2(total + ret - base) if base is not None else None
+    elif total is not None and base is None and iva_cuota is None and iva_tipo is None:
+        iva_tipo = Decimal("21.00")
+        factor = Decimal("1.21")
+        base = q2((total + ret) / factor)
+        iva_cuota = q2(total + ret - base) if base is not None else None
+    elif total is None and base is not None and iva_cuota is not None:
+        total = q2(base + iva_cuota - ret)
+
+    # Cuadratura de redondeos de centimillos (±0.02 €)
+    if total is not None and base is not None and iva_cuota is not None:
+        diff = q2(base + iva_cuota - ret - total)
+        if diff is not None and abs(diff) <= Decimal("0.02") and diff != Decimal("0.00"):
+            base = q2(base - diff)
 
     raw_lineas = data.get("lineas") or []
     lineas: list[InvoiceLine] = []
@@ -186,24 +275,35 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
             imp = _dec(item.get("importe"))
             cod = str(item.get("codigo") or "").strip() or None
             cant = _dec(item.get("cantidad") or 1)
+            line_pu = _dec(item.get("precio_unitario"))
+            line_base = _dec(item.get("base"))
+            line_tipo = _dec(item.get("iva_tipo")) or iva_tipo
+            line_cuota = _dec(item.get("iva_cuota"))
+
+            if imp is None and cant is not None and line_pu is not None:
+                imp = q2(cant * line_pu)
+
+            if imp is not None and line_base is None and line_tipo is not None:
+                factor = Decimal("1") + (line_tipo / Decimal("100"))
+                line_base = q2(imp / factor)
+                line_cuota = q2(imp - line_base) if line_base is not None else None
+            elif line_base is not None and imp is None and line_tipo is not None:
+                line_cuota = q2(line_base * (line_tipo / Decimal("100")))
+                imp = q2(line_base + line_cuota)
+
             lineas.append(
                 InvoiceLine(
                     posicion=idx,
                     codigo=cod,
                     descripcion=desc,
                     cantidad=cant,
+                    precio_unitario=line_pu,
+                    base=line_base,
+                    iva_tipo=line_tipo,
+                    iva_cuota=line_cuota,
                     importe=imp,
                 )
             )
-
-    if lineas:
-        lineas = _completar_desglose(
-            lineas,
-            total=total,
-            base=base,
-            iva_tipo=iva_tipo,
-            lines=[],
-        )
 
     extract = InvoiceExtract(
         emisor=emisor,
@@ -214,9 +314,14 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
         fecha=fecha,
         numero=numero,
         numero_norm=normalize_numero(numero),
+        tipo_documento=tipo_doc,
+        factura_rectificada=factura_rect,
         base=base,
         iva_tipo=iva_tipo,
         iva_cuota=iva_cuota,
+        desglose_iva=desglose_iva,
+        retencion_tipo=retencion_tipo,
+        retencion_cuota=retencion_cuota,
         total=total,
         lineas=lineas,
         motor=motor,

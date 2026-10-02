@@ -213,3 +213,114 @@ def test_candidatos_duplicado_sugiere_el_gemelo_evidente(session):
     session.add(otro)
     session.commit()
     assert candidatos_duplicado(session, otro) == []
+
+
+def test_candidato_duplicado_por_skus_coincidentes(session):
+    from aeat_hub.models import Linea
+    from aeat_hub.dedupe import candidatos_duplicado
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    ticket = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=date(2026, 9, 1),
+        ejercicio=2026,
+        emisor="IKEA",
+        total=Decimal("190.75"),
+        estado="confirmado",
+    )
+    # Factura emitida 25 días después (fuera de la ventana de 3 días)
+    factura = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=date(2026, 9, 26),
+        ejercicio=2026,
+        emisor="IKEA",
+        total=Decimal("190.75"),
+        estado="pendiente",
+    )
+    session.add_all([ticket, factura])
+    session.flush()
+
+    # Añadir mismas líneas / SKUs a ambos
+    for a in (ticket, factura):
+        a.lineas.append(Linea(posicion=1, codigo="SKU-1", descripcion="Articulo 1", importe=Decimal("100.00")))
+        a.lineas.append(Linea(posicion=2, codigo="SKU-2", descripcion="Articulo 2", importe=Decimal("90.75")))
+    session.commit()
+
+    sugeridos = candidatos_duplicado(session, factura)
+    assert len(sugeridos) == 1
+    assert sugeridos[0]["id"] == ticket.id
+    assert "artículos coincidentes" in sugeridos[0]["motivo"]
+
+
+def test_find_duplicate_por_sku_en_ingesta(session):
+    from aeat_hub.extract.schema import InvoiceLine
+    from aeat_hub.models import Linea
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    asiento = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=date(2026, 9, 1),
+        ejercicio=2026,
+        emisor="IKEA",
+        total=Decimal("190.75"),
+        estado="confirmado",
+    )
+    asiento.lineas.append(Linea(posicion=1, codigo="SKU-A", descripcion="Prod A", importe=Decimal("100.00")))
+    asiento.lineas.append(Linea(posicion=2, codigo="SKU-B", descripcion="Prod B", importe=Decimal("90.75")))
+    session.add(asiento)
+    session.commit()
+
+    extract = InvoiceExtract(
+        emisor="IKEA Tienda",
+        numero="DISTINTO-123",
+        fecha=date(2026, 9, 28),
+        total=Decimal("190.75"),
+        lineas=[
+            InvoiceLine(posicion=1, codigo="SKU-A", descripcion="Prod A", importe=Decimal("100.00")),
+            InvoiceLine(posicion=2, codigo="SKU-B", descripcion="Prod B", importe=Decimal("90.75")),
+        ],
+    )
+    hit = find_duplicate(session, actividad_id=actividad.id, extract=extract, phash=None)
+    assert hit is not None
+    assert hit.nivel == 3
+    assert "artículos coincidentes" in hit.motivo
+    assert hit.asiento_id == asiento.id
+
+
+def test_candidato_duplicado_por_ventana_extendida_60_dias(session):
+    from aeat_hub.dedupe import candidatos_duplicado
+
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    ticket = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=date(2026, 9, 1),
+        ejercicio=2026,
+        nif_emisor="A28812618",
+        emisor="IKEA",
+        total=Decimal("50.00"),
+        estado="confirmado",
+    )
+    # Factura formal emitida 20 días después con mismo NIF y total pero sin líneas
+    factura = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        fecha=date(2026, 9, 21),
+        ejercicio=2026,
+        nif_emisor="A28812618",
+        emisor="IKEA",
+        total=Decimal("50.00"),
+        estado="pendiente",
+    )
+    session.add_all([ticket, factura])
+    session.commit()
+
+    cands = candidatos_duplicado(session, factura)
+    assert len(cands) == 1
+    assert cands[0]["id"] == ticket.id
+    assert "ventana 60 días" in cands[0]["motivo"]
+
+

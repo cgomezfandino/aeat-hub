@@ -12,6 +12,8 @@ def test_nif_invalido_y_normalizacion():
     assert not is_valid_nif("B12345670")
     assert not is_valid_nif("12345678A")
     assert normalize_nif("b-1234567-4") == "B12345674"
+    assert normalize_nif("ES A-28812618") == "A28812618"
+    assert is_valid_nif("ES A-28812618")
 
 
 def test_find_nifs_en_texto():

@@ -17,40 +17,66 @@ import urllib.request
 from aeat_hub.ocr.base import OCRResult, ProviderUnavailable
 from aeat_hub.ocr.render import iter_page_images
 
+try:
+    import dotenv
+
+    dotenv.load_dotenv()
+except ImportError:
+    pass
+
 DEFAULT_MODEL = "gemini-2.5-flash"
 ENV_KEY = "GEMINI_API_KEY"
 ENV_KEY_ALT = "GOOGLE_API_KEY"
 ENV_MODEL = "AEAT_HUB_GEMINI_MODEL"
 
 INVOICE_PROMPT = """Eres un sistema experto en contabilidad y fiscalidad española.
-Analiza la imagen de la factura o ticket y extrae con máxima precisión los datos fiscales en formato JSON estricto:
+Analiza detenidamente la imagen de la factura o ticket y extrae con máxima precisión los datos fiscales en formato JSON estricto:
 
 {
-  "emisor": "Nombre comercial o razón social del emisor",
-  "nif_emisor": "NIF o CIF del emisor (ej: B12345674)",
-  "receptor": "Nombre o razón social del cliente/receptor si figura",
-  "nif_receptor": "NIF o CIF del cliente/receptor si figura",
-  "numero": "Número o serie de factura o ticket",
+  "emisor": "Nombre comercial o razón social del emisor real (ej: IKEA, Leroy Merlin, Obramat, Endesa). NUNCA uses textos legales de pie de página como protección de datos o GDPR",
+  "nif_emisor": "NIF o CIF del emisor (ej: B12345674, A28812618)",
+  "receptor": "Nombre o razón social del cliente o receptor si figura, o null",
+  "nif_receptor": "NIF o CIF del cliente o receptor si figura, o null",
+  "numero": "Número o serie de factura o ticket (ej: 064-0009-720394, ESCINV26000000006920)",
   "fecha": "YYYY-MM-DD",
-  "base": número decimal con la base imponible total,
+  "tipo_documento": "factura" | "ticket" | "rectificativa",
+  "factura_rectificada": "Número de factura rectificada si es un abono o rectificativa, o null",
+  "base": número decimal con la base imponible total (antes de IVA),
   "iva_tipo": número con el porcentaje de IVA principal (ej: 21, 10, 4, 0),
   "iva_cuota": número decimal con la cuota total de IVA,
-  "total": número decimal con el importe total a pagar,
+  "desglose_iva": [
+    {
+      "base": número decimal de la base para este tipo,
+      "iva_tipo": porcentaje de IVA (ej: 21, 10, 4, 0),
+      "iva_cuota": cuota de IVA para este tipo
+    }
+  ],
+  "retencion_tipo": número con el porcentaje de IRPF retenido si existe (ej: 15, 19, 7) o null,
+  "retencion_cuota": número decimal con el importe retenido de IRPF si existe o null,
+  "total": número decimal con el importe total a pagar (Base + IVA - Retención = Total),
   "lineas": [
     {
       "codigo": "Código, referencia o SKU del artículo si existe, o null",
       "descripcion": "Descripción del concepto, bien o servicio",
-      "cantidad": número de unidades (por defecto 1),
-      "importe": número decimal con el importe total de la línea (con IVA si está desglosado así, o precio de la línea)
+      "cantidad": número de unidades (ej: 1, 2.5),
+      "precio_unitario": número decimal con el precio unitario si figura, o null,
+      "base": número decimal con el subtotal antes de IVA de la línea si figura o es calculable, o null,
+      "iva_tipo": porcentaje de IVA de la línea si figura (ej: 21, 10, 4, 0) o null,
+      "iva_cuota": cuota de IVA de la línea si figura o es calculable, o null,
+      "importe": número decimal con el total de la línea
     }
   ]
 }
 
-Instrucciones:
-1. No inventes datos. Si un campo no aparece, usa null o cadena vacía.
-2. Si los importes tienen formato europeo (1.250,50 €), conviértelos a números decimales estándar (1250.50).
-3. Asegúrate de extraer todas las líneas y productos individuales de la tabla o desglose.
-4. Responde únicamente con el objeto JSON válido, sin bloques markdown adicionales ni comentarios.
+Instrucciones críticas:
+1. No inventes datos. Si un campo no figura en el documento, usa null o cadena vacía.
+2. Identifica correctamente al emisor real de la factura comercial. NUNCA tomes como emisor textos legales de pie de página (como 'Información básica sobre protección de datos', 'Responsable del tratamiento' o avisos de privacidad).
+3. Si los importes tienen formato europeo (1.250,50 €), conviértelos a números decimales estándar (1250.50).
+4. En facturas rectificativas o abonos, los importes devueltos deben ser negativos si corresponden a rectificación de compras.
+5. Asegúrate de extraer TODAS las líneas y artículos individuales de la tabla o desglose, sin resumir ni agrupar.
+6. En las líneas individuales (`lineas`): el campo `importe` es el total final de la línea. Si los precios ya incluyen IVA (tickets de retail, IKEA, Leroy Merlin), el `importe` es el total que figura en el documento; no sumes IVA sobre un importe que ya lo incluye.
+7. En artículos en pack o kit (sets que listan componentes con desglose), no dupliques el importe del pack y de sus componentes para evitar sobrepasar el total del documento.
+8. Responde únicamente con el objeto JSON válido, sin bloques markdown adicionales ni comentarios.
 """
 
 
@@ -118,18 +144,27 @@ class GeminiOCRProvider:
             method="POST",
         )
 
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = ""
+        data = None
+        last_exc = None
+        for attempt in range(1, 4):
             try:
-                detail = exc.read().decode("utf-8")
-            except Exception:
-                pass
-            raise ProviderUnavailable(self.name, f"HTTP {exc.code}: {detail[:300]}") from exc
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise ProviderUnavailable(self.name, f"Fallo de conexión Gemini: {exc}") from exc
+                with urllib.request.urlopen(req, timeout=75) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    break
+            except urllib.error.HTTPError as exc:
+                detail = ""
+                try:
+                    detail = exc.read().decode("utf-8")
+                except Exception:
+                    pass
+                raise ProviderUnavailable(self.name, f"HTTP {exc.code}: {detail[:300]}") from exc
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+                last_exc = exc
+                if attempt < 3:
+                    import time
+                    time.sleep(1.5 * attempt)
+                else:
+                    raise ProviderUnavailable(self.name, f"Fallo de conexión Gemini tras 3 intentos: {exc}") from exc
 
         candidates = data.get("candidates") or []
         if not candidates:

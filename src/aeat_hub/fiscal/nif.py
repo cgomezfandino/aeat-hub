@@ -21,7 +21,10 @@ NIF_TOKEN = re.compile(
 def normalize_nif(value: str | None) -> str:
     if not value:
         return ""
-    return _CLEAN.sub("", value).upper()
+    clean = _CLEAN.sub("", value).upper()
+    if clean.startswith("ES") and len(clean) == 11:
+        return clean[2:]
+    return clean
 
 
 def is_valid_nif(value: str | None) -> bool:
