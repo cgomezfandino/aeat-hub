@@ -76,7 +76,7 @@ Variables: `AEAT_HUB_OLLAMA_URL` (default `http://127.0.0.1:11434`) y `AEAT_HUB_
 ### Google Gemini (`--ocr gemini`)
 
 Proveedor multimodal opcional de alta precisión para facturas complejas o escaneos con tablas de artículos difíciles.
-Utiliza **Gemini 2.5 Flash** (o configurable con `AEAT_HUB_GEMINI_MODEL=gemini-1.5-flash`).
+Utiliza **Gemini 2.5 Flash** (`gemini-2.5-flash`). Es el modelo que queda tras comparar Flash Lite en el set de oro: Lite sale más barato y pierde NIF de receptor e importes del ticket. Para cambiarlo: `AEAT_HUB_GEMINI_MODEL`.
 
 Configuración en `.env`:
 ```bash

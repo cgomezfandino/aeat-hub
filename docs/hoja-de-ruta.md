@@ -54,6 +54,15 @@ El mismo titular puede tener varios expedientes. El ingest siempre lleva
 
 No mezclar gastos del piso con ads, dominio o Stripe de una web.
 
+## Dónde quedó el 04 oct 2026
+
+Decisión de modelo OCR, sin cambio de código. Detalle en `docs/handoff-ocr-modelo-2026-10-04.md`.
+
+- Se mantiene **Gemini 2.5 Flash** (`gemini-2.5-flash`). `AEAT_HUB_GEMINI_MODEL` sigue sin definirse.
+- Flash Lite se midió en el set de oro y no se adopta: pierde el NIF del receptor y, en la foto, los importes.
+- DeepSeek-OCR local y la cascada Vision/Rapid siguen como estaban: el primero fuera del ingest por defecto, la segunda como camino sin nube.
+- La clave de Google se rotó en `.env` (fuera de git) y autentica.
+
 ## Dónde quedó el 02 oct 2026
 
 Bloque de Split View, Deduplicación Splink con SKUs y OCR Multimodal en `develop` (commits `848b35e`, `3309e3a`, `a91060f`, `d02bc29`). Detalle en `docs/handoff-split-view-y-splink-2026-10-02.md`.
