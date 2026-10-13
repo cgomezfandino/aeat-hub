@@ -178,18 +178,22 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
 
 
 def render_dashboard(data: dict) -> str:
+    v2 = data.get("ui", "v1") == "v2"
+    masthead = _masthead_v2(data) if v2 else _masthead(data)
+    revision = _panel_revision_v2(data) if v2 else _panel_revision(data)
+    extra_css = '<link rel="stylesheet" href="/static/v2.css">\n' if v2 else ""
     return (
         "<!DOCTYPE html>\n"
         '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
         f"<title>Libro {escape(data['codigo'])} · {data['year']}</title>\n"
-        f"{_FONT_LINKS}<style>{_CSS}</style>\n</head>\n"
-        f'<body data-default-panel="{"revision" if data["n_pendientes"] else "libro"}" '
+        f"{_FONT_LINKS}{_STATIC_LINKS}{extra_css}<style>{_CSS}</style>\n</head>\n"
+        f'<body data-ui="{"v2" if v2 else "v1"}" data-default-panel="{"revision" if data["n_pendientes"] else "libro"}" '
         f'data-actividad="{escape(data["codigo"])}" '
         f"data-year=\"{data['year']}\">\n"
-        f"{_masthead(data)}\n"
+        f"{masthead}\n"
         '<main class="wrap panels">\n'
-        f"{_panel_revision(data)}\n"
+        f"{revision}\n"
         f"{_panel_libro(data)}\n"
         f"{_panel_duplicados(data)}\n"
         f"{_panel_insights(data)}\n"
@@ -555,7 +559,7 @@ def render_asiento_page(data: dict) -> str:
         '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
         f"<title>Factura {escape(str(data['numero']))} · {escape(str(data['emisor']))}</title>\n"
-        f"{_FONT_LINKS}<style>{_CSS}</style>\n</head>\n"
+        f"{_FONT_LINKS}{_STATIC_LINKS}<style>{_CSS}</style>\n</head>\n"
         f"<body class=\"ficha-page\" data-asiento=\"{data['id']}\">\n"
         '<header class="ficha-bar wrap">\n'
         f'<a class="back-link" href="{escape(data["dashboard_href"])}">{_BACK_SVG} Volver al libro</a>\n'
@@ -2656,6 +2660,22 @@ def _amount_attr(value: Decimal | None) -> str:
     return "" if quantized is None else f"{quantized:.2f}"
 
 
+def _kan_acciones(item: dict, estado: str) -> list[str]:
+    """Botones de acción cableados por el JS (data-kan). Compartidos v1/v2."""
+    acciones = []
+    if estado == "pendiente":
+        acciones.append(f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar: revisada y buena">✓</button>')
+    if estado == "confirmado":
+        acciones.append(f'<button type="button" class="kan-act" data-kan="reabrir" data-id="{item["id"]}" title="Devolver a revisión">↩</button>')
+    if estado == "duplicado":
+        acciones.append(f'<button type="button" class="kan-act" data-kan="quitar-dup" data-id="{item["id"]}" title="Quitar duplicado">↩</button>')
+    if estado == "rechazado":
+        acciones.append(f'<button type="button" class="kan-act" data-kan="recuperar" data-id="{item["id"]}" title="Recuperar a revisión">↩</button>')
+    if estado in ("pendiente", "rechazado"):
+        acciones.append(f'<button type="button" class="kan-act" data-kan="rechazar" data-id="{item["id"]}" title="Rechazar: no es una factura">✕</button>')
+    return acciones
+
+
 def _kan_card(item: dict) -> str:
     """Tarjeta de factura para el tablero Kanban."""
     estado = item["estado"]
@@ -2670,17 +2690,7 @@ def _kan_card(item: dict) -> str:
         "dup": "duplicado",
     }.get(tone, "pendiente")
     chip = f'<span class="pill {pill_class}">{escape(label)}</span>'
-    acciones = []
-    if estado == "pendiente":
-        acciones.append(f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar: revisada y buena">✓</button>')
-    if estado == "confirmado":
-        acciones.append(f'<button type="button" class="kan-act" data-kan="reabrir" data-id="{item["id"]}" title="Devolver a revisión">↩</button>')
-    if estado == "duplicado":
-        acciones.append(f'<button type="button" class="kan-act" data-kan="quitar-dup" data-id="{item["id"]}" title="Quitar duplicado">↩</button>')
-    if estado == "rechazado":
-        acciones.append(f'<button type="button" class="kan-act" data-kan="recuperar" data-id="{item["id"]}" title="Recuperar a revisión">↩</button>')
-    if estado in ("pendiente", "rechazado"):
-        acciones.append(f'<button type="button" class="kan-act" data-kan="rechazar" data-id="{item["id"]}" title="Rechazar: no es una factura">✕</button>')
+    acciones = _kan_acciones(item, estado)
     return (
         f'<article class="kan-card" draggable="true" data-id="{item["id"]}" '
         f'data-estado="{estado}" data-total="{total_label}" '
@@ -2725,33 +2735,7 @@ def _panel_revision(data: dict) -> str:
             f'<div class="kan-cuerpo">{cuerpo}</div></section>'
         )
 
-    def _fila_tabla(item: dict) -> str:
-        total = item.get("total")
-        total_label = escape(format_euro(total)) if total is not None else "—"
-        faltas = " · ".join(item.get("calidad_faltas") or [])[:90] or "—"
-        row_attrs = _smart_row_attrs(
-            id=item["id"],
-            emisor=item.get("emisor") or "",
-            numero=item.get("numero") or "",
-            fecha=item.get("fecha_label") or "",
-            total=total if total is not None else "",
-            motivo=faltas,
-        )
-        return (
-            f"<tr {row_attrs}>"
-            f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
-            f"<td>{escape(item['emisor'])}</td>"
-            f"<td>{escape(item['numero'])}</td>"
-            f"<td>{escape(item['fecha_label'])}</td>"
-            f'<td class="num">{total_label}</td>'
-            f"<td>{escape(faltas)}</td>"
-            f'<td class="kan-celda-act">'
-            f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar">✓</button>'
-            f'<button type="button" class="kan-act" data-kan="rechazar" data-id="{item["id"]}" title="Rechazar">✕</button>'
-            "</td></tr>"
-        )
-
-    tabla_rows = "".join(_fila_tabla(item) for item in pendientes_ordenadas) or (
+    tabla_rows = "".join(_fila_revision(item) for item in pendientes_ordenadas) or (
         '<tr><td colspan="7" class="muted">Nada pendiente.</td></tr>'
     )
 
@@ -2802,6 +2786,218 @@ def _panel_revision(data: dict) -> str:
       <button type="button" class="ghost" id="rev-next">Siguiente</button>
     </nav>
   </div>
+  {_rechazo_dialog()}
+
+  {_footer(data)}
+</div>
+"""
+
+
+def _masthead_v2(data: dict) -> str:
+    """Cabecera v2: mismos ids cableados, marca visible y meta compacta."""
+    inmueble = data.get("inmueble") or ""
+    inmueble_wrap = (
+        f'<span id="mast-inmueble-wrap"> · <span id="mast-inmueble">{escape(inmueble)}</span></span>'
+        if inmueble
+        else '<span id="mast-inmueble-wrap" hidden> · <span id="mast-inmueble"></span></span>'
+    )
+    badge = ""
+    if data["cola_revision"]:
+        badge = f'<span class="tab-badge">{len(data["cola_revision"])}</span>'
+    dup_badge = ""
+    n_dups_tab = int(data.get("n_duplicados") or 0) + len(data.get("sospechosos") or [])
+    if n_dups_tab:
+        dup_badge = f'<span class="tab-badge">{n_dups_tab}</span>'
+    show_inmueble = "1" if (inmueble or data["regimen"] == REGIMEN_CI) else "0"
+    return f"""
+<header class="mast v2-mast">
+  <div class="wrap v2-mast-grid">
+    <span class="v2-brand"><img src="/static/logo.svg" alt="" width="30" height="30"><span>AEAT&nbsp;Hub</span></span>
+    <div class="v2-mast-main">
+      <h1 class="v2-mast-h1">
+        <span id="mast-nombre">{escape(data["nombre"])}</span>
+        <span id="mast-kicker">{escape(data["codigo"])} · {data["year"]}</span>
+        <button type="button" class="row-edit mast-edit" id="mast-edit"
+          data-has-inmueble="{show_inmueble}"
+          title="Personalizar títulos" aria-label="Personalizar títulos del libro">{_PENCIL_SVG}</button>
+      </h1>
+      <p class="v2-mast-meta">
+        <span id="mast-titular">{escape(data["titular"])}</span>
+        · <span id="mast-regimen">{escape(data["regimen_label"])}</span>{inmueble_wrap}
+      </p>
+    </div>
+    <p class="v2-mast-strip">
+      <strong>{data["n_pendientes"]}</strong> por revisar ·
+      <strong>{data["n_sin_validar"]}</strong> sin validar ·
+      neto <strong>{escape(format_euro(data["resultado"]))}</strong>
+    </p>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Secciones del libro">
+    <div class="wrap tabs-row">
+      <button type="button" class="tab" role="tab" id="tab-revision" data-panel="revision"
+        aria-controls="panel-revision" aria-selected="false" tabindex="-1">Revisar {badge}</button>
+      <button type="button" class="tab" role="tab" id="tab-libro" data-panel="libro"
+        aria-controls="panel-libro" aria-selected="false" tabindex="-1">Libro</button>
+      <button type="button" class="tab" role="tab" id="tab-duplicados" data-panel="duplicados"
+        aria-controls="panel-duplicados" aria-selected="false" tabindex="-1">Duplicados {dup_badge}</button>
+      <button type="button" class="tab" role="tab" id="tab-insights" data-panel="insights"
+        aria-controls="panel-insights" aria-selected="false" tabindex="-1">Insights</button>
+    </div>
+  </nav>
+</header>
+"""
+
+
+def _kan_card_v2(item: dict) -> str:
+    """Tarjeta v2: mismo contrato JS, muestra la primera falta y enlaza con ?ui=v2."""
+    estado = item["estado"]
+    total = item.get("total")
+    total_label = escape(format_euro(total)) if total is not None else "—"
+    label, tone, _ = _asiento_badge(item)
+    pill_class = {
+        "ok": "confirmado",
+        "warn": "pendiente",
+        "err": "rechazado",
+        "dup": "duplicado",
+    }.get(tone, "pendiente")
+    chip = f'<span class="pill {pill_class}">{escape(label)}</span>'
+    acciones = _kan_acciones(item, estado)
+    falta = " · ".join(item.get("calidad_faltas") or [])[:80]
+    falta_html = f'<p class="v2-kan-falta">{escape(falta)}</p>' if falta else ""
+    return (
+        f'<article class="kan-card v2-kan" draggable="true" data-id="{item["id"]}" '
+        f'data-estado="{estado}" data-total="{total_label}" '
+        f'data-emisor="{escape(item["emisor"])}" data-numero="{escape(item["numero"])}" '
+        f'data-fecha="{escape(item["fecha_label"])}">'
+        f'<a class="kan-ref" href="/asiento/{item["id"]}?ui=v2" title="Abrir la ficha">{escape(item["emisor"])}</a>'
+        f'<p class="muted kan-datos">{escape(item["numero"])} · {escape(item["fecha_label"])}</p>'
+        f'<div class="v2-kan-total"><strong>{total_label}</strong> {chip}</div>'
+        f"{falta_html}"
+        f'<div class="kan-acciones">{" ".join(acciones)}</div>'
+        "</article>"
+    )
+
+
+def _panel_revision_v2(data: dict) -> str:
+    """Cola de revisión v2: mismos ids cableados, cabecera compacta y vacíos con blob."""
+    pendientes = [item for item in data["asientos"] if item["estado"] == "pendiente"]
+    consolidadas = [item for item in data["asientos"] if item["estado"] == "confirmado"]
+    duplicadas = [item for item in data["asientos"] if item["estado"] == "duplicado"]
+    rechazadas = [item for item in data["asientos"] if item["estado"] == "rechazado"]
+    cola = {item["id"]: item for item in data["cola_revision"]}
+    pendientes_ordenadas = [cola.get(item["id"], item) for item in pendientes]
+    vivas = len(pendientes) + len(consolidadas) + len(duplicadas)
+    hechas = vivas - len(pendientes)
+    progreso = int(round(100 * hechas / vivas)) if vivas else 100
+
+    TOPE = 12
+
+    def _columna(clave: str, titulo: str, filas: list[dict], vacio: str, soltar: str) -> str:
+        visibles = filas[:TOPE]
+        cards = "".join(_kan_card_v2(item) for item in visibles)
+        resto = len(filas) - len(visibles)
+        if resto > 0:
+            destino = "tabla" if clave == "pendiente" else clave
+            cards += (
+                f'<button type="button" class="kan-mas" data-kan-mas="{destino}">'
+                f"+{resto} más…</button>"
+            )
+        cuerpo = cards or (
+            '<div class="v2-kan-vacio">'
+            '<img src="/static/blob.svg" alt="" width="56" height="56">'
+            f"<p>{vacio}</p></div>"
+        )
+        return (
+            f'<section class="kan-col" data-col="{clave}" data-soltar="{soltar}">'
+            f'<header class="kan-col-cab"><span>{titulo}</span><span class="kan-num">{len(filas)}</span></header>'
+            f'<div class="kan-cuerpo">{cuerpo}</div></section>'
+        )
+
+    tabla_rows = "".join(_fila_revision(item) for item in pendientes_ordenadas) or (
+        '<tr><td colspan="7" class="muted">Nada pendiente.</td></tr>'
+    )
+
+    return f"""
+<div class="panel v2-rev" role="tabpanel" id="panel-revision" data-panel="revision"
+  aria-labelledby="tab-revision">
+  <div class="v2-rev-head">
+    <div class="v2-rev-title">
+      <h2>Cola de revisión</h2>
+      <p>Cada factura pasa por tus manos: valida, rechaza o abre la ficha.</p>
+    </div>
+    <div class="v2-rev-stats" aria-label="Estado de la cola">
+      <span><strong>{len(pendientes)}</strong> por revisar</span>
+      <span><strong>{len(consolidadas)}</strong> validadas</span>
+      <span><strong>{len(duplicadas)}</strong> duplicadas</span>
+      <span><strong>{len(rechazadas)}</strong> rechazadas</span>
+      <span class="v2-rev-prog"><span class="v2-rev-bar"><i style="width: {progreso}%"></i></span><strong>{progreso} %</strong></span>
+    </div>
+    <div class="v2-rev-acts">
+      <div role="group" aria-label="Vista de revisión">
+        <button type="button" class="ghost" id="rev-vista-tablero" aria-pressed="true">Tablero</button>
+        <button type="button" class="ghost" id="rev-vista-tabla" aria-pressed="false">Tabla</button>
+      </div>
+      <input type="file" id="factura-upload-input" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" hidden>
+      <button type="button" class="export-btn" id="btn-subir-factura" title="Cargar factura con Gemini Vision AI">↑ Cargar factura</button>
+    </div>
+  </div>
+  <div class="drop-banner v2-drop" id="drop-banner">
+    <p id="drop-banner-text">Arrastra aquí tu factura en <strong>PDF o imagen</strong> (o haz clic para examinar)</p>
+  </div>
+  <div class="kan-board" id="kan-board">
+    {_columna("pendiente", "Por revisar", pendientes_ordenadas, "Nada pendiente. Ingresa facturas y vuelve.", "validar|rechazar")}
+    {_columna("confirmado", "Consolidadas", consolidadas, "Aquí caen las revisadas y buenas.", "reabrir")}
+    {_columna("duplicado", "Duplicadas", duplicadas, "Sin duplicados marcados.", "quitar-dup")}
+    {_columna("rechazado", "Rechazadas", rechazadas, "Sin documentos rechazados.", "recuperar")}
+  </div>
+  <div class="rev-tabla" id="revision-tabla" hidden>
+    <div class="table-wrap"><table class="dup-tabla smart-table" id="rev-pend-tabla" data-smart-config="{_smart_config(filters=_asiento_smart_filters("rev-pend", motivo=True), ranges=[("total", "f-rev-pend-total-min", "f-rev-pend-total-max")], default_sort="id")}">
+      {_asiento_table_thead("rev-pend", _asiento_table_choices(pendientes_ordenadas, motivos=_unique_labels([" · ".join(item.get("calidad_faltas") or [])[:90] or "—" for item in pendientes_ordenadas])), motivo=True, actions="1")}
+      <tbody id="rev-tabla-body">{tabla_rows}</tbody></table></div>
+    <nav class="pager" aria-label="Páginas de pendientes">
+      <button type="button" class="ghost" id="rev-prev">Anterior</button>
+      <span class="pager-label" id="rev-paginas"></span>
+      <button type="button" class="ghost" id="rev-next">Siguiente</button>
+    </nav>
+  </div>
+  {_rechazo_dialog()}
+
+  {_footer(data)}
+</div>
+"""
+
+
+def _fila_revision(item: dict) -> str:
+    """Fila de pendiente para la vista tabla. Compartida v1/v2 (mismos ids)."""
+    total = item.get("total")
+    total_label = escape(format_euro(total)) if total is not None else "—"
+    faltas = " · ".join(item.get("calidad_faltas") or [])[:90] or "—"
+    row_attrs = _smart_row_attrs(
+        id=item["id"],
+        emisor=item.get("emisor") or "",
+        numero=item.get("numero") or "",
+        fecha=item.get("fecha_label") or "",
+        total=total if total is not None else "",
+        motivo=faltas,
+    )
+    return (
+        f"<tr {row_attrs}>"
+        f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
+        f"<td>{escape(item['emisor'])}</td>"
+        f"<td>{escape(item['numero'])}</td>"
+        f"<td>{escape(item['fecha_label'])}</td>"
+        f'<td class="num">{total_label}</td>'
+        f"<td>{escape(faltas)}</td>"
+        f'<td class="kan-celda-act">'
+        f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar">✓</button>'
+        f'<button type="button" class="kan-act" data-kan="rechazar" data-id="{item["id"]}" title="Rechazar">✕</button>'
+        "</td></tr>"
+    )
+
+
+def _rechazo_dialog() -> str:
+    """Diálogo de motivo de rechazo. Compartido v1/v2 (mismos ids)."""
+    return """
   <dialog class="app-sheet sheet-form" id="rechazo-dialog" aria-labelledby="rechazo-title">
       <p class="sheet-eyebrow">Rechazar factura</p>
       <h2 id="rechazo-title">¿Por qué se rechaza?</h2>
@@ -2822,9 +3018,6 @@ def _panel_revision(data: dict) -> str:
         <button type="button" class="export-btn is-warn" id="rechazo-ok">Rechazar</button>
       </div>
   </dialog>
-
-  {_footer(data)}
-</div>
 """
 
 
@@ -3895,6 +4088,10 @@ _FONT_LINKS = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
     '<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">\n'
+)
+_STATIC_LINKS = (
+    '<link rel="stylesheet" href="/static/tokens.css">\n'
+    '<link rel="icon" type="image/svg+xml" href="/static/logo.svg">\n'
 )
 
 _CSS = r"""

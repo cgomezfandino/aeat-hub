@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Blob, mascota de AEAT Hub">
+  <rect x="10" y="5" width="44" height="54" rx="21" fill="#f5a623"/>
+  <circle cx="25" cy="27" r="2.6" fill="#3d2b00"/>
+  <circle cx="39" cy="27" r="2.6" fill="#3d2b00"/>
+  <path d="M27.5 35.5q4.5 3.8 9 0" fill="none" stroke="#3d2b00" stroke-width="2.4" stroke-linecap="round"/>
+  <rect x="26" y="42" width="12" height="10" rx="1.5" fill="#ffffff"/>
+  <path d="M28.5 45.5h7M28.5 48.5h7" stroke="#e8890c" stroke-width="1.4" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,252 @@
+/* AEAT Hub · piel v2 (clara y densa). Solo actúa con body[data-ui="v2"].
+ * El CSS v1 sigue inline; estos overrides ganan por especificidad.
+ * Alcance actual: masthead + cola de revisión. El resto de paneles sigue v1.
+ */
+
+body[data-ui="v2"] {
+  background: var(--wash);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+}
+
+/* Masthead: marca + títulos + tira de estado en una fila. */
+body[data-ui="v2"] .v2-mast {
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+body[data-ui="v2"] .v2-mast-grid {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding-top: var(--sp-3);
+  padding-bottom: var(--sp-3);
+}
+body[data-ui="v2"] .v2-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--fs-lg);
+  color: var(--navy);
+  white-space: nowrap;
+}
+body[data-ui="v2"] .v2-mast-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+body[data-ui="v2"] .v2-mast-h1 {
+  font-size: var(--fs-xl);
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+body[data-ui="v2"] .v2-mast-h1 #mast-kicker {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--muted);
+}
+body[data-ui="v2"] .v2-mast-meta {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+body[data-ui="v2"] .v2-mast-strip {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  white-space: nowrap;
+}
+body[data-ui="v2"] .v2-mast-strip strong {
+  color: var(--ink);
+}
+
+/* Cola de revisión: cabecera en tres bloques. */
+body[data-ui="v2"] .v2-rev-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-3);
+}
+body[data-ui="v2"] .v2-rev-title h2 {
+  font-size: var(--fs-2xl);
+  margin: 0;
+}
+body[data-ui="v2"] .v2-rev-title p {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+body[data-ui="v2"] .v2-rev-stats {
+  display: flex;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+body[data-ui="v2"] .v2-rev-stats strong {
+  color: var(--ink);
+}
+body[data-ui="v2"] .v2-rev-prog {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+body[data-ui="v2"] .v2-rev-bar {
+  display: inline-block;
+  width: 96px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+  vertical-align: middle;
+}
+body[data-ui="v2"] .v2-rev-bar i {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+body[data-ui="v2"] .v2-rev-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+body[data-ui="v2"] .v2-rev-acts [role="group"] {
+  display: inline-flex;
+  gap: var(--sp-1);
+}
+
+/* Zona de subida. */
+body[data-ui="v2"] .v2-drop {
+  border: 2px dashed var(--line);
+  border-radius: var(--r-md);
+  background: var(--paper);
+  padding: var(--sp-2) var(--sp-3);
+  text-align: center;
+  margin-bottom: var(--sp-3);
+  cursor: pointer;
+}
+body[data-ui="v2"] .v2-drop p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+/* Tablero: cuatro columnas con tarjetas densas. */
+body[data-ui="v2"] .v2-rev .kan-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-3);
+  align-items: start;
+}
+body[data-ui="v2"] .v2-rev .kan-col {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+body[data-ui="v2"] .v2-rev .kan-col-cab {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+body[data-ui="v2"] .v2-rev .kan-num {
+  color: var(--muted);
+  font-weight: 500;
+}
+body[data-ui="v2"] .v2-rev .kan-cuerpo {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  min-height: 120px;
+  align-content: start;
+}
+body[data-ui="v2"] .v2-kan {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--paper);
+  box-shadow: var(--shadow-1);
+  padding: var(--sp-2) var(--sp-3);
+}
+body[data-ui="v2"] .v2-kan .kan-ref {
+  color: var(--navy);
+  font-weight: 600;
+}
+body[data-ui="v2"] .v2-kan .kan-datos {
+  font-size: var(--fs-sm);
+}
+body[data-ui="v2"] .v2-kan-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+body[data-ui="v2"] .v2-kan-falta {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--warn);
+}
+body[data-ui="v2"] .v2-kan .kan-acciones {
+  margin-top: var(--sp-2);
+  display: flex;
+  gap: var(--sp-1);
+}
+body[data-ui="v2"] .v2-kan-vacio {
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  padding: var(--sp-4) var(--sp-2);
+}
+body[data-ui="v2"] .v2-kan-vacio p {
+  margin: var(--sp-2) 0 0;
+}
+
+/* Botonera de la cola sobre la piel v1. */
+body[data-ui="v2"] .v2-rev .ghost,
+body[data-ui="v2"] .v2-rev-acts .ghost {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--paper);
+  font-size: var(--fs-sm);
+}
+body[data-ui="v2"] .v2-rev .ghost[aria-pressed="true"] {
+  border-color: var(--navy);
+  color: var(--navy);
+  font-weight: 600;
+}
+body[data-ui="v2"] .v2-rev-acts .export-btn {
+  font-size: var(--fs-sm);
+  border-radius: var(--r-sm);
+}
+
+@media (max-width: 1100px) {
+  body[data-ui="v2"] .v2-rev .kan-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  body[data-ui="v2"] .v2-mast-strip {
+    display: none;
+  }
+}
+@media (max-width: 700px) {
+  body[data-ui="v2"] .v2-rev .kan-board {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body[data-ui="v2"] .v2-brand span {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  body[data-ui="v2"] .v2-drop {
+    transition: none;
+  }
+}

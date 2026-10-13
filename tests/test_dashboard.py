@@ -922,3 +922,52 @@ def test_ficha_asiento_reabrir_y_alerta_duplicado(session, layout):
     assert "Revisar candidato" in html_gemelo
     assert f"#{asiento_ok.id}" in html_gemelo
 
+
+def test_paginas_enlazan_tokens_y_favicon(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert 'href="/static/tokens.css"' in html
+    assert 'href="/static/logo.svg"' in html
+    row = session.scalar(select(Asiento).where(Asiento.emisor == "LEROY MERLIN ARROYO"))
+    ficha = render_asiento_page(
+        collect_asiento_ficha(session, row, dashboard_name="dashboard_CI-VA-001_2026.html")
+    )
+    assert 'href="/static/tokens.css"' in ficha
+    assert 'href="/static/logo.svg"' in ficha
+
+
+def test_render_v2_marca_cola_masthead_y_enlaces(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    data = collect_dashboard(session, actividad, 2026)
+    data["ui"] = "v2"
+    html = render_dashboard(data)
+    assert 'data-ui="v2"' in html
+    assert 'href="/static/v2.css"' in html
+    assert 'src="/static/logo.svg"' in html
+    assert 'src="/static/blob.svg"' in html
+    assert "Cola de revisión" in html
+    for needle in (
+        "kan-board", "rev-vista-tablero", "rev-vista-tabla", "revision-tabla",
+        "rev-tabla-body", "rev-prev", "rev-next", "rev-paginas", "rechazo-dialog",
+        "rechazo-ok", "mast-edit", "mast-nombre", "mast-titular", "tab-revision",
+        "btn-subir-factura", "factura-upload-input", "drop-banner", "drop-banner-text",
+    ):
+        assert f'id="{needle}"' in html, needle
+    assert 'data-kan="validar"' in html
+    assert "?ui=v2" in html
+
+
+def test_render_v1_sin_marcas_v2(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert 'data-ui="v1"' in html
+    assert "/static/v2.css" not in html
+    assert "Cola de revisión" not in html
+    assert 'src="/static/logo.svg"' not in html
+

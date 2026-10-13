@@ -159,3 +159,28 @@ def test_api_upload_procesa_factura_y_crea_asiento(session, layout, tmp_path):
         httpd.shutdown()
         httpd.server_close()
 
+
+def test_static_sirve_fichero_bajo_la_raiz(tmp_path):
+    from aeat_hub.hub_http import _static_file
+
+    css = tmp_path / "tokens.css"
+    css.write_text(":root{}", encoding="utf-8")
+    assert _static_file("tokens.css", root=tmp_path) == css.resolve()
+
+
+def test_static_bloquea_ausentes_y_escape_de_raiz(tmp_path):
+    from aeat_hub.hub_http import _static_file
+
+    assert _static_file("no-existe.css", root=tmp_path) is None
+    assert _static_file("../fuera.css", root=tmp_path) is None
+
+
+def test_quiere_ui2_detecta_bandera():
+    from aeat_hub.hub_http import _quiere_ui2
+
+    assert _quiere_ui2("ui=v2")
+    assert _quiere_ui2("a=1&ui=v2")
+    assert not _quiere_ui2("")
+    assert not _quiere_ui2("ui=v1")
+    assert not _quiere_ui2("uiv2")
+

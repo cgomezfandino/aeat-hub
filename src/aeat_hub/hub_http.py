@@ -11,7 +11,7 @@ import socket
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 from sqlalchemy import select
 
@@ -19,8 +19,10 @@ from aeat_hub.dashboard import (
     ESTADO_LABEL,
     REGIMEN_LABEL,
     collect_asiento_ficha,
+    collect_dashboard,
     criterios_calidad,
     render_asiento_page,
+    render_dashboard,
     write_dashboard,
 )
 from aeat_hub.db import session_scope
@@ -69,7 +71,11 @@ class HubHandler(BaseHTTPRequestHandler):
         if match:
             self._send_asiento(int(match.group(1)))
             return
-        self._send_export(path)
+        match = _STATIC.fullmatch(path)
+        if match:
+            self._send_static(match.group(1))
+            return
+        self._send_export(path, parsed.query)
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -276,16 +282,43 @@ class HubHandler(BaseHTTPRequestHandler):
             return
         self._send_file(stored, download_name=name)
 
-    def _send_export(self, path: str) -> None:
+    def _send_static(self, rel: str) -> None:
+        found = _static_file(rel)
+        if found is None:
+            self.send_error(404, "No encontrado")
+            return
+        self._send_file(found)
+
+    def _send_export(self, path: str, query: str = "") -> None:
         rel = path.lstrip("/")
         if not rel or ".." in Path(rel).parts:
             self.send_error(404, "No encontrado")
+            return
+        if _DASHBOARD_NAME.fullmatch(rel) and _quiere_ui2(query):
+            self._send_dashboard_live(rel)
             return
         dest = (self.layout.exports / rel).resolve()
         if not _is_under(dest, self.layout.exports) or not dest.is_file():
             self.send_error(404, "No encontrado")
             return
         self._send_file(dest)
+
+    def _send_dashboard_live(self, name: str) -> None:
+        """Render fresco del libro (?ui=v2): la v1 sigue saliendo del fichero."""
+        codigo, year = _parse_dashboard_name(name)
+        with session_scope(self.factory) as session:
+            actividad = session.scalar(select(Actividad).where(Actividad.codigo == codigo))
+            if actividad is None:
+                self.send_error(404, "Expediente no encontrado")
+                return
+            data = collect_dashboard(session, actividad, year)
+            data["ui"] = "v2"
+            html = render_dashboard(data).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.wfile.write(html)
 
     def _send_file(self, path: Path, *, download_name: str | None = None) -> None:
         mime, _ = mimetypes.guess_type(str(path))
@@ -430,7 +463,21 @@ _DOC_PATH = re.compile(r"^/doc/(\d+)$")
 _ASIENTO_PAGE = re.compile(r"^/asiento/(\d+)$")
 _API_ASIENTO = re.compile(r"^/api/asientos/(\d+)$")
 _API_EXPEDIENTE = re.compile(r"^/api/expediente$")
+_STATIC = re.compile(r"^/static/(.+)$")
+_STATIC_ROOT = Path(__file__).resolve().parent / "static"
+
+
+def _static_file(rel: str, *, root: Path = _STATIC_ROOT) -> Path | None:
+    """Fichero estático bajo root, o None si no existe o escapa de la raíz."""
+    candidate = (root / rel).resolve()
+    if not _is_under(candidate, root) or not candidate.is_file():
+        return None
+    return candidate
 _DASHBOARD_NAME = re.compile(r"^dashboard_(.+)_(\d{4})\.html$")
+
+
+def _quiere_ui2(query: str) -> bool:
+    return any(key == "ui" and value == "v2" for key, value in parse_qsl(query or ""))
 
 
 def _parse_dashboard_name(name: str) -> tuple[str, int]:
