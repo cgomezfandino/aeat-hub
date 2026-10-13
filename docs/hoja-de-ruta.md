@@ -54,6 +54,20 @@ El mismo titular puede tener varios expedientes. El ingest siempre lleva
 
 No mezclar gastos del piso con ads, dominio o Stripe de una web.
 
+## Dónde quedó el 13 oct 2026
+
+Dos bloques en `develop`, sin push. Detalle en `docs/handoff-ui-v2-2026-10-13.md`.
+
+- **Modelo**: NIF del titular ya no se inventa como emisor; Gemini dentro de
+  `aeat-hub eval` con `usageMetadata` por caso; scoring con fechas ES/ISO y
+  prompt reforzado para `nif_receptor`. Medido: 7/7 en sintéticos y en las dos
+  Leroy reales (~$0,06 de API en la sesión).
+- **UI v2 tras `?ui=v2`**: masthead con marca, cola, ficha (número editable
+  inline, cierra un pendiente del 4 oct), libro, duplicados e insights. Mismo
+  JS cableado; v1 intacta. Mascota elegida: blob ámbar.
+- **Suite**: 196 passed; 7 fallos ambientales (puertos en sandbox).
+- **Siguiente**: OK visual en navegador (Safari incluido), retirar v1, push.
+
 ## Dónde quedó el 04 oct 2026
 
 Decisión de modelo OCR, sin cambio de código. Detalle en `docs/handoff-ocr-modelo-2026-10-04.md`.
