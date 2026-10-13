@@ -250,3 +250,65 @@ body[data-ui="v2"] .v2-rev-acts .export-btn {
     transition: none;
   }
 }
+
+/* Ficha: cabecera compacta con número editable inline. */
+body[data-ui="v2"] .v2-ficha-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-3);
+}
+body[data-ui="v2"] .v2-ficha-head h1 {
+  font-size: var(--fs-2xl);
+  margin: 0;
+}
+body[data-ui="v2"] .v2-ficha-head .ficha-kicker {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  margin: 0 0 var(--sp-1);
+}
+body[data-ui="v2"] .v2-ficha-head .ficha-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-md);
+}
+body[data-ui="v2"] .v2-ficha-head .ficha-actions {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+body[data-ui="v2"] #ficha-num-form {
+  display: inline-flex;
+  gap: var(--sp-1);
+  align-items: center;
+}
+body[data-ui="v2"] #ficha-num-form[hidden] {
+  display: none;
+}
+body[data-ui="v2"] #ficha-num-input {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--navy);
+  border-radius: var(--r-sm);
+  width: 14rem;
+  max-width: 40vw;
+}
+body[data-ui="v2"] .v2-num-error {
+  font-size: var(--fs-sm);
+  color: var(--bad);
+}
+body[data-ui="v2"] .ficha-bar .back-link {
+  font-size: var(--fs-sm);
+}

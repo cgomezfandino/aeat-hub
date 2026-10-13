@@ -65,7 +65,7 @@ class HubHandler(BaseHTTPRequestHandler):
             return
         match = _ASIENTO_PAGE.fullmatch(path)
         if match:
-            self._send_asiento_page(int(match.group(1)))
+            self._send_asiento_page(int(match.group(1)), parsed.query)
             return
         match = _API_ASIENTO.fullmatch(path)
         if match:
@@ -251,13 +251,15 @@ class HubHandler(BaseHTTPRequestHandler):
             body["ok"] = True
         self._send_json(200, body)
 
-    def _send_asiento_page(self, asiento_id: int) -> None:
+    def _send_asiento_page(self, asiento_id: int, query: str = "") -> None:
         with session_scope(self.factory) as session:
             asiento = session.get(Asiento, asiento_id)
             if asiento is None:
                 self.send_error(404, "Asiento no encontrado")
                 return
             data = collect_asiento_ficha(session, asiento, dashboard_name=self.dashboard_name)
+            if _quiere_ui2(query):
+                data["ui"] = "v2"
         html = render_asiento_page(data).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")

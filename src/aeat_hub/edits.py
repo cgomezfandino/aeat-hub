@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aeat_hub.classify import _apply_cuenta, reabrir_asiento, validar_asiento
-from aeat_hub.er import _fusionar_en, add_relacion, backfill_asientos
+from aeat_hub.er import _fusionar_en, add_relacion, backfill_asientos, corregir_numero
 from aeat_hub.extract.ids import normalize_emisor
 from aeat_hub.extract.parser import parse_invoice
 from aeat_hub.extract.schema import InvoiceExtract, InvoiceLine
@@ -186,6 +186,14 @@ def patch_asiento(session: Session, asiento_id: int, payload: dict) -> Asiento:
             _registrar(session, asiento, "emisor", asiento.emisor, nombre or "")
             asiento.emisor = nombre
             dirty = True
+
+    if "numero" in payload and payload["numero"] is not None:
+        visible = " ".join(str(payload["numero"]).split())[:120] or None
+        if visible != (asiento.numero_factura or None):
+            antes = asiento.numero_factura or ""
+            corregir_numero(session, asiento, visible or "")
+            _registrar(session, asiento, "numero_factura", antes, asiento.numero_factura or "")
+            session.flush()
 
     if "fecha" in payload:
         nueva = _parse_fecha(payload.get("fecha"))

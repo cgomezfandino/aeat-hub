@@ -275,6 +275,10 @@ def collect_asiento_ficha(session: Session, asiento: Asiento, *, dashboard_name:
 
 
 def render_asiento_page(data: dict) -> str:
+    v2 = data.get("ui", "v1") == "v2"
+    back_href = _con_ui2(data["dashboard_href"]) if v2 else data["dashboard_href"]
+    extra_css = '<link rel="stylesheet" href="/static/v2.css">\n' if v2 else ""
+    num_script = _ficha_num_script() if v2 else ""
     lineas = data["lineas"]
     n_lineas = int(data.get("n_lineas") or len(lineas))
     score = _criterios_html(
@@ -308,6 +312,7 @@ def render_asiento_page(data: dict) -> str:
         "fecha": "Fecha de compra",
         "rubro": "Rubro",
         "iva_tipo": "IVA %",
+        "numero_factura": "Número",
     }
 
     def _log_valor(value: str) -> str:
@@ -481,20 +486,23 @@ def render_asiento_page(data: dict) -> str:
             '</div>\n'
         )
 
-    ficha_head = (
-        '<div class="ficha-head">\n'
-        '<div>\n'
-        f'<p class="ficha-kicker">{escape(data["actividad_codigo"])} · {data["year"]} · asiento #{data["id"]}</p>\n'
-        f"<h1>{escape(data['emisor'])}</h1>\n"
-        f'<p class="ficha-sub">{escape(data["numero"])} · {escape(data["fecha_label"])} · '
-        f'<span class="pill {escape(data["estado"])}">{escape(data["estado_label"])}</span> {val_pill}</p>\n'
-        '</div>\n'
-        '<div class="ficha-actions">\n'
-        f"{val_btn}\n"
-        f"{dup}\n"
-        '</div>\n'
-        '</div>\n'
-    )
+    if v2:
+        ficha_head = _ficha_head_v2(data, val_pill, val_btn, dup)
+    else:
+        ficha_head = (
+            '<div class="ficha-head">\n'
+            '<div>\n'
+            f'<p class="ficha-kicker">{escape(data["actividad_codigo"])} · {data["year"]} · asiento #{data["id"]}</p>\n'
+            f"<h1>{escape(data['emisor'])}</h1>\n"
+            f'<p class="ficha-sub">{escape(data["numero"])} · {escape(data["fecha_label"])} · '
+            f'<span class="pill {escape(data["estado"])}">{escape(data["estado_label"])}</span> {val_pill}</p>\n'
+            '</div>\n'
+            '<div class="ficha-actions">\n'
+            f"{val_btn}\n"
+            f"{dup}\n"
+            '</div>\n'
+            '</div>\n'
+        )
 
     pane_data_content = (
         f"{restore_bar}"
@@ -559,10 +567,10 @@ def render_asiento_page(data: dict) -> str:
         '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
         f"<title>Factura {escape(str(data['numero']))} · {escape(str(data['emisor']))}</title>\n"
-        f"{_FONT_LINKS}{_STATIC_LINKS}<style>{_CSS}</style>\n</head>\n"
-        f"<body class=\"ficha-page\" data-asiento=\"{data['id']}\">\n"
+        f"{_FONT_LINKS}{_STATIC_LINKS}{extra_css}<style>{_CSS}</style>\n</head>\n"
+        f"<body class=\"ficha-page\" data-ui=\"{"v2" if v2 else "v1"}\" data-asiento=\"{data['id']}\">\n"
         '<header class="ficha-bar wrap">\n'
-        f'<a class="back-link" href="{escape(data["dashboard_href"])}">{_BACK_SVG} Volver al libro</a>\n'
+        f'<a class="back-link" href="{escape(back_href)}">{_BACK_SVG} Volver al libro</a>\n'
         '<div class="ficha-bar-right">\n'
         f"{mob_doc_btn}\n"
         f'<button type="button" class="row-edit" id="ficha-log" '
@@ -607,6 +615,7 @@ def render_asiento_page(data: dict) -> str:
         f"{dup_dialog}\n"
         f"{_ficha_lines_script()}\n"
         f"{_ficha_filter_script()}\n"
+        f"{num_script}\n"
         '<dialog class="app-sheet sheet-form ficha-log-dialog" id="ficha-log-dialog" aria-labelledby="ficha-log-title">'
         '<p class="sheet-eyebrow">Historial</p>'
         f'<h2 id="ficha-log-title">{_CLOCK_SVG} Cambios del asiento</h2>'
@@ -2964,6 +2973,102 @@ def _panel_revision_v2(data: dict) -> str:
 
   {_footer(data)}
 </div>
+"""
+
+
+def _con_ui2(href: str) -> str:
+    """Añade ?ui=v2 a un href interno conservando el fragmento."""
+    if "#" in href:
+        base, frag = href.split("#", 1)
+        sep = "&" if "?" in base else "?"
+        return f"{base}{sep}ui=v2#{frag}"
+    sep = "&" if "?" in href else "?"
+    return f"{href}{sep}ui=v2"
+
+
+def _ficha_head_v2(data: dict, val_pill: str, val_btn: str, dup: str) -> str:
+    """Cabecera v2: número editable inline, mismos botones cableados."""
+    numero = "" if data["numero"] == "—" else data["numero"]
+    return (
+        '<div class="ficha-head v2-ficha-head">\n'
+        "<div>\n"
+        f'<p class="ficha-kicker">{escape(data["actividad_codigo"])} · {data["year"]} · asiento #{data["id"]}</p>\n'
+        f"<h1>{escape(data['emisor'])}</h1>\n"
+        '<p class="ficha-sub">'
+        f'<span id="ficha-num-view">{escape(data["numero"])}</span>'
+        f'<button type="button" class="row-edit" id="ficha-num-edit" title="Corregir número de factura" aria-label="Corregir número de factura">{_PENCIL_SVG}</button>'
+        '<span id="ficha-num-form" hidden>'
+        f'<input id="ficha-num-input" type="text" maxlength="120" value="{escape(numero)}" aria-label="Número de factura">'
+        '<button type="button" class="ghost" id="ficha-num-save">Guardar</button>'
+        '<button type="button" class="ghost" id="ficha-num-cancel">Cancelar</button>'
+        "</span>"
+        '<span class="v2-num-error" id="ficha-num-error" role="alert" hidden></span>'
+        f" · {escape(data['fecha_label'])} · "
+        f'<span class="pill {escape(data["estado"])}">{escape(data["estado_label"])}</span> {val_pill}</p>\n'
+        "</div>\n"
+        '<div class="ficha-actions">\n'
+        f"{val_btn}\n"
+        f"{dup}\n"
+        "</div>\n"
+        "</div>\n"
+    )
+
+
+def _ficha_num_script() -> str:
+    """Guarda el número por API y recarga. Solo v2."""
+    return r"""
+<script>
+(() => {
+  const view = document.getElementById("ficha-num-view");
+  const edit = document.getElementById("ficha-num-edit");
+  const form = document.getElementById("ficha-num-form");
+  const input = document.getElementById("ficha-num-input");
+  const save = document.getElementById("ficha-num-save");
+  const cancel = document.getElementById("ficha-num-cancel");
+  const error = document.getElementById("ficha-num-error");
+  if (!view || !edit || !form || !input) return;
+  const id = document.body.dataset.asiento;
+  const showError = (msg) => {
+    if (!error) return;
+    error.hidden = false;
+    error.textContent = msg;
+  };
+  edit.addEventListener("click", () => {
+    form.hidden = false;
+    view.hidden = true;
+    edit.hidden = true;
+    if (error) error.hidden = true;
+    input.focus();
+    input.select();
+  });
+  cancel?.addEventListener("click", () => {
+    form.hidden = true;
+    view.hidden = false;
+    edit.hidden = false;
+    if (error) error.hidden = true;
+    input.value = view.textContent.trim() === "—" ? "" : view.textContent.trim();
+  });
+  save?.addEventListener("click", async () => {
+    const numero = (input.value || "").trim();
+    if (!numero) {
+      showError("Indica un número de factura (no puede estar vacío).");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/asientos/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ numero, confirmado: true }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload.ok === false) throw new Error(payload.error || String(res.status));
+      window.location.reload();
+    } catch (err) {
+      showError("No se pudo guardar: " + err.message);
+    }
+  });
+})();
+</script>
 """
 
 

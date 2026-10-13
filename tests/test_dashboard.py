@@ -971,3 +971,48 @@ def test_render_v1_sin_marcas_v2(session):
     assert "Cola de revisión" not in html
     assert 'src="/static/logo.svg"' not in html
 
+
+def test_ficha_v2_con_numero_editable_y_bandera(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    row = session.scalar(select(Asiento).where(Asiento.emisor == "LEROY MERLIN ARROYO"))
+    data = collect_asiento_ficha(session, row, dashboard_name="dashboard_CI-VA-001_2026.html")
+    data["ui"] = "v2"
+    html = render_asiento_page(data)
+    assert 'data-ui="v2"' in html
+    assert 'href="/static/v2.css"' in html
+    for needle in (
+        "ficha-num-view", "ficha-num-edit", "ficha-num-form", "ficha-num-input",
+        "ficha-num-save", "ficha-num-cancel", "ficha-num-error",
+    ):
+        assert f'id="{needle}"' in html, needle
+    assert "?ui=v2" in html
+    for needle in (
+        "ficha-btn-validate", "ficha-lines-body", "ficha-line-dialog",
+        "app-confirm", "ficha-log", "ficha-dup-marcar",
+    ):
+        assert f'id="{needle}"' in html, needle
+
+
+def test_ficha_v1_sin_editor_numero(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    row = session.scalar(select(Asiento).where(Asiento.emisor == "LEROY MERLIN ARROYO"))
+    html = render_asiento_page(
+        collect_asiento_ficha(session, row, dashboard_name="dashboard_CI-VA-001_2026.html")
+    )
+    assert 'data-ui="v1"' in html
+    assert "/static/v2.css" not in html
+    assert 'id="ficha-num-input"' not in html
+    assert "?ui=v2" not in html
+
+
+def test_con_ui2_conserva_fragmento():
+    from aeat_hub.dashboard import _con_ui2
+
+    assert _con_ui2("/d.html#revisar") == "/d.html?ui=v2#revisar"
+    assert _con_ui2("/d.html") == "/d.html?ui=v2"
+    assert _con_ui2("/d.html?a=1#x") == "/d.html?a=1&ui=v2#x"
+
