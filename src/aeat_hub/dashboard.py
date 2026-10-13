@@ -182,6 +182,7 @@ def render_dashboard(data: dict) -> str:
     masthead = _masthead_v2(data) if v2 else _masthead(data)
     revision = _panel_revision_v2(data) if v2 else _panel_revision(data)
     libro = _panel_libro_v2(data) if v2 else _panel_libro(data)
+    duplicados = _panel_duplicados_v2(data) if v2 else _panel_duplicados(data)
     extra_css = '<link rel="stylesheet" href="/static/v2.css">\n' if v2 else ""
     return (
         "<!DOCTYPE html>\n"
@@ -196,7 +197,7 @@ def render_dashboard(data: dict) -> str:
         '<main class="wrap panels">\n'
         f"{revision}\n"
         f"{libro}\n"
-        f"{_panel_duplicados(data)}\n"
+        f"{duplicados}\n"
         f"{_panel_insights(data)}\n"
         "</main>\n"
         f"{_site_footer()}\n"
@@ -3199,6 +3200,108 @@ def _panel_libro_v2(data: dict) -> str:
     )
 
 
+def _tabla_duplicados(
+    rows: list[dict],
+    aria: str,
+    prefix: str,
+    por_id: dict,
+    data: dict,
+    *,
+    ui: str = "v1",
+) -> str:
+    """Tabla de duplicados/sospechosos. Compartida v1/v2 (mismos builders)."""
+    if not rows:
+        if ui == "v2":
+            return (
+                '<div class="v2-kan-vacio">'
+                '<img src="/static/blob.svg" alt="" width="56" height="56">'
+                "<p>Nada por aquí. Cuando el modelo detecte la misma compra dos veces, "
+                "aparecerá aquí para que decidas.</p></div>"
+            )
+        return (
+            '<p class="dup-vacio">Nada por aquí. Cuando el modelo detecte '
+            "la misma compra dos veces, aparecerá aquí para que decidas.</p>"
+        )
+    filas = []
+    gemelos: list[tuple[str, str]] = []
+    for item in rows:
+        gemelo_id = item.get("duplicado_de_id") or _gemelo_que_apunta(item["id"], data)
+        if gemelo_id:
+            gemelos.append((str(gemelo_id), f"#{gemelo_id}"))
+        filas.append(
+            _dup_card(item, por_id.get(gemelo_id) if gemelo_id else None, gemelo_id, ui=ui)
+        )
+    gemelos = sorted(set(gemelos), key=lambda pair: int(pair[0]))
+    choices = _asiento_table_choices(rows, gemelos=gemelos)
+    config = _smart_config(
+        filters=_asiento_smart_filters(prefix, gemelo=True),
+        ranges=[("total", f"f-{prefix}-total-min", f"f-{prefix}-total-max")],
+        default_sort="id",
+    )
+    return (
+        f'<div class="table-wrap" aria-label="{escape(aria)}">'
+        f'<table class="dup-tabla smart-table" data-smart-config="{config}">'
+        f'{_asiento_table_thead(prefix, choices, gemelo=True, actions="1")}'
+        f'<tbody>{"".join(filas)}</tbody></table></div>'
+    )
+
+
+def _dup_gestor_dialog() -> str:
+    """Gestor de duplicados. Compartido v1/v2 (mismos ids)."""
+    return """
+  <dialog class="app-sheet sheet-compare" id="dup-gestor" aria-labelledby="dup-gestor-title">
+    <p class="sheet-eyebrow" id="dup-gestor-eyebrow">Duplicado</p>
+    <h2 id="dup-gestor-title">Gestionar duplicado</h2>
+    <p class="sheet-lead" id="dup-gestor-motivo"></p>
+    <p class="sheet-error" id="dup-gestor-error" hidden></p>
+    <div class="dup-par" id="dup-gestor-par"></div>
+    <div class="sheet-foot">
+      <a class="ghost sheet-aside sheet-link" id="dup-gestor-ficha" target="_blank" rel="noopener">Abrir ficha ↗</a>
+      <button type="button" class="ghost" id="dup-gestor-cerrar">Cerrar</button>
+      <button type="button" class="export-btn" id="dup-gestor-fusionar" hidden>Fusionar</button>
+      <button type="button" class="export-btn is-warn" id="dup-gestor-quitar" hidden>Quitar duplicado</button>
+    </div>
+  </dialog>
+"""
+
+
+def _panel_duplicados_v2(data: dict) -> str:
+    por_id = {item["id"]: item for item in data["asientos"]}
+    fusionados = [item for item in data["asientos"] if item["estado"] == "duplicado"]
+    sospechosos = data.get("sospechosos") or []
+    return f"""
+<div class="panel v2-dup-panel" role="tabpanel" id="panel-duplicados" data-panel="duplicados"
+  aria-labelledby="tab-duplicados">
+  <div class="v2-libro-head">
+    <div class="v2-rev-title">
+      <h2>Duplicados</h2>
+      <p>La misma compra más de una vez: compara con su gemelo y decide.</p>
+    </div>
+    <div class="v2-rev-stats" aria-label="Resumen de duplicados">
+      <span><strong>{len(fusionados)}</strong> fusionados</span>
+      <span><strong>{len(sospechosos)}</strong> sospechosos</span>
+    </div>
+  </div>
+  <section class="insight-block v2-dup-sec" aria-labelledby="dup-fusionados">
+    <div class="review-head">
+      <h2 id="dup-fusionados">Duplicados fusionados</h2>
+      <p>Marcados (por el modelo o por ti) y fuera de los totales. Se deshacen desde «Gestionar».</p>
+    </div>
+    {_tabla_duplicados(fusionados, "Duplicados fusionados", "dup-fus", por_id, data, ui="v2")}
+  </section>
+  <section class="insight-block v2-dup-sec" aria-labelledby="dup-sospechosos">
+    <div class="review-head">
+      <h2 id="dup-sospechosos">Sospechosos pendientes</h2>
+      <p>Compara con su gemelo y decide: fusionar o abrir la ficha.</p>
+    </div>
+    {_tabla_duplicados(sospechosos, "Sospechosos pendientes", "dup-sos", por_id, data, ui="v2")}
+  </section>
+  {_dup_gestor_dialog()}
+  {_footer(data)}
+</div>
+"""
+
+
 def _fila_revision(item: dict) -> str:
     """Fila de pendiente para la vista tabla. Compartida v1/v2 (mismos ids)."""
     total = item.get("total")
@@ -3325,9 +3428,12 @@ def _dup_attrs(item: dict, gemelo_view: dict | None, gemelo_id: int | None) -> s
     )
 
 
-def _dup_card(item: dict, gemelo_view: dict | None, gemelo_id: int | None) -> str:
+def _dup_card(
+    item: dict, gemelo_view: dict | None, gemelo_id: int | None, *, ui: str = "v1"
+) -> str:
+    flag = "?ui=v2" if ui == "v2" else ""
     gemelo_celda = (
-        f'<a href="/asiento/{gemelo_id}">#{gemelo_id}</a>' if gemelo_id else "—"
+        f'<a href="/asiento/{gemelo_id}{flag}">#{gemelo_id}</a>' if gemelo_id else "—"
     )
     total = item.get("total")
     total_label = escape(format_euro(total)) if total is not None else "—"
@@ -3341,7 +3447,7 @@ def _dup_card(item: dict, gemelo_view: dict | None, gemelo_id: int | None) -> st
     )
     return (
         f'<tr tabindex="0" role="button" {_dup_attrs(item, gemelo_view, gemelo_id)} {row_attrs}>'
-        f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
+        f'<td><a href="/asiento/{item["id"]}{flag}">#{item["id"]}</a></td>'
         f"<td>{escape(item['emisor'])}</td>"
         f"<td>{escape(item['numero'])}</td>"
         f"<td>{escape(item['fecha_label'])}</td>"
@@ -3357,33 +3463,6 @@ def _panel_duplicados(data: dict) -> str:
     fusionados = [item for item in data["asientos"] if item["estado"] == "duplicado"]
     sospechosos = data.get("sospechosos") or []
 
-    def _tabla(rows: list[dict], aria: str, prefix: str) -> str:
-        if not rows:
-            return (
-                '<p class="dup-vacio">Nada por aquí. Cuando el modelo detecte '
-                "la misma compra dos veces, aparecerá aquí para que decidas.</p>"
-            )
-        filas = []
-        gemelos: list[tuple[str, str]] = []
-        for item in rows:
-            gemelo_id = item.get("duplicado_de_id") or _gemelo_que_apunta(item["id"], data)
-            if gemelo_id:
-                gemelos.append((str(gemelo_id), f"#{gemelo_id}"))
-            filas.append(_dup_card(item, por_id.get(gemelo_id) if gemelo_id else None, gemelo_id))
-        gemelos = sorted(set(gemelos), key=lambda pair: int(pair[0]))
-        choices = _asiento_table_choices(rows, gemelos=gemelos)
-        config = _smart_config(
-            filters=_asiento_smart_filters(prefix, gemelo=True),
-            ranges=[("total", f"f-{prefix}-total-min", f"f-{prefix}-total-max")],
-            default_sort="id",
-        )
-        return (
-            f'<div class="table-wrap" aria-label="{escape(aria)}">'
-            f'<table class="dup-tabla smart-table" data-smart-config="{config}">'
-            f'{_asiento_table_thead(prefix, choices, gemelo=True, actions="1")}'
-            f'<tbody>{"".join(filas)}</tbody></table></div>'
-        )
-
     resumen = (
         f'{len(fusionados)} fusionado{"s" if len(fusionados) != 1 else ""} · '
         f'{len(sospechosos)} sospechoso{"s" if len(sospechosos) != 1 else ""}'
@@ -3397,28 +3476,16 @@ def _panel_duplicados(data: dict) -> str:
       <h2 id="dup-fusionados">Duplicados fusionados</h2>
       <p>Marcados (por el modelo o por ti) y fuera de los totales. Se deshacen desde «Gestionar».</p>
     </div>
-    {_tabla(fusionados, "Duplicados fusionados", "dup-fus")}
+    {_tabla_duplicados(fusionados, "Duplicados fusionados", "dup-fus", por_id, data)}
   </section>
   <section class="insight-block" aria-labelledby="dup-sospechosos">
     <div class="review-head">
       <h2 id="dup-sospechosos">Sospechosos pendientes</h2>
       <p>Compara con su gemelo y decide: fusionar o abrir la ficha.</p>
     </div>
-    {_tabla(sospechosos, "Sospechosos pendientes", "dup-sos")}
+    {_tabla_duplicados(sospechosos, "Sospechosos pendientes", "dup-sos", por_id, data)}
   </section>
-  <dialog class="app-sheet sheet-compare" id="dup-gestor" aria-labelledby="dup-gestor-title">
-    <p class="sheet-eyebrow" id="dup-gestor-eyebrow">Duplicado</p>
-    <h2 id="dup-gestor-title">Gestionar duplicado</h2>
-    <p class="sheet-lead" id="dup-gestor-motivo"></p>
-    <p class="sheet-error" id="dup-gestor-error" hidden></p>
-    <div class="dup-par" id="dup-gestor-par"></div>
-    <div class="sheet-foot">
-      <a class="ghost sheet-aside sheet-link" id="dup-gestor-ficha" target="_blank" rel="noopener">Abrir ficha ↗</a>
-      <button type="button" class="ghost" id="dup-gestor-cerrar">Cerrar</button>
-      <button type="button" class="export-btn" id="dup-gestor-fusionar" hidden>Fusionar</button>
-      <button type="button" class="export-btn is-warn" id="dup-gestor-quitar" hidden>Quitar duplicado</button>
-    </div>
-  </dialog>
+  {_dup_gestor_dialog()}
   {_footer(data)}
 </div>
 """

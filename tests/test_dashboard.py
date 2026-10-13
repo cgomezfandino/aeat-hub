@@ -1045,3 +1045,30 @@ def test_libro_v1_sin_marcas_v2(session):
     assert "v2-libro" not in html
     assert "?ui=v2" not in html
 
+
+def test_duplicados_v2_con_gestor_y_bandera(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    data = collect_dashboard(session, actividad, 2026)
+    data["ui"] = "v2"
+    html = render_dashboard(data)
+    assert 'class="panel v2-dup-panel"' in html
+    for needle in (
+        "dup-fusionados", "dup-sospechosos", "dup-gestor", "dup-gestor-eyebrow",
+        "dup-gestor-title", "dup-gestor-motivo", "dup-gestor-error", "dup-gestor-par",
+        "dup-gestor-ficha", "dup-gestor-cerrar", "dup-gestor-fusionar", "dup-gestor-quitar",
+    ):
+        assert f'id="{needle}"' in html, needle
+    assert 'data-dup-id="' in html
+    assert "?ui=v2" in html
+
+
+def test_duplicados_v1_sin_marcas_v2(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert "v2-dup-panel" not in html
+    assert 'id="dup-gestor"' in html
+

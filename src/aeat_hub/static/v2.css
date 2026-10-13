@@ -388,3 +388,40 @@ body[data-ui="v2"] .v2-libro .pager {
   font-size: var(--fs-sm);
   color: var(--muted);
 }
+
+/* Duplicados: secciones en tarjeta y tablas densas. */
+body[data-ui="v2"] .v2-dup-sec {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-3);
+}
+body[data-ui="v2"] .v2-dup-sec .review-head h2 {
+  font-size: var(--fs-lg);
+  margin: 0;
+}
+body[data-ui="v2"] .v2-dup-sec .review-head p {
+  margin: var(--sp-1) 0 var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+body[data-ui="v2"] .v2-dup-sec .dup-tabla {
+  font-size: var(--fs-sm);
+}
+body[data-ui="v2"] .v2-dup-sec .dup-tabla thead th {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border-bottom: 2px solid var(--line);
+}
+body[data-ui="v2"] .v2-dup-sec .dup-tabla tbody tr {
+  cursor: pointer;
+}
+body[data-ui="v2"] .v2-dup-sec .dup-tabla tbody tr:hover {
+  background: var(--wash);
+}
+body[data-ui="v2"] .v2-dup-sec .dup-tabla a {
+  color: var(--navy);
+}
