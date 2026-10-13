@@ -1,4 +1,4 @@
-"""Extracción y OCR multimodal mediante Google Gemini (Gemini 2.5 Flash / 1.5 Flash).
+"""Extracción y OCR multimodal mediante Google Gemini (Gemini 2.5 Flash).
 
 Requiere GEMINI_API_KEY o GOOGLE_API_KEY en entorno o .env.
 Devuelve el JSON estructurado de la factura directamente.
@@ -77,6 +77,7 @@ Instrucciones críticas:
 6. En las líneas individuales (`lineas`): el campo `importe` es el total final de la línea. Si los precios ya incluyen IVA (tickets de retail, IKEA, Leroy Merlin), el `importe` es el total que figura en el documento; no sumes IVA sobre un importe que ya lo incluye.
 7. En artículos en pack o kit (sets que listan componentes con desglose), no dupliques el importe del pack y de sus componentes para evitar sobrepasar el total del documento.
 8. Responde únicamente con el objeto JSON válido, sin bloques markdown adicionales ni comentarios.
+9. En tickets de retail (Leroy Merlin, IKEA, Obramat...), el NIF del cliente suele figurar como 'NIF', 'No NIF', 'NIF CLIENTE' o 'DNI' en el bloque del comprador: extráelo siempre a `nif_receptor` (y el nombre a `receptor`) en vez de dejarlo en null.
 """
 
 
@@ -182,11 +183,13 @@ class GeminiOCRProvider:
         elif raw_text.startswith("```"):
             raw_text = raw_text.removeprefix("```").removesuffix("```").strip()
 
+        usage = data.get("usageMetadata") or {}
         return OCRResult(
             text=raw_text,
             engine=self.name,
             confidence=0.98,
             pages=pages,
+            usage=dict(usage) if isinstance(usage, dict) else {},
         )
 
 

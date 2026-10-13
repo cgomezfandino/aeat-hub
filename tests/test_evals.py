@@ -27,6 +27,12 @@ def test_token_hyphen_nif_and_spanish_amount():
     assert scored["recall"] == 2 / 3
 
 
+def test_token_fecha_acepta_iso_y_espanola():
+    assert token_in_text("10/03/2026", '{"fecha": "2026-03-10"}')[0]
+    assert token_in_text("2026-03-10", "Fecha: 10/03/2026")[0]
+    assert not token_in_text("11/03/2026", '{"fecha": "2026-03-10"}')[0]
+
+
 def test_field_in_ocr_fecha_and_total():
     text = "Fecha de venta 18/09/2026\nTotal TTI (EUR) 13,86"
     assert field_in_ocr("fecha", "2026-09-18", text)
@@ -91,6 +97,47 @@ def test_cli_eval_synthetic_native(layout: DataLayout):
     assert "EVALS" in result.output
     jsons = list((layout.root / "evals").glob("eval-*.json"))
     assert jsons, "debe escribir el informe JSON en el data-dir"
+
+
+class _FakeGemini:
+    name = "gemini-2.5-flash"
+
+    def available(self):
+        return True, "fake"
+
+    def transcribe(self, path: Path) -> OCRResult:
+        return OCRResult(
+            text=SYNTHETIC_LUZ,
+            engine=self.name,
+            confidence=0.98,
+            usage={
+                "promptTokenCount": 1266,
+                "candidatesTokenCount": 400,
+                "totalTokenCount": 1666,
+            },
+        )
+
+
+def test_runner_registra_uso_de_gemini(tmp_path: Path):
+    cases = make_synthetic_cases(tmp_path / "syn")
+    report = run_eval(
+        cases, engines=["gemini"], gold_path="memory", providers={"gemini": _FakeGemini()}
+    )
+    ok = [run for run in report.runs if run.status == "ok"]
+    assert ok and all(run.usage.get("totalTokenCount") == 1666 for run in ok)
+    assert report.summaries[0].total_tokens == 1666 * len(ok)
+
+
+def test_runner_acepta_alias_gemini_2_5_flash(tmp_path: Path):
+    cases = make_synthetic_cases(tmp_path / "syn")
+    report = run_eval(
+        cases,
+        engines=["gemini-2.5-flash"],
+        gold_path="memory",
+        providers={"gemini": _FakeGemini()},
+    )
+    assert report.engines == ["gemini"]
+    assert any(run.status == "ok" for run in report.runs)
 
 
 def test_parser_on_synthetic_luz_is_complete():

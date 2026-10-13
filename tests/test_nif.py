@@ -1,4 +1,4 @@
-from aeat_hub.fiscal.nif import find_nifs, is_valid_nif, normalize_nif
+from aeat_hub.fiscal.nif import find_nifs, is_valid_nif, normalize_nif, pick_emisor_receptor
 
 
 def test_dni_nie_cif_validos():
@@ -23,3 +23,16 @@ def test_find_nifs_en_texto():
 
 def test_cif_con_guion():
     assert find_nifs("CIF B-12345674 destinatario 12345678Z") == ["B12345674", "12345678Z"]
+
+
+def test_pick_excluye_titular_si_es_unico_candidato():
+    assert pick_emisor_receptor(["12345678Z"], excluir="12345678Z") == (None, None)
+    assert pick_emisor_receptor(["12345678Z"], excluir=" 12345678z ") == (None, None)
+
+
+def test_pick_no_toca_varios_candidatos_aunque_este_el_titular():
+    # Sin dirección conocida (emitida vs recibida), con varios NIF se mantiene el criterio actual.
+    assert pick_emisor_receptor(["B12345674", "12345678Z"], excluir="12345678Z") == (
+        "B12345674",
+        "12345678Z",
+    )

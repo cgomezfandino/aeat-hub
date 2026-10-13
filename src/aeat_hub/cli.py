@@ -731,7 +731,7 @@ def eval_cmd(
     engines: str = typer.Option(
         ",".join(ENGINE_ORDER),
         "--engines",
-        help="Lista: native,rapid,vision,deepseek,tesseract,unlimited,paddle",
+        help="Lista: native,rapid,vision,deepseek,tesseract,unlimited,paddle,gemini",
     ),
     synthetic: bool = typer.Option(
         True, "--synthetic/--no-synthetic", help="Incluye PDF/PNG sintéticos (sin PII)"

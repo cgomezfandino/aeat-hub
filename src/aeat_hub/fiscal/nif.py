@@ -54,8 +54,20 @@ def find_nifs(text: str) -> list[str]:
     return found
 
 
-def pick_emisor_receptor(nifs: list[str]) -> tuple[str | None, str | None]:
-    """En facturas ES el CIF de empresa suele ser el emisor y el DNI el cliente."""
+def pick_emisor_receptor(
+    nifs: list[str], *, excluir: str | None = None
+) -> tuple[str | None, str | None]:
+    """En facturas ES el CIF de empresa suele ser el emisor y el DNI el cliente.
+
+    Si `excluir` (NIF del titular) es el único candidato, no se inventa emisor:
+    se devuelve (None, None) para que el asiento quede pendiente de revisión.
+    Con varios candidatos no se toca nada: sin dirección conocida (emitida o
+    recibida), excluir al titular rompería las facturas emitidas.
+    """
+    if excluir and nifs:
+        titular = normalize_nif(excluir)
+        if titular and all(normalize_nif(nif) == titular for nif in nifs):
+            return None, None
     org = [nif for nif in nifs if nif[:1] in CIF_LETTERS_ORG]
     person = [nif for nif in nifs if nif[:1].isdigit() or nif[:1] in NIE_PREFIX]
     if org:

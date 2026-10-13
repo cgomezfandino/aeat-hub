@@ -64,6 +64,11 @@ def _descuadre_lineas(extract: InvoiceExtract) -> Decimal | None:
     return abs(sum(importes, Decimal("0.00")) - extract.total)
 
 
+def _nif_titular(actividad: Actividad) -> str | None:
+    titular = actividad.titular
+    return titular.nif if titular is not None and titular.nif else None
+
+
 def _reintentar_si_no_cuadra(
     path: Path,
     ocr: OCRResult,
@@ -71,6 +76,7 @@ def _reintentar_si_no_cuadra(
     notes: list[str],
     *,
     rapid: OCRProvider | None,
+    nif_titular: str | None = None,
 ) -> tuple[OCRResult, InvoiceExtract]:
     """Si las líneas no suman el total, prueba el otro motor de imagen una vez."""
     gap = _descuadre_lineas(extract)
@@ -85,7 +91,7 @@ def _reintentar_si_no_cuadra(
     if not alt.text.strip() or alt.engine == ocr.engine:
         notes.append("La segunda lectura no aporta otro texto.")
         return ocr, extract
-    alt_extract = parse_invoice(alt.text, motor=alt.engine)
+    alt_extract = parse_invoice(alt.text, motor=alt.engine, nif_titular=nif_titular)
     alt_gap = _descuadre_lineas(alt_extract)
     if alt_gap is not None and alt_gap < gap:
         notes.append(f"La segunda lectura ({alt.engine}) encaja mejor.")
@@ -159,8 +165,11 @@ def ingest_file(
         )
 
     with etapa("parsear", name):
-        extract = parse_invoice(ocr.text, motor=ocr.engine)
-        ocr, extract = _reintentar_si_no_cuadra(path, ocr, extract, warnings, rapid=rapid)
+        titular_nif = _nif_titular(actividad)
+        extract = parse_invoice(ocr.text, motor=ocr.engine, nif_titular=titular_nif)
+        ocr, extract = _reintentar_si_no_cuadra(
+            path, ocr, extract, warnings, rapid=rapid, nif_titular=titular_nif
+        )
         log_detalle(
             "parsear",
             "emisor=%s nif=%s numero=%s fecha=%s total=%s confianza=%.3f",
@@ -417,6 +426,7 @@ def reparse_asientos(session: Session, actividad: Actividad) -> int:
     No toca asientos validados por el usuario: el libro humano gana al modelo.
     """
     updated = 0
+    titular_nif = _nif_titular(actividad)
     rows = session.scalars(select(Asiento).where(Asiento.actividad_id == actividad.id)).all()
     for asiento in rows:
         if asiento.validado:
@@ -426,7 +436,9 @@ def reparse_asientos(session: Session, actividad: Actividad) -> int:
         documento = session.get(Documento, asiento.documento_id)
         if documento is None or not (documento.texto_crudo or "").strip():
             continue
-        extract = parse_invoice(documento.texto_crudo, motor=documento.motor_ocr)
+        extract = parse_invoice(
+            documento.texto_crudo, motor=documento.motor_ocr, nif_titular=titular_nif
+        )
         factura = asiento.factura
         divergencia = _divergencias_con_factura(asiento, factura)
         # el nombre canónico ya conocido del NIF gana a la grafía del OCR

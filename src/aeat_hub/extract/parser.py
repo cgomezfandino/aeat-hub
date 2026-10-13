@@ -134,14 +134,18 @@ def _try_load_json(text: str) -> dict | None:
     return None
 
 
-def parse_invoice(text: str, *, motor: str = "") -> InvoiceExtract:
+def parse_invoice(
+    text: str, *, motor: str = "", nif_titular: str | None = None
+) -> InvoiceExtract:
     data = _try_load_json(text)
     if data and any(k in data for k in ("emisor", "total", "lineas", "nif_emisor")):
+        # El JSON estructurado (Gemini) ya distingue emisor de receptor: se respeta
+        # aunque el emisor coincida con el titular (factura emitida).
         return _parse_json_extract(data, motor=motor)
 
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
     nifs = find_nifs(text or "")
-    nif_emisor, nif_receptor = pick_emisor_receptor(nifs)
+    nif_emisor, nif_receptor = pick_emisor_receptor(nifs, excluir=nif_titular)
     numero = _find_numero(text or "")
     pagina_ticket, paginas_ticket = _find_paginacion_ticket(text or "")
     fecha = _find_fecha(text or "", lines)

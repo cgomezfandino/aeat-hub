@@ -115,3 +115,45 @@ def test_parse_invoice_json_directo():
     assert len(extract.lineas) == 1
     assert extract.lineas[0].codigo == "TUB-01"
     assert extract.confianza >= 0.90
+
+
+def test_gemini_transcribe_guarda_usage_metadata(tmp_path: Path, monkeypatch):
+    import json as jsonlib
+
+    from PIL import Image
+
+    from aeat_hub.ocr.gemini import GeminiOCRProvider
+
+    monkeypatch.setenv("GEMINI_API_KEY", "TESTKEY")
+    monkeypatch.setattr(
+        "aeat_hub.ocr.gemini.iter_page_images",
+        lambda path, dpi=180: iter([Image.new("RGB", (16, 16))]),
+    )
+    body = jsonlib.dumps(
+        {
+            "candidates": [
+                {"content": {"parts": [{"text": '{"emisor": "X", "total": 1}'}]}}
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 1266,
+                "candidatesTokenCount": 100,
+                "totalTokenCount": 1366,
+            },
+        }
+    ).encode("utf-8")
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return body
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=75: _Resp())
+    pdf = write_pdf(tmp_path / "x.pdf", FACTURA_LUZ)
+    result = GeminiOCRProvider().transcribe(pdf)
+    assert result.usage.get("totalTokenCount") == 1366
+    assert '"emisor"' in result.text

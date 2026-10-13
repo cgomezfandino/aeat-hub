@@ -31,6 +31,27 @@ def test_pdf_nativo_tiene_alta_confianza(tmp_path: Path):
     assert result.confidence >= 0.65
 
 
+def test_ingest_solo_nif_titular_queda_pendiente_sin_emisor(session, layout):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    actividad.titular.nif = "12345678Z"
+    session.flush()
+    texto = (
+        "TIENDA BARRIO\n"
+        "Factura nº: T-55\n"
+        "Fecha: 05/04/2026\n"
+        "Cliente: 12345678Z\n"
+        "Base imponible: 10,00 €\n"
+        "IVA 21%: 2,10 €\n"
+        "Total factura: 12,10 €\n"
+    )
+    pdf = write_pdf(layout.inbox / "solo-titular.pdf", texto)
+    item = ingest_file(session, layout, pdf, actividad, rapid=FakeRapid())
+    session.commit()
+    asiento = session.get(Asiento, item.asiento_id)
+    assert asiento.nif_emisor is None
+    assert asiento.estado == "pendiente"
+
+
 def test_ingest_pdf_texto_crea_asiento_luz(session, layout):
     pdf = write_pdf(layout.inbox / "luz.pdf", FACTURA_LUZ)
     actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))

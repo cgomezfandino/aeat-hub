@@ -13,6 +13,37 @@ def test_parse_amount_espanol():
     assert format_euro(None) == "—"
 
 
+def test_parse_solo_nif_titular_no_inventa_emisor():
+    texto = (
+        "TIENDA BARRIO\n"
+        "Factura nº: T-55\n"
+        "Fecha: 05/04/2026\n"
+        "Cliente: 12345678Z\n"
+        "Base imponible: 10,00 €\n"
+        "IVA 21%: 2,10 €\n"
+        "Total factura: 12,10 €\n"
+    )
+    assert parse_invoice(texto, nif_titular="12345678Z").nif_emisor is None
+    # Sin contexto de titular se mantiene el criterio actual.
+    assert parse_invoice(texto).nif_emisor == "12345678Z"
+
+
+def test_parse_json_respeta_emisor_aunque_coincida_con_titular():
+    import json
+
+    data = {
+        "emisor": "YO AUTONOMO",
+        "nif_emisor": "12345678Z",
+        "nif_receptor": "B12345674",
+        "numero": "E-1",
+        "fecha": "2026-04-05",
+        "total": 121.00,
+    }
+    extract = parse_invoice(json.dumps(data), nif_titular="12345678Z")
+    assert extract.nif_emisor == "12345678Z"
+    assert extract.nif_receptor == "B12345674"
+
+
 def test_parse_factura_luz():
     extract = parse_invoice(FACTURA_LUZ)
     assert extract.nif_emisor == "B12345674"

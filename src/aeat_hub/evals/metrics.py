@@ -55,6 +55,10 @@ def similarity(left: str, right: str) -> float:
     return 1.0 - (dist / max(len(left), len(right), 1))
 
 
+_DATE_ES = re.compile(r"^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$")
+_DATE_ISO = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})$")
+
+
 def token_variants(token: str) -> list[str]:
     raw = normalize_text(token)
     variants = {raw, compact_alnum(token)}
@@ -64,7 +68,32 @@ def token_variants(token: str) -> list[str]:
         variants.add(compact_alnum(flipped))
         variants.add(normalize_text(token.replace(",", ".")))
         variants.add(normalize_text(token.replace(".", ",")))
+    variants.update(_date_variants(token))
     return [item for item in variants if item]
+
+
+def _date_variants(token: str) -> set[str]:
+    """Una fecha oro en formato español también vale en ISO y al revés.
+
+    Sin esto, el JSON estructurado (siempre ISO) pierde el token de fecha
+    aunque el campo sea correcto.
+    """
+    found: set[str] = set()
+    es = _DATE_ES.match(token.strip())
+    if es and _valid_day_month(int(es.group(1)), int(es.group(2))):
+        day, month, year = es.group(1).zfill(2), es.group(2).zfill(2), es.group(3)
+        found.add(f"{year}-{month}-{day}")
+        found.add(f"{year}{month}{day}")
+    iso = _DATE_ISO.match(token.strip())
+    if iso and _valid_day_month(int(iso.group(3)), int(iso.group(2))):
+        year, month, day = iso.group(1), iso.group(2).zfill(2), iso.group(3).zfill(2)
+        found.add(f"{day}/{month}/{year}")
+        found.add(f"{day}{month}{year}")
+    return found
+
+
+def _valid_day_month(day: int, month: int) -> bool:
+    return 1 <= day <= 31 and 1 <= month <= 12
 
 
 def token_in_text(token: str, text: str, *, fuzzy: float = 0.86) -> tuple[bool, bool]:
