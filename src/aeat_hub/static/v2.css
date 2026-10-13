@@ -425,3 +425,123 @@ body[data-ui="v2"] .v2-dup-sec .dup-tabla tbody tr:hover {
 body[data-ui="v2"] .v2-dup-sec .dup-tabla a {
   color: var(--navy);
 }
+
+/* Insights: KPIs, operativo, IVA y Renta sobre los builders v1. */
+body[data-ui="v2"] .v2-ins-panel .kpi-carousel {
+  margin-bottom: var(--sp-3);
+}
+body[data-ui="v2"] .v2-ins-panel .kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+body[data-ui="v2"] .v2-ins-panel .kpi {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+body[data-ui="v2"] .v2-ins-panel .kpi strong {
+  display: block;
+  font-size: var(--fs-xl);
+  color: var(--ink);
+}
+body[data-ui="v2"] .v2-ins-panel .kpi em {
+  font-style: normal;
+  font-size: var(--fs-xs);
+}
+body[data-ui="v2"] .v2-ins-panel .insight-block {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-3);
+}
+body[data-ui="v2"] .v2-ins-panel .review-head h2 {
+  font-size: var(--fs-lg);
+  margin: 0;
+}
+body[data-ui="v2"] .v2-ins-panel .review-head p {
+  margin: var(--sp-1) 0 var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+body[data-ui="v2"] .v2-ins-panel .insight-frase {
+  font-size: var(--fs-md);
+  margin: 0 0 var(--sp-3);
+}
+body[data-ui="v2"] .v2-ins-panel .insight-range {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-3);
+  font-size: var(--fs-sm);
+}
+body[data-ui="v2"] .v2-ins-panel .charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+body[data-ui="v2"] .v2-ins-panel .charts figure {
+  margin: 0;
+  min-width: 0;
+}
+body[data-ui="v2"] .v2-ins-panel .charts figcaption {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  margin-bottom: var(--sp-1);
+}
+body[data-ui="v2"] .v2-ins-panel .iva-tabla,
+body[data-ui="v2"] .v2-ins-panel .irpf-table {
+  font-size: var(--fs-sm);
+}
+body[data-ui="v2"] .v2-ins-panel .iva-tabla thead th,
+body[data-ui="v2"] .v2-ins-panel .irpf-table thead th {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border-bottom: 2px solid var(--line);
+}
+body[data-ui="v2"] .v2-ins-panel .iva-tabla tbody td,
+body[data-ui="v2"] .v2-ins-panel .irpf-table tbody td {
+  padding-top: var(--sp-1);
+  padding-bottom: var(--sp-1);
+}
+body[data-ui="v2"] .v2-ins-panel .irpf-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+body[data-ui="v2"] .v2-ins-panel .irpf-kpis article {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+body[data-ui="v2"] .v2-ins-panel .irpf-kpis strong {
+  display: block;
+  font-size: var(--fs-lg);
+  color: var(--ink);
+}
+@media (max-width: 1100px) {
+  body[data-ui="v2"] .v2-ins-panel .kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  body[data-ui="v2"] .v2-ins-panel .charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body[data-ui="v2"] .v2-ins-panel .irpf-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  body[data-ui="v2"] .v2-ins-panel .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

@@ -1072,3 +1072,32 @@ def test_duplicados_v1_sin_marcas_v2(session):
     assert "v2-dup-panel" not in html
     assert 'id="dup-gestor"' in html
 
+
+def test_insights_v2_con_todo_cableado(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    data = collect_dashboard(session, actividad, 2026)
+    data["ui"] = "v2"
+    html = render_dashboard(data)
+    assert 'class="panel v2-ins-panel"' in html
+    for needle in (
+        "insight-kpis", "insight-kpi-gastos", "insight-kpi-neto", "insight-kpi-hint",
+        "insight-operativo", "insight-range", "insight-range-trigger",
+        "insight-range-label", "insight-range-clear", "insight-range-pop",
+        "insight-desde", "insight-hasta", "insight-range-all", "insight-range-apply",
+        "insight-range-name", "insight-range-save", "insight-trims", "insight-presets",
+        "insight-frase", "charts", "insight-month", "insight-emisor",
+        "iva-soportado", "iva-tabla", "insight-rows", "irpf", "insight-renta",
+    ):
+        assert f'id="{needle}"' in html, needle
+
+
+def test_insights_v1_sin_marcas_v2(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert "v2-ins-panel" not in html
+    assert 'id="insight-kpis"' in html
+

@@ -183,6 +183,7 @@ def render_dashboard(data: dict) -> str:
     revision = _panel_revision_v2(data) if v2 else _panel_revision(data)
     libro = _panel_libro_v2(data) if v2 else _panel_libro(data)
     duplicados = _panel_duplicados_v2(data) if v2 else _panel_duplicados(data)
+    insights = _panel_insights_v2(data) if v2 else _panel_insights(data)
     extra_css = '<link rel="stylesheet" href="/static/v2.css">\n' if v2 else ""
     return (
         "<!DOCTYPE html>\n"
@@ -198,7 +199,7 @@ def render_dashboard(data: dict) -> str:
         f"{revision}\n"
         f"{libro}\n"
         f"{duplicados}\n"
-        f"{_panel_insights(data)}\n"
+        f"{insights}\n"
         "</main>\n"
         f"{_site_footer()}\n"
         f"{_edit_dialog(data)}\n"
@@ -3299,6 +3300,40 @@ def _panel_duplicados_v2(data: dict) -> str:
   {_dup_gestor_dialog()}
   {_footer(data)}
 </div>
+"""
+
+
+def _panel_insights_v2(data: dict) -> str:
+    """Insights v2: mismos builders cableados, cabecera compacta y piel propia."""
+    mejora_note = ""
+    if data["regimen"] == REGIMEN_CI:
+        mejora_note = (
+            '<p class="hint">En capital inmobiliario las <strong>mejoras no restan</strong> '
+            "del rendimiento del año: se capitalizan y se amortizan.</p>"
+        )
+    cards = (
+        f'{_kpi_btn("Gastos", data["gastos"], "gasto", kpi_id="insight-kpi-gastos")}'
+        f'{_kpi_btn("Ingresos", data["ingresos"], "ingreso", kpi_id="insight-kpi-ingresos")}'
+        f'{_kpi_btn("Mejoras", data["mejoras"], "mejora", kpi_id="insight-kpi-mejoras")}'
+        f'{_kpi_btn("Neto", data["resultado"], "neto", kpi_id="insight-kpi-neto")}'
+        f'{_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], kpi_id="insight-kpi-revisar")}'
+    )
+    return f"""
+<section class="panel v2-ins-panel" role="tabpanel" id="panel-insights" data-panel="insights"
+  aria-labelledby="tab-insights">
+  <div class="v2-libro-head">
+    <div class="v2-rev-title">
+      <h2>Insights</h2>
+      <p>Cómo va el ejercicio arriba; el borrador de la Renta abajo.</p>
+    </div>
+  </div>
+  {_kpi_carousel(cards, "insight-kpis")}
+  <p class="hint" id="insight-kpi-hint" hidden>KPIs y tablas siguen el rango de fechas de abajo; la Renta usa el ejercicio completo.</p>
+  {mejora_note}
+  {_aviso_linea(data)}
+  {_insights_html(data)}
+  {_irpf_html(data)}
+</section>
 """
 
 
