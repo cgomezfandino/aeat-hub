@@ -1016,3 +1016,32 @@ def test_con_ui2_conserva_fragmento():
     assert _con_ui2("/d.html") == "/d.html?ui=v2"
     assert _con_ui2("/d.html?a=1#x") == "/d.html?a=1&ui=v2#x"
 
+
+def test_libro_v2_con_cabecera_y_bandera(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    data = collect_dashboard(session, actividad, 2026)
+    data["ui"] = "v2"
+    html = render_dashboard(data)
+    assert 'class="ledger v2-libro"' in html
+    assert 'class="panel v2-libro-panel"' in html
+    for needle in (
+        "ledger", "libro-kpis", "libro-n", "libro-total", "libro-visible",
+        "libro-base", "libro-iva", "status", "f-clear", "cols-toggle",
+        "pop-cols", "q", "f-min", "f-max", "libro-pager", "libro-prev",
+        "libro-next", "libro-pages", "libro-pager-label", "export-visible",
+    ):
+        assert f'id="{needle}"' in html, needle
+    assert "/asiento/" in html and "?ui=v2" in html
+    assert 'data-edit="' in html
+
+
+def test_libro_v1_sin_marcas_v2(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert "v2-libro" not in html
+    assert "?ui=v2" not in html
+

@@ -1,7 +1,25 @@
 /* AEAT Hub · piel v2 (clara y densa). Solo actúa con body[data-ui="v2"].
  * El CSS v1 sigue inline; estos overrides ganan por especificidad.
- * Alcance actual: masthead + cola de revisión. El resto de paneles sigue v1.
+ * La paleta se redeclara aquí porque el :root v1 pisaría tokens.css.
  */
+
+body[data-ui="v2"] {
+  --paper: #ffffff;
+  --wash: #f3f5f8;
+  --ink: #1c2b45;
+  --muted: #5a6b84;
+  --line: #dfe5ee;
+  --brand: #e8890c;
+  --brand-strong: #c96f00;
+  --brand-soft: #fdf1dc;
+  --navy: #1f3a5f;
+  --ok: #1e7e34;
+  --ok-soft: #e6f4ea;
+  --warn: #9a6200;
+  --warn-soft: #fef3df;
+  --bad: #b3261e;
+  --bad-soft: #fbeae9;
+}
 
 body[data-ui="v2"] {
   background: var(--wash);
@@ -311,4 +329,62 @@ body[data-ui="v2"] .v2-num-error {
 }
 body[data-ui="v2"] .ficha-bar .back-link {
   font-size: var(--fs-sm);
+}
+
+/* Libro: cabecera compacta y tabla densa sobre los estilos v1. */
+body[data-ui="v2"] .v2-libro-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-3);
+}
+body[data-ui="v2"] .v2-libro-head h2 {
+  font-size: var(--fs-2xl);
+  margin: 0;
+}
+body[data-ui="v2"] .v2-libro-head p {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+body[data-ui="v2"] .v2-libro .ledger-status {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+body[data-ui="v2"] .v2-libro .ledger-table {
+  font-size: var(--fs-sm);
+}
+body[data-ui="v2"] .v2-libro .ledger-table thead th {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: var(--paper);
+  border-bottom: 2px solid var(--line);
+}
+body[data-ui="v2"] .v2-libro .ledger-table tbody td {
+  padding-top: var(--sp-1);
+  padding-bottom: var(--sp-1);
+  vertical-align: middle;
+}
+body[data-ui="v2"] .v2-libro .ledger-table tbody tr:hover {
+  background: var(--wash);
+}
+body[data-ui="v2"] .v2-libro .row-go {
+  color: var(--navy);
+}
+body[data-ui="v2"] .v2-libro .total-amt {
+  font-weight: 600;
+}
+body[data-ui="v2"] .v2-libro .pager {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--muted);
 }

@@ -181,6 +181,7 @@ def render_dashboard(data: dict) -> str:
     v2 = data.get("ui", "v1") == "v2"
     masthead = _masthead_v2(data) if v2 else _masthead(data)
     revision = _panel_revision_v2(data) if v2 else _panel_revision(data)
+    libro = _panel_libro_v2(data) if v2 else _panel_libro(data)
     extra_css = '<link rel="stylesheet" href="/static/v2.css">\n' if v2 else ""
     return (
         "<!DOCTYPE html>\n"
@@ -194,7 +195,7 @@ def render_dashboard(data: dict) -> str:
         f"{masthead}\n"
         '<main class="wrap panels">\n'
         f"{revision}\n"
-        f"{_panel_libro(data)}\n"
+        f"{libro}\n"
         f"{_panel_duplicados(data)}\n"
         f"{_panel_insights(data)}\n"
         "</main>\n"
@@ -3072,6 +3073,132 @@ def _ficha_num_script() -> str:
 """
 
 
+def _ledger_v2(data: dict) -> str:
+    """Libro v2: mismos filtros/tabla cableados, cabecera compacta y vacíos con blob."""
+    consolidadas = [
+        item for item in data["asientos"] if item["estado"] not in ("pendiente", "rechazado")
+    ]
+    rows = "\n".join(_row_html(item, ui="v2") for item in consolidadas)
+    empty = ""
+    if not consolidadas:
+        if data["n_pendientes"]:
+            empty = (
+                '<div class="v2-kan-vacio">'
+                '<img src="/static/blob.svg" alt="" width="56" height="56">'
+                "<p>Aún no hay facturas consolidadas: las pendientes están "
+                'en la pestaña <a href="#panel-revision" class="kan-ir-revisar">Revisar</a>.</p></div>'
+            )
+        else:
+            empty = (
+                '<div class="v2-kan-vacio">'
+                '<img src="/static/blob.svg" alt="" width="56" height="56">'
+                "<p>No hay asientos en este ejercicio.</p></div>"
+            )
+    dup_note = ""
+    if data["n_duplicados"]:
+        dup_note = (
+            f'<p class="hint">{data["n_duplicados"]} duplicado(s) visibles en la tabla; '
+            "no entran en los totales.</p>"
+        )
+    choices = _ledger_filter_choices(data)
+    id_inner = (
+        f'<label class="filter-search">{_SEARCH_SVG}'
+        '<input id="q" type="search" class="filter-search-input" placeholder="Buscar…" autocomplete="off">'
+        "</label>"
+        '<p class="filter-hint">Emisor, NIF, nº factura o id</p>'
+    )
+    total_inner = """
+<label class="filter-field">Mínimo
+  <input id="f-min" type="number" min="0" step="0.01" placeholder="0">
+</label>
+<label class="filter-field">Máximo
+  <input id="f-max" type="number" min="0" step="0.01" placeholder="Sin tope">
+</label>
+"""
+    vivos = [item for item in data["asientos"] if item["estado"] != "duplicado"]
+    libro_total = _sum_money(vivos, "total")
+    libro_base = _sum_money(vivos, "base")
+    libro_iva = _sum_money(vivos, "iva")
+    n_facturas = len(data["asientos"])
+    return f"""
+<section class="ledger v2-libro" id="ledger">
+  <div class="v2-libro-head">
+    <div class="v2-rev-title">
+      <h2>Libro</h2>
+      <p>Asientos consolidados del ejercicio. Filtra, ordena y edita por filas.</p>
+    </div>
+    <div class="v2-rev-stats" id="libro-kpis" aria-label="Resumen del libro" aria-live="polite">
+      <span>Facturas <strong id="libro-n">{n_facturas}</strong><em id="libro-n-note"></em></span>
+      <span>Total <strong id="libro-total">{escape(format_euro(libro_total))}</strong></span>
+      <span>Total visible <strong id="libro-visible">{escape(format_euro(libro_total))}</strong></span>
+      <span>Base visible <strong id="libro-base">{escape(format_euro(libro_base))}</strong></span>
+      <span>IVA visible <strong id="libro-iva">{escape(format_euro(libro_iva))}</strong></span>
+    </div>
+  </div>
+  <div class="ledger-status">
+    <p class="status" id="status" hidden></p>
+    <button type="button" class="ghost" id="f-clear" hidden>Limpiar filtros</button>
+    <div class="ledger-actions">
+      <button type="button" class="ghost" id="cols-toggle" popovertarget="pop-cols"
+        aria-expanded="false" aria-haspopup="dialog">Columnas</button>
+    </div>
+  </div>
+  {_cols_picker()}
+  {dup_note}
+  <div class="table-wrap" tabindex="0" aria-label="Tabla de asientos con desplazamiento horizontal">
+    <table class="ledger-table">
+      <colgroup>
+        <col class="col-id">
+        <col class="col-factura">
+        <col class="col-fecha">
+        <col class="col-emisor">
+        <col class="col-calidad">
+        <col class="col-total">
+        <col class="col-articulos">
+        <col class="col-nif">
+        <col class="col-base">
+        <col class="col-iva">
+        <col class="col-doc">
+        <col class="col-estado">
+      </colgroup>
+      <thead>
+        <tr>
+          {_filter_th("Id", "pop-q", id_inner, "col-sticky", col="id", sort="id", sort_type="num", help="Número de asiento en el libro")}
+          {_filter_th("Nº factura", "pop-factura", _filter_checks("factura", choices["factura"]), col="factura", sort="factura", help="Número de factura tal como lo leyó el OCR")}
+          {_filter_th("Fecha compra", "pop-fecha", _filter_date_range(), col="fecha", sort="fecha", help="Fecha de la compra")}
+          {_filter_th("Emisor", "pop-emisor", _filter_checks("emisor", choices["emisor"]), col="emisor", sort="emisor", help="Tienda o empresa que emite la factura")}
+          {_filter_th("Confianza", "pop-confianza", _filter_checks("confianza", choices["confianza"]), col="confianza", sort="confianza", help="Calidad de la extracción: Revisar (dudosa), Aceptable o Validado por ti")}
+          {_filter_th("Total", "pop-total", total_inner, "num", col="total", sort="total", sort_type="num", help="Total pagado, IVA incluido")}
+          <th class="num th-plain" data-col="articulos" data-sort="articulos" data-sort-type="num" title="Artículos con nombre en la factura"><span class="th-label">Artículos</span></th>
+          {_filter_th("NIF emisor", "pop-nif", _filter_checks("nif", choices["nif"]), col="nif", sort="nif", help="NIF de la empresa emisora")}
+          <th class="num th-plain" data-col="base" data-sort="base" data-sort-type="num" title="Base imponible (sin IVA)"><span class="th-label">Base</span></th>
+          <th class="num th-plain" data-col="iva" data-sort="iva" data-sort-type="num" title="Cuota de IVA soportado"><span class="th-label">IVA</span></th>
+          <th class="cell-doc th-plain" data-col="doc" data-sort="doc" title="Abrir el documento original (PDF o foto)"><span class="th-label">Doc</span></th>
+          {_filter_th("Estado", "pop-estado", _filter_checks("estado", choices["estado"]), "col-estado", col="estado", sort="estado", help="Por revisar, Confirmado o Duplicado (fuera de totales)")}
+        </tr>
+      </thead>
+      <tbody>{rows}</tbody>
+    </table>
+  </div>
+  <nav class="pager" id="libro-pager" aria-label="Páginas del libro">
+    <button type="button" class="ghost" id="libro-prev">Anterior</button>
+    <span class="pager-pages" id="libro-pages"></span>
+    <span class="pager-label" id="libro-pager-label"></span>
+    <button type="button" class="ghost" id="libro-next">Siguiente</button>
+  </nav>
+  {empty}
+</section>
+"""
+
+
+def _panel_libro_v2(data: dict) -> str:
+    body = _ledger_v2(data)
+    return (
+        '<div class="panel v2-libro-panel" role="tabpanel" id="panel-libro" data-panel="libro" '
+        f'aria-labelledby="tab-libro">{body}{_footer(data)}</div>'
+    )
+
+
 def _fila_revision(item: dict) -> str:
     """Fila de pendiente para la vista tabla. Compartida v1/v2 (mismos ids)."""
     total = item.get("total")
@@ -4108,7 +4235,7 @@ def _estado_action(item: dict) -> str:
     )
 
 
-def _row_html(item: dict) -> str:
+def _row_html(item: dict, *, ui: str = "v1") -> str:
     blob = " ".join(
         [
             str(item["id"]),
@@ -4131,7 +4258,8 @@ def _row_html(item: dict) -> str:
             f'<a class="doc-link" href="/doc/{item["id"]}" target="_blank" '
             f'rel="noopener" title="{title}">Abrir</a>'
         )
-    href = f"/asiento/{item['id']}"
+    flag = "?ui=v2" if ui == "v2" else ""
+    href = f"/asiento/{item['id']}{flag}"
     emisor = escape(item["emisor"])
     if item["emisor"] != "—":
         emisor = f'<span class="cell-text" title="{emisor}">{emisor}</span>'
@@ -4152,7 +4280,7 @@ def _row_html(item: dict) -> str:
     )
     accion = f"{pencil}{_estado_action(item)}"
     return (
-        f'<tr id="asiento-{item["id"]}" data-href="/asiento/{item["id"]}" data-id="{item["id"]}" '
+        f'<tr id="asiento-{item["id"]}" data-href="/asiento/{item["id"]}{flag}" data-id="{item["id"]}" '
         f'data-tipo="{escape(item["tipo"])}" '
         f'data-estado="{escape(item["estado"])}" data-baja="{baja_flag}" '
         f'data-fecha="{escape(item["fecha"])}" data-fecha-label="{escape(item["fecha_label"])}" '
@@ -4166,14 +4294,14 @@ def _row_html(item: dict) -> str:
         f'data-estado-label="{escape(item["estado_label"])}" '
         f'data-q="{escape(blob)}">'
         f'<td class="mono col-sticky" data-col="id" data-label="Id">'
-        f'<a class="row-go" href="/asiento/{item["id"]}">{item["id"]}</a></td>'
+        f'<a class="row-go" href="/asiento/{item["id"]}{flag}">{item["id"]}</a></td>'
         f'<td class="mono cell-clip" data-col="factura" data-label="Nº factura">{factura}</td>'
         f'<td class="cell-nowrap" data-col="fecha" data-label="Fecha">'
-        f'<a class="row-go" href="/asiento/{item["id"]}">{escape(item["fecha_label"])}</a></td>'
+        f'<a class="row-go" href="/asiento/{item["id"]}{flag}">{escape(item["fecha_label"])}</a></td>'
         f'<td class="cell-clip" data-col="emisor" data-label="Emisor">{emisor}</td>'
         f'<td class="cell-calidad" data-col="confianza" data-label="Confianza">{calidad}</td>'
         f'<td class="num cell-nowrap" data-col="total" data-label="Total">'
-        f'<a class="total-drill" href="/asiento/{item["id"]}" '
+        f'<a class="total-drill" href="/asiento/{item["id"]}{flag}" '
         f'title="Ver detalle de la factura" aria-label="Detalle de la factura {item["id"]}">'
         f'<span class="total-amt">{escape(format_euro(item["total"]))}</span>'
         f'<span class="total-caret" aria-hidden="true">▸</span></a></td>'
