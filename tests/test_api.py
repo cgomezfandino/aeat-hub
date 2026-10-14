@@ -137,3 +137,22 @@ def test_subida_rechaza_extensiones_y_procesa_pdf(cliente, layout, monkeypatch):
     assert r[1]["estado"] == "error"
     doc = cliente.get(f"/api/asientos/{r[0]['asiento_id']}/documento")
     assert doc.status_code == 200 and doc.content[:4] == b"%PDF"
+
+
+def test_la_api_migra_una_base_antigua_al_arrancar(tmp_path):
+    """Una base en una revisión anterior se pone al día al crear la app."""
+    from sqlalchemy import text
+
+    from aeat_hub.db import _alembic, make_engine
+    from aeat_hub.paths import DataLayout
+    from tests.test_migraciones import _base_antigua
+
+    layout = DataLayout(tmp_path / "vieja")
+    layout.ensure()
+    engine = make_engine(layout)
+    _base_antigua(engine)
+    _alembic(engine, "stamp", "0001")
+    api = TestClient(create_app(layout, token=TOKEN), headers={"Authorization": f"Bearer {TOKEN}"})
+    assert api.get("/api/actividades").status_code == 200
+    with engine.connect() as conn:
+        assert conn.execute(text("select count(*) from asiento_iva")).scalar() is not None

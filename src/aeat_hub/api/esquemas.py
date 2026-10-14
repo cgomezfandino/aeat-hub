@@ -139,6 +139,7 @@ class Ficha(FilaAsiento):
     cuenta_codigo: str | None
     motivo_rechazo: str | None
     documento_nombre: str | None
+    documento_disponible: bool
     desglose_iva: list[TipoIVA]
     lineas: list[Linea]
     deducibilidad: Deducibilidad | None

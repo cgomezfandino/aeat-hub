@@ -160,7 +160,7 @@ def listar_asientos(
     return [_fila(a, rubros) for a in filas]
 
 
-def ficha(session: Session, asiento_id: int) -> e.Ficha:
+def ficha(session: Session, asiento_id: int, *, raiz=None) -> e.Ficha:
     asiento = session.get(Asiento, asiento_id)
     if asiento is None:
         raise NoEncontrado(f"No existe el asiento {asiento_id}.")
@@ -187,6 +187,7 @@ def ficha(session: Session, asiento_id: int) -> e.Ficha:
         afectacion_pct=asiento.afectacion_pct, cuenta_codigo=asiento.cuenta_codigo,
         motivo_rechazo=asiento.motivo_rechazo,
         documento_nombre=asiento.documento.nombre_original if asiento.documento else None,
+        documento_disponible=_documento_disponible(asiento, raiz),
         desglose_iva=[
             e.TipoIVA(base=f.base, tipo=f.tipo, cuota=f.cuota, recargo_tipo=f.recargo_tipo, recargo_cuota=f.recargo_cuota)
             for f in asiento.desglose_iva
@@ -301,3 +302,13 @@ def libros(lib) -> e.Libros:
         gastos=[_anotacion(a) for a in lib.gastos], bienes_inversion=[_anotacion(a) for a in lib.bienes_inversion],
         n_por_revisar=lib.n_por_revisar, total_por_revisar=lib.total_por_revisar, avisos=lib.avisos,
     )
+
+
+def _documento_disponible(asiento: Asiento, raiz) -> bool:
+    from pathlib import Path
+
+    doc = asiento.documento
+    if doc is None or not doc.ruta_almacenada:
+        return False
+    ruta = Path(doc.ruta_almacenada).resolve()
+    return ruta.is_file() and (raiz is None or ruta.is_relative_to(Path(raiz).resolve()))

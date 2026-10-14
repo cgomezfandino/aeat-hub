@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from aeat_hub.api import consultas
 from aeat_hub.api import esquemas as e
-from aeat_hub.db import make_engine, session_factory, session_scope
+from aeat_hub.db import create_schema, make_engine, session_factory, session_scope
 from aeat_hub.paths import DataLayout, resolve_layout
 
 ENV_TOKEN = "AEAT_HUB_API_TOKEN"
@@ -95,6 +95,8 @@ def create_app(layout: DataLayout | None = None, *, token: str | None = None) ->
         if h.strip()
     }
     engine = make_engine(layout)
+    # Como la CLI: la base queda en la última migración antes de atender peticiones.
+    create_schema(engine)
     factory = session_factory(engine)
 
     app = FastAPI(
@@ -173,7 +175,7 @@ def create_app(layout: DataLayout | None = None, *, token: str | None = None) ->
     @app.get("/api/asientos/{asiento_id}", response_model=e.Ficha)
     def ficha(asiento_id: int, session: Session = Depends(sesion)):
         try:
-            return consultas.ficha(session, asiento_id)
+            return consultas.ficha(session, asiento_id, raiz=layout.root)
         except Exception as err:  # noqa: BLE001
             _error(err)
 
@@ -185,7 +187,7 @@ def create_app(layout: DataLayout | None = None, *, token: str | None = None) ->
         try:
             patch_asiento(session, asiento_id, payload)
             session.flush()
-            return consultas.ficha(session, asiento_id)
+            return consultas.ficha(session, asiento_id, raiz=layout.root)
         except AsientoNoEncontrado as err:
             raise HTTPException(404, f"No existe el asiento {asiento_id}.") from err
         except Exception as err:  # noqa: BLE001
