@@ -247,6 +247,15 @@ def patch_perfil(session: Session, codigo: str, payload: dict) -> dict:
 
     session.flush()
     perfil = perfil_de(actividad)
+    avisos = list(perfil.avisos)
+    from aeat_hub.fiscal.nif import is_placeholder_nif
+
+    if titular is None or is_placeholder_nif(titular.nif):
+        avisos.insert(
+            0,
+            "El NIF del titular es de ejemplo: indica el real con --nif-titular. Sin él no se puede "
+            "comprobar que las facturas estén a tu nombre (art. 97 LIVA) ni separar emitidas de recibidas.",
+        )
     return {
         "codigo": actividad.codigo,
         "nif_titular": titular.nif if titular else "",
@@ -258,5 +267,5 @@ def patch_perfil(session: Session, codigo: str, payload: dict) -> dict:
         "afectacion_vivienda_pct": perfil.afectacion_vivienda_pct,
         "rendimiento_anterior": perfil.rendimiento_anterior,
         "por_defecto": list(perfil.por_defecto),
-        "avisos": list(perfil.avisos),
+        "avisos": avisos,
     }

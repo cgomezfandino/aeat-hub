@@ -684,6 +684,78 @@ def export_cmd(
         console.print(f"Escrito {dest}")
 
 
+@app.command("libros")
+def libros_cmd(
+    actividad: str = typer.Option(..., "--actividad"),
+    year: int = typer.Option(..., "--year"),
+    trimestre: Optional[int] = typer.Option(None, "--trimestre", min=1, max=4),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Libros registro (ventas e ingresos, compras y gastos, bienes de inversión) en Excel."""
+    from aeat_hub.export_fiscal import libros_de
+
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    try:
+        with factory() as session:
+            libros, destino = libros_de(session, layout, actividad, year, trimestre)
+    except RuntimeError as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(1) from err
+    console.print(
+        f"{len(libros.ingresos)} ingresos · {len(libros.gastos)} gastos · "
+        f"{len(libros.bienes_inversion)} bienes de inversión → {destino}"
+    )
+    if libros.n_por_revisar:
+        console.print(
+            f"[yellow]{libros.n_por_revisar} facturas por revisar ({libros.total_por_revisar} €) no entran.[/yellow]"
+        )
+    for aviso in libros.avisos:
+        console.print(f"[yellow]{aviso}[/yellow]")
+
+
+@app.command("modelo")
+def modelo_cmd(
+    modelo: str = typer.Argument(..., help="303 o 130"),
+    actividad: str = typer.Option(..., "--actividad"),
+    year: int = typer.Option(..., "--year"),
+    trimestre: int = typer.Option(..., "--trimestre", min=1, max=4),
+    detalle: bool = typer.Option(False, "--detalle", help="Muestra de qué asientos sale cada casilla"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Borrador de un modelo trimestral con la trazabilidad de cada casilla. No presenta nada."""
+    from aeat_hub.export_fiscal import borrador_de
+    from aeat_hub.fiscal.money import format_euro
+
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    try:
+        with factory() as session:
+            borrador, destino = borrador_de(session, layout, modelo, actividad, year, trimestre)
+    except RuntimeError as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(1) from err
+    titulo = f"Borrador modelo {borrador.modelo} · {borrador.periodo} {borrador.ejercicio}"
+    if not borrador.verificado:
+        titulo += " · parámetros NO verificados"
+    table = Table(title=titulo)
+    table.add_column("casilla", justify="right")
+    table.add_column("concepto")
+    table.add_column("importe", justify="right")
+    if detalle:
+        table.add_column("asientos")
+    for casilla in borrador.casillas.values():
+        fila = [casilla.numero, casilla.concepto, format_euro(casilla.importe)]
+        if detalle:
+            fila.append(" ".join(f"#{i}" for i in casilla.asientos))
+        table.add_row(*fila)
+    console.print(table)
+    if borrador.aplica:
+        console.print(f"[bold]Resultado: {format_euro(borrador.resultado)}[/bold] · {destino}")
+    for aviso in borrador.avisos:
+        console.print(f"[yellow]{aviso}[/yellow]")
+
+
 @app.command("reparse")
 def reparse_cmd(
     actividad: str = typer.Option(..., "--actividad"),
