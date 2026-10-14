@@ -40,6 +40,8 @@ from aeat_hub.services import (
     get_cuenta_por_nombre,
     initialize,
     patch_expediente,
+    patch_inmueble,
+    patch_perfil,
     require_layout,
 )
 
@@ -154,6 +156,106 @@ def actividad_titulo(
         bits.append(data["inmueble"])
     console.print(" · ".join(bits))
     console.print("Regenera el libro: aeat-hub dashboard --actividad … --year …")
+
+
+@actividad_app.command("perfil")
+def actividad_perfil(
+    actividad: str = typer.Option(..., "--actividad"),
+    nif_titular: Optional[str] = typer.Option(None, "--nif-titular", help="NIF real del titular"),
+    regimen_irpf: Optional[str] = typer.Option(
+        None, "--irpf", help="estimacion_directa_normal | estimacion_directa_simplificada | estimacion_objetiva | capital_inmobiliario"
+    ),
+    regimen_iva: Optional[str] = typer.Option(
+        None, "--iva", help="general | recargo_equivalencia | simplificado | exento | criterio_caja | reagyp"
+    ),
+    epigrafe_iae: Optional[str] = typer.Option(None, "--iae", help="Epígrafe IAE (p. ej. 763)"),
+    territorio: Optional[str] = typer.Option(None, "--territorio", help="comun | canarias | ceuta_melilla | foral"),
+    fecha_alta: Optional[str] = typer.Option(None, "--alta", help="Fecha de alta en la actividad (AAAA-MM-DD)"),
+    afectacion_vivienda: Optional[str] = typer.Option(
+        None, "--afectacion-vivienda", help="% de la vivienda afecto a la actividad (m² afectos / totales)"
+    ),
+    rendimiento_anterior: Optional[str] = typer.Option(
+        None, "--rendimiento-anterior", help="Rendimiento neto del año anterior (casilla 13 del 130)"
+    ),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Perfil fiscal de la actividad: regímenes, IAE, afectación y NIF del titular."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    payload = {
+        "nif_titular": nif_titular,
+        "regimen_irpf": regimen_irpf,
+        "regimen_iva": regimen_iva,
+        "epigrafe_iae": epigrafe_iae,
+        "territorio": territorio,
+        "fecha_alta": fecha_alta,
+        "afectacion_vivienda_pct": afectacion_vivienda,
+        "rendimiento_anterior": rendimiento_anterior,
+    }
+    try:
+        with session_scope(factory) as session:
+            data = patch_perfil(session, actividad, payload)
+    except (RuntimeError, ValueError) as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(1) from err
+    table = Table(title=f"Perfil fiscal · {data['codigo']}")
+    table.add_column("campo")
+    table.add_column("valor")
+    for clave in (
+        "nif_titular", "regimen_irpf", "regimen_iva", "territorio", "epigrafe_iae",
+        "fecha_alta", "afectacion_vivienda_pct", "rendimiento_anterior",
+    ):
+        valor = data[clave]
+        marca = " (por defecto)" if clave in data["por_defecto"] else ""
+        table.add_row(clave, f"{'—' if valor in (None, '') else valor}{marca}")
+    console.print(table)
+    for aviso in data["avisos"]:
+        console.print(f"[yellow]{aviso}[/yellow]")
+
+
+@actividad_app.command("inmueble")
+def actividad_inmueble(
+    actividad: str = typer.Option(..., "--actividad"),
+    valor_catastral: Optional[str] = typer.Option(None, "--valor-catastral", help="Valor catastral total (recibo del IBI)"),
+    valor_construccion: Optional[str] = typer.Option(None, "--valor-construccion", help="Valor catastral de la construcción"),
+    coste: Optional[str] = typer.Option(None, "--coste", help="Coste de adquisición con gastos y tributos"),
+    mejoras_anteriores: Optional[str] = typer.Option(None, "--mejoras-anteriores", help="Mejoras de años anteriores"),
+    adquisicion: Optional[str] = typer.Option(None, "--adquisicion", help="Fecha de adquisición (AAAA-MM-DD)"),
+    dias: Optional[int] = typer.Option(None, "--dias", help="Días arrendados en el ejercicio"),
+    reduccion: Optional[str] = typer.Option(None, "--reduccion", help="Reducción art. 23.2 LIRPF: 0, 50, 60, 70 o 90"),
+    exceso: list[str] = typer.Option([], "--exceso", help="Exceso pendiente de intereses+conservación: AÑO=IMPORTE"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Datos del inmueble para amortización (3 %), límite del art. 23 y reducción."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    excesos = {}
+    for item in exceso:
+        ano, _, valor = item.partition("=")
+        excesos[ano.strip()] = valor.strip()
+    payload = {
+        "valor_catastral": valor_catastral,
+        "valor_catastral_construccion": valor_construccion,
+        "coste_adquisicion": coste,
+        "mejoras_anteriores": mejoras_anteriores,
+        "fecha_adquisicion": adquisicion,
+        "dias_arrendado": dias,
+        "reduccion_pct": reduccion,
+        "excesos": excesos,
+    }
+    try:
+        with session_scope(factory) as session:
+            data = patch_inmueble(session, actividad, payload)
+    except (RuntimeError, ValueError) as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(1) from err
+    table = Table(title=f"Inmueble · {data['alias']}")
+    table.add_column("campo")
+    table.add_column("valor")
+    for clave, valor in data.items():
+        if clave != "alias":
+            table.add_row(clave, "—" if valor in (None, "", "{}") else str(valor))
+    console.print(table)
 
 
 @cuenta_app.command("alta")
@@ -626,6 +728,78 @@ def export_cmd(
             console.print(f"Releídos {n} asientos desde el texto OCR guardado.")
         dest = export_xlsx(session, layout, act, year)
         console.print(f"Escrito {dest}")
+
+
+@app.command("libros")
+def libros_cmd(
+    actividad: str = typer.Option(..., "--actividad"),
+    year: int = typer.Option(..., "--year"),
+    trimestre: Optional[int] = typer.Option(None, "--trimestre", min=1, max=4),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Libros registro (ventas e ingresos, compras y gastos, bienes de inversión) en Excel."""
+    from aeat_hub.export_fiscal import libros_de
+
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    try:
+        with factory() as session:
+            libros, destino = libros_de(session, layout, actividad, year, trimestre)
+    except RuntimeError as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(1) from err
+    console.print(
+        f"{len(libros.ingresos)} ingresos · {len(libros.gastos)} gastos · "
+        f"{len(libros.bienes_inversion)} bienes de inversión → {destino}"
+    )
+    if libros.n_por_revisar:
+        console.print(
+            f"[yellow]{libros.n_por_revisar} facturas por revisar ({libros.total_por_revisar} €) no entran.[/yellow]"
+        )
+    for aviso in libros.avisos:
+        console.print(f"[yellow]{aviso}[/yellow]")
+
+
+@app.command("modelo")
+def modelo_cmd(
+    modelo: str = typer.Argument(..., help="303, 130, 111, 115, 349 (trimestrales) · 347, 390 (anuales)"),
+    actividad: str = typer.Option(..., "--actividad"),
+    year: int = typer.Option(..., "--year"),
+    trimestre: Optional[int] = typer.Option(None, "--trimestre", min=1, max=4),
+    detalle: bool = typer.Option(False, "--detalle", help="Muestra de qué asientos sale cada casilla"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Borrador de un modelo trimestral con la trazabilidad de cada casilla. No presenta nada."""
+    from aeat_hub.export_fiscal import borrador_de
+    from aeat_hub.fiscal.money import format_euro
+
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    try:
+        with factory() as session:
+            borrador, destino = borrador_de(session, layout, modelo, actividad, year, trimestre)
+    except RuntimeError as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(1) from err
+    titulo = f"Borrador modelo {borrador.modelo} · {borrador.periodo} {borrador.ejercicio}"
+    if not borrador.verificado:
+        titulo += " · parámetros NO verificados"
+    table = Table(title=titulo)
+    table.add_column("casilla", justify="right")
+    table.add_column("concepto")
+    table.add_column("importe", justify="right")
+    if detalle:
+        table.add_column("asientos")
+    for casilla in borrador.casillas.values():
+        fila = [casilla.numero, casilla.concepto, format_euro(casilla.importe)]
+        if detalle:
+            fila.append(" ".join(f"#{i}" for i in casilla.asientos))
+        table.add_row(*fila)
+    console.print(table)
+    if borrador.aplica:
+        console.print(f"[bold]Resultado: {format_euro(borrador.resultado)}[/bold] · {destino}")
+    for aviso in borrador.avisos:
+        console.print(f"[yellow]{aviso}[/yellow]")
 
 
 @app.command("reparse")

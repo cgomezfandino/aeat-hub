@@ -51,6 +51,43 @@ uv run aeat-hub actividad titulo --actividad CI-VA-001 \
 
 Luego regenera el HTML: `aeat-hub dashboard --actividad CI-VA-001 --year 2026`.
 
+### `actividad perfil`
+
+Perfil fiscal y NIF real del titular. Valida cada valor y muestra qué está por defecto.
+
+```bash
+uv run aeat-hub actividad perfil --actividad AE-PRO-001 --nif-titular 12345678Z \
+  --irpf estimacion_directa_simplificada --iva general --iae 763 --rendimiento-anterior 8000
+```
+
+### `actividad inmueble`
+
+Datos del inmueble para la Renta: amortización, límite del art. 23 y reducción.
+
+```bash
+uv run aeat-hub actividad inmueble --actividad CI-VA-001 --valor-catastral 100000 \
+  --valor-construccion 40000 --coste 150000 --dias 365 --reduccion 60 --exceso 2024=1000
+```
+
+### `libros`
+
+Libros registro en Excel. Solo incluye lo validado; avisa de lo pendiente.
+
+```bash
+uv run aeat-hub libros --actividad AE-PRO-001 --year 2026 [--trimestre 1]
+```
+
+### `modelo`
+
+Borrador de un modelo, con la trazabilidad de cada casilla y Excel en `exports/`. No presenta nada.
+
+```bash
+uv run aeat-hub modelo 303 --actividad AE-PRO-001 --year 2026 --trimestre 1 --detalle
+uv run aeat-hub modelo 347 --actividad AE-PRO-001 --year 2026
+```
+
+Modelos: 303, 130, 111, 115 y 349 (trimestrales); 347 y 390 (anuales; el 390 sale como resumen de los 303).
+
 ### `cuenta alta` / `cuentas`
 
 ```bash

@@ -121,7 +121,16 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
     ]
     por_mes = _by_month(libro)
     irpf = (
-        summarize_irpf(libro, extra_casillas) if actividad.regimen == REGIMEN_CI else None
+        summarize_irpf(
+            libro,
+            extra_casillas,
+            inmueble=session.scalar(
+                select(Inmueble).where(Inmueble.actividad_id == actividad.id).order_by(Inmueble.id)
+            ),
+            ejercicio=year,
+        )
+        if actividad.regimen == REGIMEN_CI
+        else None
     )
     sin_fecha = (
         session.scalars(
@@ -7198,7 +7207,10 @@ _JS = r"""
   }
 
   const csvCell = (value) => {
-    const text = String(value ?? "");
+    let text = String(value ?? "");
+    // Inyección de fórmulas: un texto del OCR que empiece por = @ o +/- no
+    // numérico se ejecutaría al abrir el CSV en Excel. Los importes (-12,50) no se tocan.
+    if (/^[=@\t\r]/.test(text) || /^[+-](?![\d.,\s]*$)/.test(text)) text = "'" + text;
     if (/[;"\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
     return text;
   };

@@ -42,11 +42,30 @@ ACCOUNT_DEFS: tuple[AccountDef, ...] = (
     AccountDef("CI.MEJ.MO", "Mano de obra", TIPO_MEJORA, REGIMEN_CI, "Se capitaliza. No es gasto del ejercicio.", "mejoras"),
     AccountDef("CI.MEJ.OTROS", "Otras mejoras", TIPO_MEJORA, REGIMEN_CI, "Se capitaliza. No es gasto del ejercicio.", "mejoras"),
     AccountDef("CI.AMO.INMUEBLE", "Amortización", TIPO_AMORT, REGIMEN_CI, "Normalmente 3 % sobre la construcción.", "amortizacion"),
-    AccountDef("AE.ING.VENTAS", "Ingresos de explotación", TIPO_INGRESO, REGIMEN_AE),
-    AccountDef("AE.GAS.COMPRAS", "Compras y servicios", TIPO_GASTO, REGIMEN_AE),
-    AccountDef("AE.GAS.SUMINISTROS", "Suministros de la actividad", TIPO_GASTO, REGIMEN_AE),
-    AccountDef("AE.GAS.SS", "Seguridad social del autónomo", TIPO_GASTO, REGIMEN_AE),
-    AccountDef("AE.INV.BIENES", "Bienes de inversión", TIPO_MEJORA, REGIMEN_AE),
+    # Actividad económica: la `casilla` es la partida de gastos/ingresos de la
+    # estimación directa (modelo 100, rendimientos de actividades).
+    AccountDef("AE.ING.VENTAS", "Ingresos de explotación", TIPO_INGRESO, REGIMEN_AE, casilla="ingresos_explotacion"),
+    AccountDef("AE.ING.OTROS", "Otros ingresos", TIPO_INGRESO, REGIMEN_AE, casilla="otros_ingresos"),
+    AccountDef("AE.ING.SUBVENCION", "Subvenciones", TIPO_INGRESO, REGIMEN_AE, casilla="otros_ingresos"),
+    AccountDef("AE.GAS.COMPRAS", "Compras y consumos", TIPO_GASTO, REGIMEN_AE, "Mercaderías, materias primas y materiales.", "consumos"),
+    AccountDef("AE.GAS.SUELDOS", "Sueldos y salarios", TIPO_GASTO, REGIMEN_AE, casilla="sueldos"),
+    AccountDef("AE.GAS.SSEMPRESA", "Seguridad social a cargo de la empresa", TIPO_GASTO, REGIMEN_AE, casilla="ss_empresa"),
+    AccountDef("AE.GAS.SS", "Seguridad social del autónomo", TIPO_GASTO, REGIMEN_AE, "Cuota RETA del titular.", "ss_titular"),
+    AccountDef("AE.GAS.ALQUILER", "Arrendamientos y cánones", TIPO_GASTO, REGIMEN_AE, "Alquiler de local: retención del 19 % (modelo 115).", "arrendamientos"),
+    AccountDef("AE.GAS.REPARACION", "Reparaciones y conservación", TIPO_GASTO, REGIMEN_AE, casilla="reparaciones"),
+    AccountDef("AE.GAS.SUMINISTROS", "Suministros del local", TIPO_GASTO, REGIMEN_AE, casilla="suministros"),
+    AccountDef("AE.GAS.SUMVIVIENDA", "Suministros de la vivienda afecta", TIPO_GASTO, REGIMEN_AE, "Art. 30.2.5ª LIRPF: 30 % × % afecto.", "suministros"),
+    AccountDef("AE.GAS.PROFESIONALES", "Servicios de profesionales independientes", TIPO_GASTO, REGIMEN_AE, "Asesoría, abogados… con retención (modelo 111).", "servicios_profesionales"),
+    AccountDef("AE.GAS.SERVICIOS", "Otros servicios exteriores", TIPO_GASTO, REGIMEN_AE, "Software, telefonía, publicidad, transporte.", "otros_servicios"),
+    AccountDef("AE.GAS.SEGUROS", "Primas de seguros", TIPO_GASTO, REGIMEN_AE, casilla="otros_servicios"),
+    AccountDef("AE.GAS.VEHICULO", "Vehículo", TIPO_GASTO, REGIMEN_AE, "IVA 50 % presunto; IRPF solo con afectación exclusiva.", "otros_servicios"),
+    AccountDef("AE.GAS.MANUTENCION", "Manutención", TIPO_GASTO, REGIMEN_AE, "Pago electrónico y límites del art. 9 RIRPF.", "otros_gastos"),
+    AccountDef("AE.GAS.TRIBUTOS", "Tributos deducibles", TIPO_GASTO, REGIMEN_AE, "IAE, IBI del local, tasas. No el IRPF.", "tributos"),
+    AccountDef("AE.GAS.FINANCIEROS", "Gastos financieros", TIPO_GASTO, REGIMEN_AE, casilla="financieros"),
+    AccountDef("AE.GAS.OTROS", "Otros gastos deducibles", TIPO_GASTO, REGIMEN_AE, casilla="otros_gastos"),
+    AccountDef("AE.GAS.NODEDUCIBLE", "No deducible", TIPO_GASTO, REGIMEN_AE, "Multas, sanciones, donativos, gastos personales.", "no_deducible"),
+    AccountDef("AE.INV.BIENES", "Bienes de inversión", TIPO_MEJORA, REGIMEN_AE, "Se amortizan; IVA en casillas 30-31.", "bienes_inversion"),
+    AccountDef("AE.AMO.INMOVILIZADO", "Amortización", TIPO_AMORT, REGIMEN_AE, "Tabla de coeficientes de la estimación directa.", "amortizacion"),
 )
 
 CODIGO_DEMO_CI = "CI-VA-001"
@@ -64,7 +83,9 @@ def slug_cuenta(nombre: str) -> str:
 
 def prefijo_codigo(tipo: str, regimen: str) -> str:
     if regimen == REGIMEN_AE:
-        return {"ingreso": "AE.ING", "gasto": "AE.GAS", "mejora": "AE.INV"}.get(tipo, "AE.GAS")
+        return {"ingreso": "AE.ING", "gasto": "AE.GAS", "mejora": "AE.INV", "amortizacion": "AE.AMO"}.get(
+            tipo, "AE.GAS"
+        )
     return {
         "ingreso": "CI.ING",
         "gasto": "CI.GAS",

@@ -116,8 +116,94 @@ El NIF del titular decide la dirección y, más adelante, si el IVA es deducible
 - **Alquiler (capital inmobiliario):** lo que va a Hacienda es **anual**
   (Renta). `dashboard` y `export` cortan por `--year`. Un trimestre es una
   vista sobre ese año, no un modelo distinto.
-- **Actividad económica:** el 303 es **trimestral** (o mensual). Ese corte
-  aún no está. No uses el Excel de `CI-VA-001` como si fuera un 303.
+- **Actividad económica:** el 303, el 130, el 111, el 115 y el 349 son
+  **trimestrales**; el 347 y el resumen del IVA (base del 390) son anuales.
+  `aeat-hub modelo <n> --actividad … --year … [--trimestre …]`.
+
+## Perfil fiscal de la actividad
+
+`aeat-hub actividad perfil` (`fiscal/perfil.py`) fija:
+
+- **Régimen de IRPF:** estimación directa normal, estimación directa simplificada, estimación objetiva o capital inmobiliario.
+- **Régimen de IVA:** general, recargo de equivalencia, simplificado, exento, criterio de caja o REAGYP.
+- **Datos de la actividad:** territorio, epígrafe IAE, fecha de alta, % de la vivienda afecto y rendimiento neto del año anterior (minoración del 130).
+- **NIF real del titular.** Cambiarlo recalcula emitidas y recibidas.
+
+Lo no rellenado toma un valor por defecto, se marca como tal y los borradores lo avisan. El alquiler de un inmueble que no es vivienda no es exento de IVA.
+
+## Parámetros por ejercicio
+
+`fiscal/normativa/eAAAA.py` guarda, con su fuente, lo que cambia de un año a otro:
+
+- tipos de IVA y de recargo, y casillas del 303;
+- umbral de bien de inversión y presunción del 50 % para vehículos;
+- pago fraccionado del 20 % y minoración del 130;
+- provisiones y gastos de difícil justificación (5 %, máximo 2.000 €);
+- suministros de la vivienda (30 %) y límites de manutención;
+- umbral del 347 y tipos de retención.
+
+2024, 2025 y 2026 están verificados contra la sede de la AEAT. Un ejercicio sin módulo usa el anterior y todos sus borradores dicen «parámetros no verificados». **Cada año hay que añadir su módulo.**
+
+## Deducibilidad factura a factura
+
+`fiscal/deducibilidad.py` da por separado el IVA deducible y el gasto en IRPF, con la regla y la cita de cada decisión. El IVA no deducido de un gasto afecto es mayor gasto.
+
+| Caso | IVA | IRPF | Norma |
+|---|---|---|---|
+| Factura completa a nombre del titular | 100 % | base | — |
+| Simplificada sin NIF del destinatario | 0 % | base + IVA | art. 97 LIVA, art. 7.2 RD 1619/2012 |
+| A nombre de otro NIF | 0 % | base + IVA | art. 97 LIVA |
+| Vehículo | 50 % presunto | 0 (salvo afectación exclusiva) | art. 95.Tres LIVA, art. 22.2 RIRPF |
+| Suministros de la vivienda | % afecto | 30 % × % afecto | art. 30.2.5ª LIRPF |
+| Manutención | hasta el límite | hasta 26,67 €/día en España sin pernocta | art. 9 RIRPF, art. 96 LIVA |
+| Exento, recargo, capital inmobiliario | 0 % | base + IVA (+ recargo) | art. 94 y 154 LIVA |
+| Bien de inversión | 100 % | 0 (se amortiza) | art. 28 LIRPF |
+| Presupuesto/albarán, moneda extranjera, sin clasificar | 0 | 0 | — |
+
+La afectación fijada a mano en un asiento anula la regla de la cuenta, pero nunca un bloqueo legal (no factura, moneda, destinatario, módulos).
+
+## Libros registro y borradores
+
+- **Libros registro** (`aeat-hub libros`, Orden HAC/773/2019):
+  - ventas e ingresos, compras y gastos y bienes de inversión;
+  - en las recibidas, número de recepción e importe que computa en IRPF;
+  - las rectificativas, separadas.
+- **303:** IVA devengado por tipo y recargo, entregas intracomunitarias, ISP, modificaciones, autoliquidación de adquisiciones intracomunitarias, deducible (corriente, inversión por encima de 3.005,06 € o intracomunitario) y resultado 46. No compensa cuotas de periodos anteriores: lo avisa.
+- **130:** casillas 01-19, con:
+  - pagos de trimestres anteriores y retenciones;
+  - en simplificada, provisiones y gastos de difícil justificación;
+  - minoración de la casilla 13 y negativos a compensar.
+
+  Aún sin amortizaciones.
+- **111 / 115:**
+  - retenciones a profesionales (07-09) y por alquiler de local (01-03);
+  - solo con actividad económica (art. 76 RIRPF).
+- **347:**
+  - por NIF y clave A/B, más de 3.005,06 € con IVA, con desglose por trimestre;
+  - excluye lo que ya va al 190/180 (con retención) o al 349, las cotizaciones y los tributos.
+- **349:** NIF-IVA UE con claves A/E (bienes) o I/S (servicios).
+- **Resumen anual del IVA:**
+  - suma de los cuatro 303 con la numeración del 303;
+  - el 390 tiene casillas propias.
+
+Cada casilla guarda sus asientos (`--detalle`). Nada se presenta: son borradores para revisar.
+
+## Capital inmobiliario: art. 23 LIRPF
+
+`aeat-hub actividad inmueble` guarda los datos del inmueble:
+
+- valor catastral y de la construcción;
+- coste de adquisición y mejoras anteriores;
+- días arrendado;
+- reducción (50/60/70/90);
+- excesos pendientes de años anteriores.
+
+Con ellos el borrador de la Renta aplica:
+
+- **Límite de intereses + reparación y conservación:** no pueden superar los ingresos. El pequeño mantenimiento también entra en el límite. Se aplican primero los excesos de hasta 4 años y el sobrante se arrastra.
+- **Amortización:** 3 % sobre el mayor de coste o valor catastral, sin suelo, más las mejoras.
+- **Reducción por alquiler de vivienda:** solo sobre rendimiento positivo.
+- **Cotitularidad.**
 
 ## Borrador para la Renta (capital inmobiliario)
 
