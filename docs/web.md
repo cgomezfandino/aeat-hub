@@ -37,10 +37,20 @@ AEAT_HUB_API_TOKEN=$(openssl rand -hex 32) AEAT_HUB_DATA_DIR=/ruta/datos docker 
 - **Origen:** rechaza cualquier petición con cabecera `Origin`. Sin CORS, un navegador no puede llamarla.
 - **Escucha:** se niega a escuchar fuera de localhost sin token.
 
-**Web**
-- **Token en el servidor:** lo usa solo el servidor (`server-only`).
-- **Login en la nube:** con `AEAT_HUB_WEB_PASSWORD`, `proxy.ts` exige una sesión firmada (`jose`, cookie httpOnly, 12 h). Se bloquea tras 5 intentos fallidos.
+**Web (`proxy.ts`, en este orden)**
+1. **`Host` permitido (anti DNS rebinding):**
+   - en local solo `127.0.0.1`, `localhost` y `[::1]`;
+   - en la nube, la lista `AEAT_HUB_WEB_HOSTS` (tu dominio).
+2. **Origen del propio sitio** en toda petición que cambia algo: subidas, Server Actions y login. Así se corta el CSRF. `/api/subir` lo comprueba también por su cuenta.
+3. **Sesión firmada** con `AEAT_HUB_WEB_PASSWORD` (mínimo 16 caracteres; `jose`, cookie httpOnly, 12 h).
+   - El bloqueo tras 5 fallos es **por IP**, con espera creciente: un atacante no puede dejar fuera al titular.
+   - Detrás de un proxy que no fije `x-forwarded-for` la IP se puede falsear. Por eso la longitud mínima es lo que hace inviable la fuerza bruta.
+   - La redirección tras el login solo admite rutas internas (`destinoSeguro`).
+
+Además:
+- **Token de la API:** lo usa solo el servidor (`server-only`).
 - **Cabeceras:** `nosniff`, `SAMEORIGIN` y `same-origin`.
+- **Pruebas:** las comprobaciones son funciones puras con tests en `web/src/lib/__tests__/seguridad.test.ts`.
 
 **Datos**
 - Los importes viajan como cadena (`"1362.73"`) y se formatean sin `float` (`web/src/lib/formato.ts`, con tests).

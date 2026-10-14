@@ -66,10 +66,16 @@ export function Navegacion({ base, avisos }: { base: string; avisos: number }) {
               <Link
                 href={s.ruta}
                 aria-current={activa(s.ruta) ? "page" : undefined}
-                className="flex flex-col items-center gap-1 py-2.5 text-xs text-crema/75 aria-[current=page]:text-teal"
+                className="relative flex flex-col items-center gap-1 py-2.5 text-xs text-crema/75 aria-[current=page]:text-teal"
               >
                 <Icono>{s.icono}</Icono>
                 {s.etiqueta}
+                {s.etiqueta === "Incidencias" && avisos > 0 ? (
+                  <span className="absolute right-[calc(50%-1.6rem)] top-1.5 rounded-full bg-rosa px-1.5 text-[10px] font-bold text-navy">
+                    {avisos}
+                    <span className="sr-only"> pendientes</span>
+                  </span>
+                ) : null}
               </Link>
             </li>
           ))}

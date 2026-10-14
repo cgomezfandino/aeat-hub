@@ -11,8 +11,16 @@ import { jwtVerify, SignJWT } from "jose";
 export const COOKIE = "aeat_hub_sesion";
 const DURACION_S = 60 * 60 * 12;
 
+export const LONGITUD_MINIMA = 16;
+
 export function loginActivo(): boolean {
-  return Boolean(process.env.AEAT_HUB_WEB_PASSWORD);
+  const password = process.env.AEAT_HUB_WEB_PASSWORD;
+  if (!password) return false;
+  // Con una contraseña larga la fuerza bruta es inviable aunque se falsee la IP.
+  if (password.length < LONGITUD_MINIMA) {
+    throw new Error(`AEAT_HUB_WEB_PASSWORD debe tener al menos ${LONGITUD_MINIMA} caracteres.`);
+  }
+  return true;
 }
 
 function clave(): Uint8Array {
