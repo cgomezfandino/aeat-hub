@@ -299,7 +299,9 @@ def test_c1_rechazados_no_cuentan_en_irpf():
 
 def test_c3_excel_gastos_no_incluye_duplicados(session, layout):
     actividad = _actividad(session)
-    _asiento(session, actividad, fecha=date(2026, 3, 10), total=Decimal("48.40"), emisor="IBERDROLA")
+    _asiento(
+        session, actividad, fecha=date(2026, 3, 10), total=Decimal("48.40"), emisor="IBERDROLA", validado=True
+    )
     _asiento(
         session,
         actividad,
@@ -548,11 +550,63 @@ def test_c4_ranking_agrupa_por_nif_y_netea_abonos():
     from aeat_hub.dashboard import _rank_emisores
 
     filas = [
-        {"estado": "confirmado", "tipo": "gasto", "total": Decimal("100"), "emisor": "IKEA Ibérica S.A.", "nif": "A28812618"},
-        {"estado": "confirmado", "tipo": "gasto", "total": Decimal("50"), "emisor": "IKEA IBERICA SA", "nif": "A28812618"},
-        {"estado": "confirmado", "tipo": "gasto", "total": Decimal("-30"), "emisor": "IKEA", "nif": "A28812618"},
-        {"estado": "confirmado", "tipo": "gasto", "total": Decimal("40"), "emisor": "BAR", "nif": "—"},
+        {"estado": "confirmado", "validado": True, "tipo": "gasto", "total": Decimal("100"), "emisor": "IKEA Ibérica S.A.", "nif": "A28812618"},
+        {"estado": "confirmado", "validado": True, "tipo": "gasto", "total": Decimal("50"), "emisor": "IKEA IBERICA SA", "nif": "A28812618"},
+        {"estado": "confirmado", "validado": True, "tipo": "gasto", "total": Decimal("-30"), "emisor": "IKEA", "nif": "A28812618"},
+        {"estado": "confirmado", "validado": True, "tipo": "gasto", "total": Decimal("40"), "emisor": "BAR", "nif": "—"},
     ]
     ranked, total = _rank_emisores(filas)
     assert total == Decimal("160")
     assert [r["total"] for r in ranked] == [Decimal("120"), Decimal("40")]
+
+
+# --- Rectificativas -------------------------------------------------------------
+
+
+def test_rectificativa_por_sustitucion_se_enlaza_al_ticket_sin_excluirlo(session):
+    """Leroy Merlin: factura R… que sustituye al ticket, con prefijo repetido por el OCR."""
+    from aeat_hub.ingest import vincular_rectificativa
+
+    actividad = _actividad(session)
+    ticket = _asiento(
+        session, actividad, fecha=date(2026, 9, 5), nif_emisor="B84818442",
+        numero_factura="064-0009-717875", total=Decimal("31.45"),
+    )
+    factura = _asiento(
+        session, actividad, fecha=date(2026, 9, 6), nif_emisor="B84818442",
+        numero_factura="064-0009-R194007", total=Decimal("31.45"),
+        tipo_factura="rectificativa", factura_rectificada="064-064-0009-717875",
+    )
+    aviso = vincular_rectificativa(session, factura)
+    assert factura.factura_rectificada_id == ticket.id
+    assert "dos veces" in aviso
+    assert ticket.estado == "confirmado"  # la decisión es humana
+
+
+def test_original_que_llega_despues_tambien_se_enlaza(session):
+    from aeat_hub.ingest import vincular_rectificativa
+
+    actividad = _actividad(session)
+    abono = _asiento(
+        session, actividad, nif_emisor="B84818442", numero_factura="064-0009-R193996",
+        total=Decimal("-10.99"), factura_rectificada="064-0009-R193994",
+    )
+    original = _asiento(
+        session, actividad, nif_emisor="B84818442", numero_factura="064-0009-R193994",
+        total=Decimal("10.99"),
+    )
+    assert vincular_rectificativa(session, original) is not None
+    assert abono.factura_rectificada_id == original.id
+
+
+def test_rectificativa_de_otro_emisor_no_se_enlaza(session):
+    from aeat_hub.ingest import vincular_rectificativa
+
+    actividad = _actividad(session)
+    _asiento(session, actividad, nif_emisor="A28812618", numero_factura="F-000123", total=Decimal("5"))
+    rect = _asiento(
+        session, actividad, nif_emisor="B84818442", numero_factura="R-1",
+        total=Decimal("-5"), factura_rectificada="F-000123",
+    )
+    assert vincular_rectificativa(session, rect) is None
+    assert rect.factura_rectificada_id is None

@@ -12,6 +12,8 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from aeat_hub.fiscal.money import q2
+from aeat_hub.fiscal.computo import computables, por_revisar
 from aeat_hub.fiscal.irpf import summarize_irpf
 from aeat_hub.fiscal.accounts import REGIMEN_CI
 from aeat_hub.models import Actividad, Asiento, Cuenta, Inmueble
@@ -55,8 +57,9 @@ def export_xlsx(
         item.id: item.alias
         for item in session.scalars(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
     }
-    # Los duplicados solo van a su hoja: sumar Gastos no puede contar dos veces.
-    libro = [r for r in rows if r.estado != "duplicado"]
+    # Las hojas del libro solo llevan lo computable (validado, sin duplicados
+    # ni rechazados): sumar una columna nunca cuenta dos veces ni datos sin mirar.
+    libro = computables(rows)
     wb = Workbook()
     _write_sheet(wb.active, "Gastos", [r for r in libro if r.tipo == "gasto"], actividad, inmuebles, nombres)
     _write_sheet(
@@ -84,18 +87,18 @@ def export_xlsx(
         nombres,
     )
     _write_sheet(
-        wb.create_sheet("Reclasificar"),
-        "Reclasificar",
-        [r for r in rows if r.estado == "pendiente"],
+        wb.create_sheet("Por revisar"),
+        "Por revisar",
+        por_revisar(rows),
         actividad,
         inmuebles,
         nombres,
     )
-    _write_trimestres(wb.create_sheet("Trimestres"), rows)
-    _write_summary_rubro(wb.create_sheet("Resumen_rubro"), rows, nombres)
-    _write_summary_inmueble(wb.create_sheet("Resumen_inmueble"), rows, inmuebles)
+    _write_trimestres(wb.create_sheet("Trimestres"), libro)
+    _write_summary_rubro(wb.create_sheet("Resumen_rubro"), libro, nombres)
+    _write_summary_inmueble(wb.create_sheet("Resumen_inmueble"), libro, inmuebles)
     if actividad.regimen == REGIMEN_CI:
-        _write_casillas_irpf(wb.create_sheet("Casillas_IRPF"), rows, year, extra_casillas)
+        _write_casillas_irpf(wb.create_sheet("Casillas_IRPF"), libro, year, extra_casillas)
 
     layout.exports.mkdir(parents=True, exist_ok=True)
     dest = layout.exports / f"libro_{actividad.codigo}_{year}.xlsx"
@@ -172,21 +175,21 @@ def _write_trimestres(ws, rows: list[Asiento]) -> None:
         ws.append(
             [
                 f"T{q}",
-                float(slot["gasto"]),
-                float(slot["ingreso"]),
-                float(slot["mejora"]),
-                float(slot["ingreso"] - slot["gasto"]),
-                float(slot["iva"]),
+                _num(slot["gasto"]),
+                _num(slot["ingreso"]),
+                _num(slot["mejora"]),
+                _num(slot["ingreso"] - slot["gasto"]),
+                _num(slot["iva"]),
             ]
         )
     ws.append(
         [
             "Año",
-            float(totales["gasto"]),
-            float(totales["ingreso"]),
-            float(totales["mejora"]),
-            float(totales["ingreso"] - totales["gasto"]),
-            float(totales["iva"]),
+            _num(totales["gasto"]),
+            _num(totales["ingreso"]),
+            _num(totales["mejora"]),
+            _num(totales["ingreso"] - totales["gasto"]),
+            _num(totales["iva"]),
         ]
     )
     _autosize(ws)
@@ -210,7 +213,7 @@ def _write_summary_rubro(ws, rows: list[Asiento], nombres: dict[str, str]) -> No
         buckets[key]["iva"] += asiento.iva_cuota or Decimal("0")
         buckets[key]["total"] += asiento.total or Decimal("0")
     for (rubro, tipo), agg in sorted(buckets.items()):
-        ws.append([rubro, tipo, agg["n"], float(agg["base"]), float(agg["iva"]), float(agg["total"])])
+        ws.append([rubro, tipo, agg["n"], _num(agg["base"]), _num(agg["iva"]), _num(agg["total"])])
     _autosize(ws)
 
 
@@ -226,7 +229,7 @@ def _write_summary_inmueble(ws, rows: list[Asiento], inmuebles: dict[int, str]) 
         alias = inmuebles.get(asiento.inmueble_id or 0, "(sin inmueble)")
         buckets[(alias, asiento.tipo)] += asiento.total or Decimal("0")
     for (alias, tipo), total in sorted(buckets.items()):
-        ws.append([alias, tipo, float(total)])
+        ws.append([alias, tipo, _num(total)])
     _autosize(ws)
 
 
@@ -255,26 +258,34 @@ def _write_casillas_irpf(
             [
                 item["etiqueta"],
                 item["n"],
-                float(item["total"]),
+                _num(item["total"]),
                 "Sí" if item["resta_del_ano"] else "No",
                 item["notas"],
             ]
         )
     ws.append([])
-    ws.append(["Ingresos íntegros", float(summary["ingresos"])])
-    ws.append(["Gastos deducibles (incl. amortización)", float(summary["gastos_deducibles"])])
-    ws.append(["Rendimiento neto", float(summary["rendimiento"])])
-    ws.append(["Mejoras (no restan del ejercicio)", float(summary["mejoras"])])
+    ws.append(["Ingresos íntegros", _num(summary["ingresos"])])
+    ws.append(["Gastos deducibles (incl. amortización)", _num(summary["gastos_deducibles"])])
+    ws.append(["Rendimiento neto", _num(summary["rendimiento"])])
+    ws.append(["Mejoras (no restan del ejercicio)", _num(summary["mejoras"])])
     _autosize(ws)
 
 
-def _num(value) -> float | None:
+def _num(value) -> Decimal | None:
+    """Importe exacto para Excel (Decimal, no float binario)."""
     if value is None:
         return None
-    return float(value)
+    return q2(value)
+
+
+FORMATO_IMPORTE = "#,##0.00"
 
 
 def _autosize(ws) -> None:
+    for row in ws.iter_rows():
+        for cell in row:
+            if isinstance(cell.value, Decimal):
+                cell.number_format = FORMATO_IMPORTE
     for idx, column in enumerate(ws.columns, start=1):
         width = max((len(str(cell.value or "")) for cell in column), default=8)
         ws.column_dimensions[get_column_letter(idx)].width = min(max(width + 2, 10), 40)

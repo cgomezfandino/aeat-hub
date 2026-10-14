@@ -15,13 +15,14 @@ from aeat_hub.dedupe import DuplicateHit, find_duplicate, find_sha_duplicate
 from aeat_hub.edits import replace_lineas
 from aeat_hub.emisores import emisor_canonico_u_ocr, nombre_canonico_para
 from aeat_hub.er import cluster_documento, save_extraccion
-from aeat_hub.extract.ids import normalize_emisor
+from aeat_hub.extract.ids import normalize_emisor, normalize_numero
 from aeat_hub.extract.parser import parse_invoice
 from aeat_hub.extract.schema import InvoiceExtract
 from aeat_hub.filing import place_file, relocate_asiento, relocate_documento
 from aeat_hub.fiscal.cuadres import TOLERANCIA_LINEAS, avisos_cuadre
 from aeat_hub.media import file_phash, sha256_file
-from aeat_hub.models import Actividad, Asiento, Documento, Inmueble
+from aeat_hub.fiscal.nif import normalize_nif
+from aeat_hub.models import Actividad, Asiento, AsientoIVA, Documento, Inmueble
 from aeat_hub.ocr.base import OCRProvider, OCRResult
 from aeat_hub.ocr.cascade import transcribe
 from aeat_hub.paths import DataLayout
@@ -303,8 +304,12 @@ def ingest_file(
             asiento.estado = "pendiente"
         else:
             _apply_duplicate_and_state(asiento, dup, classification.confianza)
+        aplicar_campos_fiscales(asiento, extract, _nif_titular(actividad))
         session.add(asiento)
         session.flush()
+        aviso_rect = vincular_rectificativa(session, asiento)
+        if aviso_rect:
+            warnings.append(aviso_rect)
         replace_lineas(session, asiento, extract.lineas)
         for aviso in avisos_cuadre(
             base=extract.base,
@@ -402,6 +407,138 @@ def _etapa_from_exc(exc: BaseException) -> str:
     return text[:80] if text else exc.__class__.__name__
 
 
+TIPO_DESCONOCIDO = "sin_determinar"
+_TIPOS_FACTURA = {
+    "factura": "completa",
+    "completa": "completa",
+    "ticket": "simplificada",
+    "simplificada": "simplificada",
+    "factura simplificada": "simplificada",
+    "rectificativa": "rectificativa",
+    "abono": "rectificativa",
+}
+
+
+def tipo_factura_de(extract: InvoiceExtract) -> str:
+    if extract.factura_rectificada:
+        return "rectificativa"
+    clave = (extract.tipo_documento or "").strip().lower()
+    return _TIPOS_FACTURA.get(clave, TIPO_DESCONOCIDO)
+
+
+def aplicar_campos_fiscales(
+    asiento: Asiento, extract: InvoiceExtract, nif_titular: str | None, *, solo_vacios: bool = False
+) -> None:
+    """Lleva al asiento los campos legales que hasta ahora solo vivían en el JSON."""
+
+    def poner(campo: str, valor) -> None:
+        if solo_vacios and getattr(asiento, campo) not in (None, ""):
+            return
+        setattr(asiento, campo, valor)
+
+    poner("receptor", extract.receptor)
+    poner("nif_receptor", (normalize_nif(extract.nif_receptor) or None) if extract.nif_receptor else None)
+    poner("factura_rectificada", extract.factura_rectificada)
+    poner("retencion_tipo", extract.retencion_tipo)
+    poner("retencion_cuota", extract.retencion_cuota)
+    if not solo_vacios or asiento.tipo_factura in (None, TIPO_DESCONOCIDO):
+        asiento.tipo_factura = tipo_factura_de(extract)
+    titular = normalize_nif(nif_titular) if nif_titular else ""
+    emisor = normalize_nif(asiento.nif_emisor) if asiento.nif_emisor else ""
+    asiento.direccion = "emitida" if titular and emisor == titular else "recibida"
+    if solo_vacios and asiento.desglose_iva:
+        return
+    asiento.desglose_iva = [
+        AsientoIVA(base=item.base, tipo=item.iva_tipo, cuota=item.iva_cuota)
+        for item in extract.desglose_iva
+        if item.base is not None or item.iva_cuota is not None
+    ]
+
+
+def _numeros_casan(a: str | None, b: str | None) -> bool:
+    """Mismo número aunque el OCR repita un prefijo ('064-064-0009-717875')."""
+    na, nb = normalize_numero(a), normalize_numero(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    corto, largo = sorted((na, nb), key=len)
+    return len(corto) >= 6 and largo.endswith(corto)
+
+
+def vincular_rectificativa(session: Session, asiento: Asiento) -> str | None:
+    """Enlaza una rectificativa con la factura que rectifica (en ambos sentidos).
+
+    No excluye nada: una rectificativa por sustitución (p. ej. factura
+    completa que sustituye a un ticket) reemplaza a la original, pero una
+    por diferencias se suma a ella. Esa decisión es humana; aquí solo se
+    enlaza y se devuelve el aviso para la revisión.
+    """
+    hermanos = session.scalars(
+        select(Asiento).where(
+            Asiento.actividad_id == asiento.actividad_id,
+            Asiento.id != asiento.id,
+            Asiento.estado != "rechazado",
+        )
+    ).all()
+
+    def mismo_emisor(otro: Asiento) -> bool:
+        if asiento.nif_emisor and otro.nif_emisor:
+            return normalize_nif(asiento.nif_emisor) == normalize_nif(otro.nif_emisor)
+        emisor = normalize_emisor(asiento.emisor)
+        return emisor is not None and emisor == normalize_emisor(otro.emisor)
+
+    if asiento.factura_rectificada and asiento.factura_rectificada_id is None:
+        for otro in hermanos:
+            if mismo_emisor(otro) and _numeros_casan(otro.numero_factura, asiento.factura_rectificada):
+                asiento.factura_rectificada_id = otro.id
+                return _aviso_rectificativa(asiento, otro)
+    for otro in hermanos:
+        if (
+            otro.factura_rectificada
+            and otro.factura_rectificada_id is None
+            and mismo_emisor(otro)
+            and _numeros_casan(asiento.numero_factura, otro.factura_rectificada)
+        ):
+            otro.factura_rectificada_id = asiento.id
+            return _aviso_rectificativa(otro, asiento)
+    return None
+
+
+def _aviso_rectificativa(rectificativa: Asiento, original: Asiento) -> str:
+    if rectificativa.total is not None and rectificativa.total > 0:
+        return (
+            f"La factura {rectificativa.numero_factura} rectifica a la #{original.id}. "
+            "Si la sustituye (p. ej. factura completa en lugar del ticket), rechaza la "
+            "original para no contar el gasto dos veces; si es por diferencias, se suman."
+        )
+    return f"El abono {rectificativa.numero_factura} rectifica a la #{original.id}."
+
+
+def backfill_campos_fiscales(session: Session) -> int:
+    """Rellena los campos legales de asientos antiguos desde el JSON ya guardado.
+
+    No toca lo que una persona haya escrito: solo completa vacíos. Marca el
+    tipo como `sin_determinar` cuando el JSON no lo dice, para no repetir.
+    """
+    rows = session.scalars(
+        select(Asiento).where(Asiento.tipo_factura.is_(None), Asiento.documento_id.is_not(None))
+    ).all()
+    for asiento in rows:
+        documento = session.get(Documento, asiento.documento_id)
+        try:
+            extract = InvoiceExtract.model_validate_json(documento.json_extraido or "{}")
+        except ValueError:
+            extract = InvoiceExtract()
+        aplicar_campos_fiscales(
+            asiento, extract, _nif_titular(asiento.actividad), solo_vacios=True
+        )
+    session.flush()
+    for asiento in rows:
+        vincular_rectificativa(session, asiento)
+    return len(rows)
+
+
 def _apply_duplicate_and_state(
     asiento: Asiento,
     dup: DuplicateHit | None,
@@ -465,6 +602,7 @@ def reparse_asientos(session: Session, actividad: Actividad) -> int:
         _sync_factura_reparse(factura, extract, divergencia)
         documento.json_extraido = extract.model_dump_json()
         documento.confianza = extract.confianza
+        aplicar_campos_fiscales(asiento, extract, titular_nif)
         replace_lineas(session, asiento, extract.lineas)
         if asiento.estado != "duplicado":
             classification = classify(session, actividad, extract, documento.texto_crudo)

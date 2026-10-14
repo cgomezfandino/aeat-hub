@@ -20,6 +20,21 @@ Extra HEIC: `uv sync --extra heic`.
 - Los tests no deben llamar a GPU ni descargar Unlimited-OCR. El OCR de imagen se inyecta (`FakeRapid`) o se usa PDF con texto. El bake-off real (`aeat-hub eval` con RapidOCR/Vision) no corre en pytest.
 - Si el sistema no está seguro entre reparación y mejora, el asiento queda `pendiente`.
 
+## Esquema y migraciones (Alembic)
+
+- El esquema vive en `src/aeat_hub/migrations/versions/`. `db.create_schema` deja
+  cualquier base en `head` al arrancar; no hay `create_all`.
+- `0001` es el esquema congelado a 14 oct 2026 (`migrations/baseline_0001.sql`).
+  Una base anterior a Alembic pasa por los ALTER históricos (`_migrate_legacy`,
+  congelado), se sella en `0001` y sigue migrando.
+- Cambiar un modelo exige una revisión nueva. `tests/test_migraciones.py`
+  compara migraciones y modelos y falla ante cualquier diferencia.
+- En SQLite las FK se desactivan solo durante la migración (las tablas se
+  recrean) y se comprueba `PRAGMA foreign_key_check` antes de confirmar.
+- Importes, tipos y cantidades usan `aeat_hub.types.Fixed`: enteros escalados
+  en SQLite (céntimos), `NUMERIC` en Postgres. Nunca `Numeric` a pelo ni `float`.
+- Antes de migrar una base real: copia `db/ledger.sqlite*` y prueba en la copia.
+
 ## Añadir una cuenta
 
 1. `AccountDef` en `src/aeat_hub/fiscal/accounts.py`.

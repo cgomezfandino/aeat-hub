@@ -26,6 +26,7 @@ def _seed_asientos(session, actividad):
             nif_emisor="B12345674",
             numero_factura="F1",
             base=Decimal("40.00"),
+            iva_tipo=Decimal("21.00"),
             iva_cuota=Decimal("8.40"),
             total=Decimal("48.40"),
             estado="confirmado",
@@ -42,6 +43,7 @@ def _seed_asientos(session, actividad):
             emisor="Inquilino",
             total=Decimal("700.00"),
             estado="confirmado",
+            validado=True,
         )
     )
     session.add(
@@ -54,6 +56,7 @@ def _seed_asientos(session, actividad):
             emisor="Ventanas Demo",
             total=Decimal("1452.00"),
             estado="confirmado",
+            validado=True,
         )
     )
     session.add(
@@ -92,21 +95,26 @@ def test_dashboard_kpis_excluyen_duplicados_y_mejoras(session, layout):
     actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
     _seed_asientos(session, actividad)
     data = collect_dashboard(session, actividad, 2026)
-    assert data["gastos"] == Decimal("79.85")
+    # el ticket de Leroy no está validado: no computa, se enseña aparte
+    assert data["gastos"] == Decimal("48.40")
     assert data["ingresos"] == Decimal("700.00")
     assert data["mejoras"] == Decimal("1452.00")
-    assert data["resultado"] == Decimal("620.15")
+    assert data["resultado"] == Decimal("651.60")
     assert data["n_duplicados"] == 1
     assert data["n_pendientes"] == 1
+    assert data["n_por_revisar"] == 1
+    assert data["total_por_revisar"] == Decimal("31.45")
+    html = render_dashboard(data)
+    assert "Pendiente de revisar: 1 factura · 31,45 €" in html
     assert len(data["pendientes"]) == 1
     assert len(data["cola_revision"]) >= 1
     assert data["cola_revision"][0]["emisor"] == "LEROY MERLIN ARROYO"
-    assert data["irpf"]["rendimiento"] == Decimal("620.15")
+    assert data["irpf"]["rendimiento"] == Decimal("651.60")
     assert data["irpf"]["mejoras"] == Decimal("1452.00")
     labels = {item["label"] for item in data["por_naturaleza"]}
     assert "Suministros" in labels
     assert "Mejoras" in labels
-    assert "Otros gastos" in labels
+    assert "Otros gastos" not in labels  # solo lo aportaba el ticket sin validar
     assert "Ingresos" in labels
     assert "Hogar / mantenimiento" not in labels
     assert "Rentas" not in labels
@@ -115,6 +123,20 @@ def test_dashboard_kpis_excluyen_duplicados_y_mejoras(session, layout):
 def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
     _seed_asientos(session, actividad)
+    # consolidado por el clasificador pero sin validar: ofrece "Validar"
+    session.add(
+        Asiento(
+            actividad_id=actividad.id,
+            tipo="gasto",
+            cuenta_codigo="CI.GAS.LUZ",
+            fecha=date(2026, 6, 1),
+            ejercicio=2026,
+            emisor="ENDESA DEMO",
+            total=Decimal("20.00"),
+            estado="confirmado",
+        )
+    )
+    session.commit()
     dest = write_dashboard(session, layout, actividad, 2026)
     assert dest.is_file()
     html = dest.read_text(encoding="utf-8")
@@ -149,7 +171,7 @@ def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     assert ">Operativo</h2>" in html
     assert ">Renta</h2>" in html
     assert "concentra el" in html
-    assert "IBERDROLA DEMO concentra el 61 % del gasto" in html
+    assert "IBERDROLA DEMO concentra el 100 % del gasto" in html
     assert 'id="insight-desde"' in html
     assert 'id="insight-hasta"' in html
     assert 'id="insight-range-save"' in html
@@ -166,7 +188,8 @@ def test_dashboard_html_tiene_emisor_y_fecha(session, layout):
     assert ">ene</text>" in meses
     assert ">dic</text>" in meses
     emisores = html.split('aria-label="Gasto por emisor"', 1)[1].split("</svg>", 1)[0]
-    assert emisores.index("IBERDROLA DEMO") < emisores.index("LEROY MERLIN ARROYO")
+    assert "IBERDROLA DEMO" in emisores
+    assert "LEROY MERLIN ARROYO" not in emisores  # pendiente de revisar: no computa
     assert "IBERDROLA DUPLICADA" not in emisores
     assert "Acumulado del año" not in html
     assert "evo-hero" not in html
@@ -375,6 +398,7 @@ def test_dashboard_actividad_economica_agrupa_por_nombre_de_rubro(session):
                 emisor="Seguridad Social",
                 total=Decimal("320.00"),
                 estado="confirmado",
+                validado=True,
             ),
             Asiento(
                 actividad_id=actividad.id,
@@ -385,6 +409,7 @@ def test_dashboard_actividad_economica_agrupa_por_nombre_de_rubro(session):
                 emisor="Cliente",
                 total=Decimal("900.00"),
                 estado="confirmado",
+                validado=True,
             ),
         ]
     )
@@ -537,6 +562,7 @@ def test_emisores_de_gasto_dejan_el_resto_al_final():
     rows = [
         {
             "estado": "confirmado",
+            "validado": True,
             "tipo": "gasto",
             "emisor": f"Casa {idx}",
             "total": Decimal(20 - idx),
