@@ -43,8 +43,8 @@ AEAT_HUB_API_TOKEN=$(openssl rand -hex 32) AEAT_HUB_DATA_DIR=/ruta/datos docker 
    - en la nube, la lista `AEAT_HUB_WEB_HOSTS` (tu dominio).
 2. **Origen del propio sitio** en toda petición que cambia algo: subidas, Server Actions y login. Así se corta el CSRF. `/api/subir` lo comprueba también por su cuenta.
 3. **Sesión firmada** con `AEAT_HUB_WEB_PASSWORD` (mínimo 16 caracteres; `jose`, cookie httpOnly, 12 h).
-   - El bloqueo tras 5 fallos es **por IP**, con espera creciente: un atacante no puede dejar fuera al titular.
-   - Detrás de un proxy que no fije `x-forwarded-for` la IP se puede falsear. Por eso la longitud mínima es lo que hace inviable la fuerza bruta.
+   - **Con `AEAT_HUB_TRUST_PROXY=1`** (detrás de un proxy que fija la IP real, como Vercel): bloqueo **por IP** tras 5 fallos, con espera creciente.
+   - **Sin proxy de confianza:** no hay bloqueo, porque la IP se puede falsear y un bloqueo global dejaría fuera al titular. Cada fallo espera ~1 s. Es la longitud mínima la que hace inviable la fuerza bruta.
    - La redirección tras el login solo admite rutas internas (`destinoSeguro`).
 
 Además:

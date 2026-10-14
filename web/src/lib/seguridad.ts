@@ -51,7 +51,10 @@ export function destinoSeguro(desde: string | null | undefined): string {
     const base = "http://interno.invalid";
     const url = new URL(valor, base);
     if (url.origin !== base) return "/";
-    return `${url.pathname}${url.search}${url.hash}`;
+    const destino = `${url.pathname}${url.search}${url.hash}`;
+    // tras normalizar, "/a/..//evil.com" queda en "//evil.com" (URL relativa
+    // al protocolo): se valida el resultado, no solo la entrada.
+    return destino.startsWith("//") ? "/" : destino;
   } catch {
     return "/";
   }

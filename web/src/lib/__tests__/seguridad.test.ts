@@ -41,6 +41,9 @@ describe("destino tras login (open redirect)", () => {
     ["/\\/evil.com", "/"],
     ["https://evil.com", "/"],
     ["/\tevil", "/"],
+    ["/a/..//evil.com", "/"],
+    ["/.//evil.com", "/"],
+    ["/%2F%2Fevil.com", "/%2F%2Fevil.com"],
     ["", "/"],
   ])("%s → %s", (entrada, esperado) => {
     expect(destinoSeguro(entrada)).toBe(esperado);
