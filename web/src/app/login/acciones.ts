@@ -5,11 +5,19 @@ import { redirect } from "next/navigation";
 
 import { crearLimitador } from "@/lib/limite";
 import { destinoSeguro } from "@/lib/seguridad";
-import { COOKIE, firmarSesion, passwordCorrecta } from "@/lib/sesion";
+import {
+  COOKIE,
+  COOKIE_DISPOSITIVO,
+  dispositivoValido,
+  firmarDispositivo,
+  firmarSesion,
+  passwordCorrecta,
+} from "@/lib/sesion";
 
-// Límite de intentos (src/lib/limite.ts): cola global, ~1 fallo por segundo
-// aunque lleguen en paralelo. La IP solo se usa para bloquear si viene de un
-// proxy de confianza (AEAT_HUB_TRUST_PROXY=1); si no, se podría falsear.
+// Límite de intentos (src/lib/limite.ts): ~1 fallo/s por carril aunque lleguen
+// en paralelo, cola anónima acotada y carril propio para los dispositivos que
+// ya entraron (cookie firmada): un ataque no deja fuera al titular. La IP solo
+// bloquea si viene de un proxy de confianza (AEAT_HUB_TRUST_PROXY=1).
 // La defensa de fondo es la contraseña de 16+ caracteres.
 const limitador = crearLimitador();
 
@@ -23,18 +31,28 @@ async function ipDeConfianza(): Promise<string | null> {
 }
 
 export async function entrar(_previo: EstadoLogin, formulario: FormData): Promise<EstadoLogin> {
-  const resultado = await limitador.intentar(await ipDeConfianza(), () =>
-    passwordCorrecta(String(formulario.get("password") ?? "")),
-  );
-  if (resultado === "bloqueada") return { error: "Demasiados intentos desde esta conexión. Espera unos minutos." };
-  if (resultado === "incorrecta") return { error: "Contraseña incorrecta." };
-  const { valor, maxAge } = await firmarSesion();
-  (await cookies()).set(COOKIE, valor, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge,
+  const almacen = await cookies();
+  const conocido = await dispositivoValido(almacen.get(COOKIE_DISPOSITIVO)?.value);
+  const resultado = await limitador.intentar({
+    clave: await ipDeConfianza(),
+    dispositivo: conocido,
+    verificar: () => passwordCorrecta(String(formulario.get("password") ?? "")),
   });
+  if (resultado === "bloqueada") return { error: "Demasiados intentos desde esta conexión. Espera unos minutos." };
+  if (resultado === "ocupado") return { error: "Hay muchos intentos en curso. Reintenta en unos segundos." };
+  if (resultado === "incorrecta") return { error: "Contraseña incorrecta." };
+  const seguro = process.env.NODE_ENV === "production";
+  const { valor, maxAge } = await firmarSesion();
+  almacen.set(COOKIE, valor, { httpOnly: true, secure: seguro, sameSite: "lax", path: "/", maxAge });
+  if (!conocido) {
+    const dispositivo = await firmarDispositivo();
+    almacen.set(COOKIE_DISPOSITIVO, dispositivo.valor, {
+      httpOnly: true,
+      secure: seguro,
+      sameSite: "strict",
+      path: "/login",
+      maxAge: dispositivo.maxAge,
+    });
+  }
   redirect(destinoSeguro(String(formulario.get("desde") ?? "/")));
 }

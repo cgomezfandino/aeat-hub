@@ -10,6 +10,9 @@ import { jwtVerify, SignJWT } from "jose";
  */
 export const COOKIE = "aeat_hub_sesion";
 const DURACION_S = 60 * 60 * 12;
+/** Dispositivo conocido: carril propio en el login (no da acceso por sí solo). */
+export const COOKIE_DISPOSITIVO = "aeat_hub_dispositivo";
+const DURACION_DISPOSITIVO_S = 60 * 60 * 24 * 180;
 
 export const LONGITUD_MINIMA = 16;
 
@@ -40,7 +43,7 @@ export function passwordCorrecta(intento: string): boolean {
 }
 
 export async function firmarSesion(): Promise<{ valor: string; maxAge: number }> {
-  const valor = await new SignJWT({ sub: "titular" })
+  const valor = await new SignJWT({ sub: "titular", typ: "sesion" })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${DURACION_S}s`)
@@ -48,12 +51,30 @@ export async function firmarSesion(): Promise<{ valor: string; maxAge: number }>
   return { valor, maxAge: DURACION_S };
 }
 
-export async function sesionValida(valor: string | undefined): Promise<boolean> {
+async function verificar(valor: string | undefined, tipo: "sesion" | "dispositivo"): Promise<boolean> {
   if (!valor) return false;
   try {
-    await jwtVerify(valor, clave(), { algorithms: ["HS256"] });
-    return true;
+    const { payload } = await jwtVerify(valor, clave(), { algorithms: ["HS256"] });
+    return payload.typ === tipo;
   } catch {
     return false;
   }
+}
+
+export function sesionValida(valor: string | undefined): Promise<boolean> {
+  return verificar(valor, "sesion");
+}
+
+export async function firmarDispositivo(): Promise<{ valor: string; maxAge: number }> {
+  const valor = await new SignJWT({ sub: "titular", typ: "dispositivo" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setJti(crypto.randomUUID())
+    .setExpirationTime(`${DURACION_DISPOSITIVO_S}s`)
+    .sign(clave());
+  return { valor, maxAge: DURACION_DISPOSITIVO_S };
+}
+
+export function dispositivoValido(valor: string | undefined): Promise<boolean> {
+  return verificar(valor, "dispositivo");
 }

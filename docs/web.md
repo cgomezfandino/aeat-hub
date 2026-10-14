@@ -45,8 +45,11 @@ AEAT_HUB_API_TOKEN=$(openssl rand -hex 32) AEAT_HUB_DATA_DIR=/ruta/datos docker 
 3. **Sesión firmada** con `AEAT_HUB_WEB_PASSWORD` (mínimo 16 caracteres; `jose`, cookie httpOnly, 12 h).
    - **Con `AEAT_HUB_TRUST_PROXY=1`** (detrás de un proxy que fija la IP real, como Vercel): bloqueo **por IP** tras 5 fallos, con espera creciente.
    - **Sin proxy de confianza:** no hay bloqueo, porque la IP se puede falsear y un bloqueo global dejaría fuera al titular. Es la longitud mínima la que hace inviable la fuerza bruta.
-   - **En ambos casos:** las comprobaciones pasan **una a una** por una cola global (`web/src/lib/limite.ts`). Cada fallo la retiene ~1 s, así que lanzar peticiones en paralelo no acelera nada.
-   - **Límite conocido:** la cola vive en memoria. Con varias instancias (serverless) el tope es por instancia; la contraseña larga sigue siendo la defensa de fondo.
+   - **En ambos casos** (`web/src/lib/limite.ts`):
+     - las comprobaciones pasan **una a una** por cola; cada fallo la retiene ~1 s, así que lanzar peticiones en paralelo no acelera nada;
+     - la cola anónima está **acotada**: con 5 en espera, el resto se rechaza al instante sin probar la contraseña;
+     - los **dispositivos que ya entraron** (cookie firmada `typ: dispositivo`, 180 días, solo en `/login`; [OWASP device cookies](https://owasp.org/www-community/Slow_Down_Online_Guessing_Attacks_with_Device_Cookies)) usan **su propio carril**: un ataque desde fuera no deja fuera al titular. Esa cookie no vale como sesión (test en `sesion.test.ts`).
+   - **Límite conocido:** las colas viven en memoria. Con varias instancias (serverless) el tope es por instancia; la contraseña larga sigue siendo la defensa de fondo.
    - La redirección tras el login solo admite rutas internas (`destinoSeguro`).
 
 Además:
