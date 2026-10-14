@@ -126,10 +126,8 @@ class GeminiOCRProvider:
         if pages == 0:
             raise ProviderUnavailable(self.name, "No se encontraron páginas en el documento")
 
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-            f"?key={self.api_key}"
-        )
+        # La key va en cabecera, no en la URL: las URLs acaban en logs y trazas.
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         payload = {
             "contents": [{"parts": parts}],
             "generationConfig": {
@@ -141,7 +139,7 @@ class GeminiOCRProvider:
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-goog-api-key": self.api_key},
             method="POST",
         )
 
@@ -170,6 +168,12 @@ class GeminiOCRProvider:
         candidates = data.get("candidates") or []
         if not candidates:
             raise ProviderUnavailable(self.name, "Gemini no devolvió candidatos")
+
+        # Un JSON cortado (MAX_TOKENS) o bloqueado no es una factura: mejor
+        # que la cascada lea con otro motor que parsear medio documento.
+        finish = candidates[0].get("finishReason")
+        if finish and finish != "STOP":
+            raise ProviderUnavailable(self.name, f"respuesta incompleta de Gemini (finishReason={finish})")
 
         content = candidates[0].get("content") or {}
         parts_resp = content.get("parts") or []

@@ -360,8 +360,11 @@ def test_score_par_splink_con_skus(session):
     res = score_par_splink(ticket, factura)
     assert res is not None
     prob, peso, desglose = res
-    assert prob >= 0.99
-    assert peso >= 10.0
+    # canje ticket→factura 15 días después: se menciona como sospechoso
+    from aeat_hub.linkage_facturas import UMBRAL_MENCION
+
+    assert prob >= UMBRAL_MENCION
+    assert peso > 0
     conceptos = dict(desglose)
     assert "skus ≥2 coincidentes" in conceptos
     assert conceptos["skus ≥2 coincidentes"] > 10.0

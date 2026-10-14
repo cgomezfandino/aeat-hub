@@ -84,7 +84,13 @@ CASILLAS_CI: tuple[CasillaIRPF, ...] = (
         False,
         "Se suman al valor de adquisición y se amortizan.",
     ),
-    CasillaIRPF("sin_clasificar", "Sin clasificar", "gasto", True),
+    CasillaIRPF(
+        "sin_clasificar",
+        "Sin clasificar",
+        "gasto",
+        False,
+        "No se computa hasta asignarle casilla: sin clasificar no es deducible.",
+    ),
 )
 
 INDEX_CI = {item.clave: item for item in CASILLAS_CI}
@@ -118,12 +124,15 @@ def tipo_desde_casilla(clave: str) -> str:
 
 
 def summarize_irpf(asientos, extra: dict[str, str] | None = None) -> dict:
-    """Totales por casilla. Ignora duplicados. El rendimiento no resta mejoras."""
+    """Totales por casilla. Ignora duplicados y rechazados.
+
+    El rendimiento no resta mejoras ni lo pendiente de clasificar.
+    """
     buckets: dict[str, dict] = {
         item.clave: {"meta": item, "n": 0, "total": ZERO} for item in CASILLAS_CI
     }
     for asiento in asientos:
-        if getattr(asiento, "estado", None) == "duplicado":
+        if getattr(asiento, "estado", None) in ("duplicado", "rechazado"):
             continue
         clave = casilla_clave(getattr(asiento, "cuenta_codigo", None), extra)
         if clave not in buckets:

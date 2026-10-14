@@ -22,10 +22,17 @@ from aeat_hub.models import Actividad, Asiento
 UMBRAL_MENCION = 0.90
 
 # m/u fijadas por nivel (priors calibrados a mano, jugables como las del emisor).
+#
+# u es la probabilidad de coincidir entre DOS FACTURAS CUALESQUIERA DEL MISMO
+# LIBRO, no entre dos personas al azar: en un libro de gastos el mismo
+# proveedor se repite (alquiler, luz, cuotas), así que "mismo NIF" ocurre en
+# ~5 % de pares (u=0.05), no en 4e-6. Con u=4e-6 toda factura recurrente del
+# mismo importe salía como duplicada (P≈0,96). Números distintos sí son
+# habituales en la misma compra (ticket canjeado por factura): m=0.10.
 _PRIOR = 1 / 2048
 _PESOS: dict[str, list[tuple[float, float]]] = {
-    "nif": [(0.99, 4e-6), (4e-6, 0.99)],
-    "numero": [(0.97, 1e-5), (0.01, 0.90)],
+    "nif": [(0.99, 0.05), (0.01, 0.95)],
+    "numero": [(0.97, 1e-5), (0.10, 0.9999)],
     "fecha": [(0.75, 0.01), (0.10, 0.06), (0.02, 0.95)],
     "importe": [(0.95, 0.02), (0.00005, 0.999)],
     "nombre": [(0.90, 0.05), (0.50, 0.10), (0.02, 0.95)],

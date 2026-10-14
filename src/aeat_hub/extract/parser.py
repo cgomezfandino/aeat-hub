@@ -10,7 +10,8 @@ from dateutil.parser import parse as parse_date
 
 from aeat_hub.extract.ids import normalize_numero
 from aeat_hub.extract.schema import InvoiceExtract, InvoiceLine
-from aeat_hub.fiscal.money import last_amount, q2
+from aeat_hub.fiscal.cuadres import tipo_iva_desde_cuota
+from aeat_hub.fiscal.money import last_amount, parse_amount, q2
 from aeat_hub.fiscal.nif import find_nifs, is_valid_nif, normalize_nif, pick_emisor_receptor
 
 IVA_RATES = (Decimal("21"), Decimal("10"), Decimal("4"), Decimal("0"))
@@ -172,6 +173,22 @@ def parse_invoice(
     return extract
 
 
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def _fecha_json(raw) -> date | None:
+    """Fecha del JSON del modelo: ISO tal cual; cualquier otra, día/mes (España)."""
+    if not raw:
+        return None
+    text = str(raw).strip()
+    try:
+        if _ISO_DATE.match(text):
+            return date.fromisoformat(text[:10])
+        return parse_date(text, dayfirst=True).date()
+    except (ValueError, OverflowError):
+        return None
+
+
 def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
     from aeat_hub.extract.schema import DesgloseIVA
 
@@ -188,22 +205,15 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
     tipo_doc = str(data.get("tipo_documento") or "").strip() or None
     factura_rect = str(data.get("factura_rectificada") or "").strip() or None
 
-    fecha_val = data.get("fecha")
-    fecha: date | None = None
-    if fecha_val:
-        try:
-            fecha = parse_date(str(fecha_val), dayfirst=False, yearfirst=True).date()
-        except Exception:
-            pass
+    fecha = _fecha_json(data.get("fecha"))
 
     def _dec(v) -> Decimal | None:
-        if v is None:
+        if v is None or isinstance(v, bool):
             return None
-        try:
-            s = str(v).replace(",", ".").replace("€", "").strip()
-            return q2(Decimal(s))
-        except Exception:
-            return None
+        if isinstance(v, (int, float, Decimal)):
+            return q2(Decimal(str(v)))
+        # Cadenas: el modelo a veces devuelve "1.250,50 €" o "21%"
+        return parse_amount(str(v).replace("%", ""))
 
     base = _dec(data.get("base"))
     iva_tipo = _dec(data.get("iva_tipo"))
@@ -244,7 +254,7 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
     if total is not None and base is not None and iva_cuota is None:
         iva_cuota = q2(total - base + ret)
         if iva_tipo is None and base > 0 and iva_cuota is not None:
-            iva_tipo = q2((iva_cuota / base) * 100)
+            iva_tipo = tipo_iva_desde_cuota(base, iva_cuota, fecha)
     elif total is not None and iva_cuota is not None and base is None:
         base = q2(total - iva_cuota + ret)
     elif base is not None and iva_tipo is not None and iva_cuota is None:
@@ -255,19 +265,14 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
         factor = Decimal("1") + (iva_tipo / Decimal("100"))
         base = q2((total + ret) / factor)
         iva_cuota = q2(total + ret - base) if base is not None else None
-    elif total is not None and base is None and iva_cuota is None and iva_tipo is None:
-        iva_tipo = Decimal("21.00")
-        factor = Decimal("1.21")
-        base = q2((total + ret) / factor)
-        iva_cuota = q2(total + ret - base) if base is not None else None
+    # Solo total, sin base ni IVA: no se presume ningún tipo. Un seguro,
+    # una exenta (art. 20 LIVA) o un servicio extranjero no llevan IVA
+    # español; inventar un 21 % crearía IVA soportado ficticio.
     elif total is None and base is not None and iva_cuota is not None:
         total = q2(base + iva_cuota - ret)
 
-    # Cuadratura de redondeos de centimillos (±0.02 €)
-    if total is not None and base is not None and iva_cuota is not None:
-        diff = q2(base + iva_cuota - ret - total)
-        if diff is not None and abs(diff) <= Decimal("0.02") and diff != Decimal("0.00"):
-            base = q2(base - diff)
+    # Los céntimos de redondeo (±0,02 €) se toleran en el cuadre; la base
+    # nunca se retoca: el libro refleja lo que dice el documento.
 
     raw_lineas = data.get("lineas") or []
     lineas: list[InvoiceLine] = []

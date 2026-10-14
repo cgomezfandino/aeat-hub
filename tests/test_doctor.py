@@ -123,9 +123,9 @@ def test_escaneo_detecta_la_misma_factura_con_numeros_distintos(session):
     pares = escanear_duplicados(session, actividad)
     assert len(pares) == 1
     par = pares[0]
-    assert par.probabilidad >= 0.99
+    assert par.probabilidad >= 0.95
     conceptos = dict(par.desglose)
-    assert conceptos.get("nif igual", 0) > 15
+    assert conceptos.get("nif igual", 0) > 0
     assert "importe igual" in conceptos
     assert "fecha igual" in conceptos
 

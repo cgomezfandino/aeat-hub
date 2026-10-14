@@ -2382,17 +2382,19 @@ def _rank_emisores(asientos: list[dict]) -> tuple[list[dict], Decimal]:
         if item["estado"] in ("duplicado", "rechazado") or item["tipo"] != TIPO_GASTO:
             continue
         amount = q2(item["total"]) or ZERO
-        if amount <= ZERO:
-            continue
         raw = str(item.get("emisor") or "").strip()
-        key = raw.casefold() or "sin emisor"
+        nif = str(item.get("nif") or "").strip()
+        # El NIF identifica al proveedor; el nombre del OCR varía de grafía.
+        key = f"nif:{nif}" if nif and nif != "—" else (raw.casefold() or "sin emisor")
         slot = buckets.get(key)
         if slot is None:
             buckets[key] = {"label": raw or "Sin emisor", "total": amount}
         else:
+            # los abonos (importes negativos) netean el gasto del proveedor
             slot["total"] += amount
         total += amount
-    ranked = sorted(buckets.values(), key=lambda row: (-row["total"], row["label"].casefold()))
+    con_gasto = [row for row in buckets.values() if row["total"] > ZERO]
+    ranked = sorted(con_gasto, key=lambda row: (-row["total"], row["label"].casefold()))
     return ranked, total
 
 

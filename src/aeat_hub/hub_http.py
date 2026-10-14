@@ -164,7 +164,10 @@ class HubHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Cuerpo inválido"})
             return
 
-        filename = payload.get("filename") or "factura.pdf"
+        filename = _safe_upload_name(str(payload.get("filename") or "factura.pdf"))
+        if filename is None:
+            self._send_json(400, {"ok": False, "error": "Nombre o tipo de fichero no admitido"})
+            return
         b64_data = payload.get("data") or payload.get("content_base64")
         if not b64_data:
             self._send_json(400, {"ok": False, "error": "Falta el contenido del fichero"})
@@ -184,13 +187,17 @@ class HubHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "No hay expediente activo en este servidor"})
             return
 
-        inbox_dest = self.layout.inbox / filename
+        inbox_root = self.layout.inbox.resolve()
+        inbox_dest = inbox_root / filename
         stem = Path(filename).stem
         suffix = Path(filename).suffix
         counter = 1
         while inbox_dest.exists():
-            inbox_dest = self.layout.inbox / f"{stem}_{counter}{suffix}"
+            inbox_dest = inbox_root / f"{stem}_{counter}{suffix}"
             counter += 1
+        if inbox_dest.resolve().parent != inbox_root:
+            self._send_json(400, {"ok": False, "error": "Ruta de subida no válida"})
+            return
 
         inbox_dest.write_bytes(file_bytes)
 
@@ -480,6 +487,21 @@ _DASHBOARD_NAME = re.compile(r"^dashboard_(.+)_(\d{4})\.html$")
 
 def _quiere_ui2(query: str) -> bool:
     return any(key == "ui" and value == "v2" for key, value in parse_qsl(query or ""))
+
+
+def _safe_upload_name(raw: str) -> str | None:
+    """Nombre de fichero subido sin rutas ni extensiones fuera del ingest.
+
+    El cliente manda el nombre; nunca debe decidir dónde se escribe.
+    """
+    from aeat_hub.ingest import INGEST_SUFFIXES
+
+    name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not name or name in {".", ".."} or name.startswith("."):
+        return None
+    if Path(name).suffix.lower() not in INGEST_SUFFIXES:
+        return None
+    return name
 
 
 def _parse_dashboard_name(name: str) -> tuple[str, int]:

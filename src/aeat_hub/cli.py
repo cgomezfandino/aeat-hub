@@ -480,7 +480,9 @@ def escaneo_duplicados(
                 a = session.get(Asiento, par.id_a)
                 b = session.get(Asiento, par.id_b)
                 for uno, otro in ((a, b), (b, a)):
-                    if uno is None or uno.estado == "duplicado" or uno.validado:
+                    # Solo se enlazan pendientes: un asiento ya revisado no
+                    # vuelve a la cola por una sospecha estadística.
+                    if uno is None or uno.estado != "pendiente" or uno.validado:
                         continue
                     uno.duplicado_de_id = otro.id
                     uno.duplicado_nivel = 3

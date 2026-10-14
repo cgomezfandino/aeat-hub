@@ -250,14 +250,13 @@ def test_ingest_misma_factura_con_numero_distinto_queda_sospechoso(session, layo
     assert asiento2.duplicado_nivel == 3
     assert asiento2.duplicado_de_id == item1.asiento_id
 
-    # sin número parseado, el nivel 3 sigue marcando duplicado directamente
+    # sin número parseado tampoco: una sospecha nunca excluye sola
+    # (dos tickets iguales el mismo día son dos gastos reales)
     from decimal import Decimal as _D
 
     from aeat_hub.ingest import DuplicateHit
 
     row = Asiento(actividad_id=actividad.id, tipo="gasto", estado="pendiente")
-    _apply_duplicate_and_state(
-        row, DuplicateHit(3, 99, None, "mismo NIF+importe±3 días"), _D("0.9"), con_numero=False
-    )
-    assert row.estado == "duplicado"
+    _apply_duplicate_and_state(row, DuplicateHit(3, 99, None, "mismo NIF+importe±3 días"), _D("0.9"))
+    assert row.estado == "pendiente"
     assert row.duplicado_de_id == 99

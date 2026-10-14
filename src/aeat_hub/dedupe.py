@@ -64,7 +64,7 @@ def find_duplicate(
     if by_emisor:
         return by_emisor
     if phash:
-        hashed = _phash_match(session, phash, exclude_asiento_id)
+        hashed = _phash_match(session, actividad_id, phash, exclude_asiento_id)
         if hashed:
             return hashed
     return None
@@ -108,6 +108,7 @@ def _suspicious_match(
             Asiento.nif_emisor == nif,
             Asiento.total == extract.total,
             Asiento.fecha.is_not(None),
+            Asiento.estado != "rechazado",
         )
     ).all()
     for row in rows:
@@ -143,10 +144,24 @@ def _numero_fecha_total_match(
     for row in rows:
         if exclude_asiento_id and row.id == exclude_asiento_id:
             continue
+        if not _mismo_emisor(extract, row):
+            continue
         other = _numero_key(row.numero_factura, row.fecha, row.total)
         if other and other == key:
             return DuplicateHit(2, row.id, row.documento_id, "número+fecha+total")
     return None
+
+
+def _mismo_emisor(extract: InvoiceExtract, row: Asiento) -> bool:
+    """El número de factura solo identifica dentro de un emisor (art. 6.1.a RD 1619/2012).
+
+    Con NIF en ambos lados manda el NIF; si falta en alguno, el nombre
+    normalizado. Sin ninguno de los dos no hay identidad que comparar.
+    """
+    if extract.nif_emisor and row.nif_emisor:
+        return normalize_nif(extract.nif_emisor) == normalize_nif(row.nif_emisor)
+    emisor = normalize_emisor(extract.emisor)
+    return emisor is not None and emisor == normalize_emisor(row.emisor)
 
 
 def _emisor_fecha_total_match(
@@ -165,6 +180,7 @@ def _emisor_fecha_total_match(
             Asiento.actividad_id == actividad_id,
             Asiento.total == extract.total,
             Asiento.fecha.is_not(None),
+            Asiento.estado != "rechazado",
         )
     ).all()
     for row in rows:
@@ -214,21 +230,28 @@ def _sku_match(
     return None
 
 
-def _phash_match(session: Session, phash: str, exclude_asiento_id: int | None) -> DuplicateHit | None:
-    docs = session.scalars(select(Documento).where(Documento.phash.is_not(None))).all()
-    for doc in docs:
-        if not doc.phash:
+def _phash_match(
+    session: Session,
+    actividad_id: int,
+    phash: str,
+    exclude_asiento_id: int | None,
+) -> DuplicateHit | None:
+    # Solo dentro del expediente y nunca contra un rechazado: plantillas
+    # mensuales (luz, alquiler) de otro expediente se parecen sin ser la misma factura.
+    rows = session.execute(
+        select(Asiento, Documento)
+        .join(Documento, Asiento.documento_id == Documento.id)
+        .where(
+            Asiento.actividad_id == actividad_id,
+            Asiento.estado != "rechazado",
+            Documento.phash.is_not(None),
+        )
+    ).all()
+    for asiento, doc in rows:
+        if exclude_asiento_id and asiento.id == exclude_asiento_id:
             continue
         if hamming_distance(phash, doc.phash) <= PHASH_THRESHOLD:
-            asiento = session.scalar(select(Asiento).where(Asiento.documento_id == doc.id))
-            if asiento and exclude_asiento_id and asiento.id == exclude_asiento_id:
-                continue
-            return DuplicateHit(
-                3,
-                asiento.id if asiento else None,
-                doc.id,
-                "imagen casi idéntica (phash)",
-            )
+            return DuplicateHit(3, asiento.id, doc.id, "imagen casi idéntica (phash)")
     return None
 
 
