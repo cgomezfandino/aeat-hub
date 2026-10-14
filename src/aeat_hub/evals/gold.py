@@ -15,8 +15,11 @@ SCORED_FIELDS = (
     "numero",
     "fecha",
     "base",
+    "iva_tipo",
     "iva_cuota",
+    "retencion_cuota",
     "total",
+    "tipo_documento",
 )
 
 
@@ -30,6 +33,9 @@ class GoldFields(BaseModel):
     iva_cuota: Decimal | None = None
     total: Decimal | None = None
     iva_tipo: Decimal | None = None
+    retencion_cuota: Decimal | None = None
+    # completa | simplificada | rectificativa | no_factura
+    tipo_documento: str | None = None
 
 
 class GoldCase(BaseModel):

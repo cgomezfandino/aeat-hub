@@ -6,8 +6,8 @@ El objetivo no es “el mejor modelo del mundo”, sino **leer facturas español
 
 Elige sola, según el fichero y el SO:
 
-1. **PDF nativo** (`pymupdf`): si hay capa de texto usable (NIF, IVA, FACTURA, importes). Umbral ~0,65. Igual en Mac, Windows y Linux.
-2. **Fotos / escaneos:**
+1. **Todo se rasteriza y se lee con OCR de imagen**, también los PDF digitales: la capa de texto embebida de muchos escaneos desordena líneas e importes (commit 9ea8cae). El texto nativo (`pymupdf`) solo se usa si se pide (`--ocr native`) o si el OCR de imagen no está disponible.
+2. **Motor de imagen:**
    - **macOS:** Apple Vision (nativo del sistema). Si falla, RapidOCR.
    - **Windows / Linux:** RapidOCR (ONNX). Portable, sin Vision.
 
@@ -90,7 +90,23 @@ Ejecución vía CLI:
 uv run aeat-hub ingest --actividad CI-VA-001 --ocr gemini
 ```
 
-A diferencia de los OCRs tradicionales basados en texto plano, Gemini extrae directamente el JSON estructurado fiscal español (emisor, NIF emisor, receptor, fecha, número, bases, tipos de IVA y desgloses completos de artículos y líneas de producto), completando automáticamente los cálculos fiscales cuando vienen desglosados con IVA incluido.
+Gemini devuelve directamente el JSON fiscal, con un `responseSchema` que fija los campos y los valores permitidos (temperatura 0). Prompt en `ocr/gemini.py` (`INVOICE_PROMPT`), redactado sobre los art. 6, 7 y 15 del RD 1619/2012:
+
+- **Tipo de documento:** `completa`, `simplificada`, `rectificativa` o `no_factura`. Presupuestos, albaranes, proformas y recibos no son facturas: se marcan y nunca se consolidan solos.
+- **Campos:**
+  - serie separada del número;
+  - fecha de operación solo si difiere de la de expedición;
+  - moneda ISO;
+  - desglose por tipo con recargo de equivalencia;
+  - retención IRPF;
+  - mención legal: exenta art. 20, inversión del sujeto pasivo, criterio de caja, no sujeta o régimen especial;
+  - rectificativa con método (sustitución o diferencias) y causa;
+  - `campos_dudosos`, la lista de campos ilegibles según el propio modelo.
+- **Sin cálculos inventados:** si el documento no muestra IVA, queda vacío (nunca un 21 % por defecto).
+- **Respuesta rechazada:** si `finishReason` no es `STOP` (respuesta cortada), no se parsea.
+- **API key** en la cabecera `x-goog-api-key`, nunca en la URL.
+
+La confianza de la extracción no es fija. Se calcula con comprobaciones: NIF con control válido, total que cuadra (base + IVA + recargo − retención) y campos dudosos. Un `no_factura` queda en ≤ 0,3. El ingest manda a revisión cualquier documento `no_factura`, en moneda distinta del euro o con campos dudosos, con el aviso correspondiente.
 
 ### Apple Vision (`--ocr vision`)
 
