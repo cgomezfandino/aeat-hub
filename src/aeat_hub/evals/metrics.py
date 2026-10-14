@@ -157,7 +157,9 @@ def _numero_equal(gold: str, predicted: str | None) -> bool:
     p = compact_alnum(predicted)
     if not g or not p:
         return False
-    return g == p or g in p or p in g
+    # Igualdad exacta (sin separadores): aceptar subcadenas daba por buena
+    # una lectura truncada ("123" frente a "F-2026-0123").
+    return g == p
 
 
 def _fecha_equal(gold: str, predicted) -> bool:
@@ -185,7 +187,9 @@ def field_in_ocr(name: str, gold: str, text: str) -> bool:
             gold,
         )
         return any(token_in_text(item, text)[0] for item in candidates)
-    if name in {"base", "iva_cuota", "total"}:
+    if name == "tipo_documento":
+        return True  # es una clasificación, no un texto que deba aparecer
+    if name in {"base", "iva_tipo", "iva_cuota", "retencion_cuota", "total"}:
         comma = gold.replace(".", ",")
         dot = gold.replace(",", ".")
         return token_in_text(comma, text)[0] or token_in_text(dot, text)[0]
@@ -207,9 +211,14 @@ def score_fields(gold_fields: dict[str, str], extract: InvoiceExtract, text: str
         elif name == "fecha":
             parser_hit = _fecha_equal(expected, predicted)
             predicted_s = predicted.isoformat() if predicted else ""
-        elif name in {"base", "iva_cuota", "total"}:
+        elif name in {"base", "iva_tipo", "iva_cuota", "retencion_cuota", "total"}:
             parser_hit = _money_equal(expected, predicted)
             predicted_s = "" if predicted is None else f"{predicted:.2f}"
+        elif name == "tipo_documento":
+            from aeat_hub.ingest import tipo_factura_de
+
+            predicted_s = tipo_factura_de(extract)
+            parser_hit = predicted_s == expected
         else:
             parser_hit = bool(predicted) and compact_alnum(expected) in compact_alnum(str(predicted))
             predicted_s = str(predicted or "")

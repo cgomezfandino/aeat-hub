@@ -10,7 +10,7 @@ from dateutil.parser import parse as parse_date
 
 from aeat_hub.extract.ids import normalize_numero
 from aeat_hub.extract.schema import InvoiceExtract, InvoiceLine
-from aeat_hub.fiscal.cuadres import tipo_iva_desde_cuota
+from aeat_hub.fiscal.cuadres import cuadra_total, tipo_iva_desde_cuota
 from aeat_hub.fiscal.money import last_amount, parse_amount, q2
 from aeat_hub.fiscal.nif import find_nifs, is_valid_nif, normalize_nif, pick_emisor_receptor
 
@@ -202,10 +202,22 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
     numero = str(data.get("numero") or "").strip() or None
     emisor = str(data.get("emisor") or "").strip() or None
     receptor = str(data.get("receptor") or "").strip() or None
-    tipo_doc = str(data.get("tipo_documento") or "").strip() or None
+    tipo_doc = str(data.get("tipo_documento") or "").strip().lower() or None
     factura_rect = str(data.get("factura_rectificada") or "").strip() or None
 
+    def _texto(clave: str, largo: int = 200) -> str | None:
+        valor = data.get(clave)
+        if valor is None or isinstance(valor, (dict, list)):
+            return None
+        return str(valor).strip()[:largo] or None
+
     fecha = _fecha_json(data.get("fecha"))
+    fecha_operacion = _fecha_json(data.get("fecha_operacion"))
+    if fecha_operacion == fecha:
+        fecha_operacion = None
+    moneda = (_texto("moneda", 3) or "").upper() or None
+    dudosos_raw = data.get("campos_dudosos") or []
+    campos_dudosos = [str(item) for item in dudosos_raw if item] if isinstance(dudosos_raw, list) else []
 
     def _dec(v) -> Decimal | None:
         if v is None or isinstance(v, bool):
@@ -232,6 +244,8 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
                         base=_dec(d.get("base")),
                         iva_tipo=_dec(d.get("iva_tipo")),
                         iva_cuota=_dec(d.get("iva_cuota")),
+                        recargo_tipo=_dec(d.get("recargo_tipo")),
+                        recargo_cuota=_dec(d.get("recargo_cuota")),
                     )
                 )
 
@@ -241,14 +255,21 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
 
     ret = retencion_cuota or Decimal("0.00")
 
-    # Si hay desglose multi-IVA pero faltan base o cuota generales:
+    # El recargo de equivalencia forma parte del total (art. 161 LIVA).
+    recargo = sum(
+        (d.recargo_cuota for d in desglose_iva if d.recargo_cuota is not None), Decimal("0.00")
+    )
+    ret = ret - recargo  # en la ecuación total = base + IVA + RE − retención
+
+    # Si hay desglose multi-IVA pero faltan base o cuota generales (también
+    # en abonos, con importes negativos):
     if desglose_iva and (base is None or iva_cuota is None):
-        calc_b = sum((d.base for d in desglose_iva if d.base is not None), Decimal("0.00"))
-        calc_i = sum((d.iva_cuota for d in desglose_iva if d.iva_cuota is not None), Decimal("0.00"))
-        if base is None and calc_b > 0:
-            base = q2(calc_b)
-        if iva_cuota is None and calc_i > 0:
-            iva_cuota = q2(calc_i)
+        bases = [d.base for d in desglose_iva if d.base is not None]
+        cuotas = [d.iva_cuota for d in desglose_iva if d.iva_cuota is not None]
+        if base is None and bases:
+            base = q2(sum(bases, Decimal("0.00")))
+        if iva_cuota is None and cuotas:
+            iva_cuota = q2(sum(cuotas, Decimal("0.00")))
 
     # Reconciliación determinista de la ecuación fiscal: Base + IVA - Retención = Total
     if total is not None and base is not None and iva_cuota is None:
@@ -283,10 +304,14 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
             desc = str(item.get("descripcion") or "").strip() or None
             imp = _dec(item.get("importe"))
             cod = str(item.get("codigo") or "").strip() or None
-            cant = _dec(item.get("cantidad") or 1)
+            cant_raw = item.get("cantidad")
+            cant = Decimal("1") if cant_raw is None else _dec(cant_raw)
             line_pu = _dec(item.get("precio_unitario"))
             line_base = _dec(item.get("base"))
-            line_tipo = _dec(item.get("iva_tipo")) or iva_tipo
+            line_tipo = _dec(item.get("iva_tipo"))
+            # el tipo de cabecera solo vale para la línea si la factura tiene uno
+            if line_tipo is None and len(desglose_iva) <= 1:
+                line_tipo = iva_tipo
             line_cuota = _dec(item.get("iva_cuota"))
 
             if imp is None and cant is not None and line_pu is not None:
@@ -325,6 +350,13 @@ def _parse_json_extract(data: dict, *, motor: str = "") -> InvoiceExtract:
         numero_norm=normalize_numero(numero),
         tipo_documento=tipo_doc,
         factura_rectificada=factura_rect,
+        metodo_rectificacion=_texto("metodo_rectificacion", 20),
+        causa_rectificacion=_texto("causa_rectificacion"),
+        serie=_texto("serie", 40),
+        fecha_operacion=fecha_operacion,
+        moneda=moneda,
+        mencion_legal=_texto("mencion_legal", 40),
+        campos_dudosos=campos_dudosos,
         base=base,
         iva_tipo=iva_tipo,
         iva_cuota=iva_cuota,
@@ -1073,17 +1105,41 @@ def _find_emisor(lines: list[str], nif_emisor: str | None) -> str | None:
 
 
 def _confidence(extract: InvoiceExtract) -> float:
+    """Confianza por comprobaciones, no por presencia de campos.
+
+    Un NIF con control válido, un total que cuadra (con retención y recargo)
+    y la ausencia de campos que el propio modelo marca como dudosos pesan
+    más que el mero hecho de haber rellenado algo.
+    """
     score = 0.0
     if extract.nif_emisor_valido:
         score += 0.25
+    elif extract.nif_emisor:
+        score += 0.05  # hay NIF pero no pasa el control: probable error de lectura
     if extract.fecha:
-        score += 0.2
+        score += 0.15
     if extract.numero:
         score += 0.15
     if extract.total is not None:
-        score += 0.25
-    if extract.base is not None:
-        score += 0.1
+        score += 0.2
     if extract.emisor:
         score += 0.05
-    return round(min(score, 0.99), 3)
+    recargo = sum(
+        (d.recargo_cuota for d in extract.desglose_iva if d.recargo_cuota is not None),
+        Decimal("0"),
+    )
+    cuadre = cuadra_total(
+        extract.base,
+        extract.iva_cuota,
+        extract.total,
+        retencion=extract.retencion_cuota,
+        recargo=recargo or None,
+    )
+    if cuadre is True:
+        score += 0.2
+    elif cuadre is False:
+        score -= 0.2
+    score -= 0.05 * len(extract.campos_dudosos)
+    if (extract.tipo_documento or "") == "no_factura":
+        score = min(score, 0.3)
+    return round(max(0.0, min(score, 0.99)), 3)

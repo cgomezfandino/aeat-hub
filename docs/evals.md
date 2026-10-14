@@ -65,6 +65,26 @@ Añadir un caso real:
 
 `kind`: `photo` | `raster` | `scan-pdf` | `digital-pdf`.
 
+Campos puntuados (`SCORED_FIELDS`):
+- identificación: `nif_emisor`, `nif_receptor`, `numero`, `fecha`;
+- importes: `base`, `iva_tipo`, `iva_cuota`, `retencion_cuota`, `total` (±0,01);
+- `tipo_documento`: `completa` | `simplificada` | `rectificativa` | `no_factura`.
+
+El número se compara sin separadores y **exacto**: una lectura truncada (`0123` frente a `F-2026-0123`) es un fallo.
+
+El set de oro debe cubrir al menos un caso de cada tipo antes de sacar conclusiones (con n < 8 el runner ya avisa):
+- profesional con retención;
+- multi-IVA;
+- recargo de equivalencia;
+- rectificativa por diferencias y por sustitución (ticket → factura);
+- abono;
+- intracomunitaria (ISP);
+- exenta;
+- ticket sin NIF y simplificada con NIF;
+- moneda extranjera;
+- presupuesto o albarán (`no_factura`);
+- foto rotada.
+
 ## Cómo correrlo
 
 ```bash

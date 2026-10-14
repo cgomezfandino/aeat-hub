@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}
 HEIC_SUFFIXES = {".heic", ".heif"}
@@ -32,6 +32,9 @@ def open_image(path: Path) -> Image.Image:
                 "Esta foto es HEIC. Instala el extra: uv sync --extra heic"
             ) from exc
     image = Image.open(path)
+    # Las fotos del móvil guardan la rotación en EXIF: sin esto el OCR y
+    # Gemini reciben el ticket tumbado.
+    image = ImageOps.exif_transpose(image) or image
     return image.convert("RGB")
 
 

@@ -305,6 +305,11 @@ def ingest_file(
         else:
             _apply_duplicate_and_state(asiento, dup, classification.confianza)
         aplicar_campos_fiscales(asiento, extract, _nif_titular(actividad))
+        avisos_doc = avisos_documento(extract)
+        if avisos_doc:
+            warnings.extend(avisos_doc)
+            if asiento.estado == "confirmado":
+                asiento.estado = "pendiente"  # nada con avisos fiscales se consolida solo
         session.add(asiento)
         session.flush()
         aviso_rect = vincular_rectificativa(session, asiento)
@@ -416,6 +421,7 @@ _TIPOS_FACTURA = {
     "factura simplificada": "simplificada",
     "rectificativa": "rectificativa",
     "abono": "rectificativa",
+    "no_factura": "no_factura",
 }
 
 
@@ -441,6 +447,14 @@ def aplicar_campos_fiscales(
     poner("factura_rectificada", extract.factura_rectificada)
     poner("retencion_tipo", extract.retencion_tipo)
     poner("retencion_cuota", extract.retencion_cuota)
+    poner("serie", extract.serie)
+    poner("fecha_operacion", extract.fecha_operacion)
+    poner("mencion_legal", extract.mencion_legal)
+    poner("causa_rectificacion", extract.causa_rectificacion)
+    if extract.moneda and (not solo_vacios or asiento.moneda in (None, "", "EUR")):
+        asiento.moneda = extract.moneda
+    recargos = [d.recargo_cuota for d in extract.desglose_iva if d.recargo_cuota is not None]
+    poner("recargo_cuota", sum(recargos, Decimal("0.00")) if recargos else None)
     if not solo_vacios or asiento.tipo_factura in (None, TIPO_DESCONOCIDO):
         asiento.tipo_factura = tipo_factura_de(extract)
     titular = normalize_nif(nif_titular) if nif_titular else ""
@@ -449,10 +463,34 @@ def aplicar_campos_fiscales(
     if solo_vacios and asiento.desglose_iva:
         return
     asiento.desglose_iva = [
-        AsientoIVA(base=item.base, tipo=item.iva_tipo, cuota=item.iva_cuota)
+        AsientoIVA(
+            base=item.base,
+            tipo=item.iva_tipo,
+            cuota=item.iva_cuota,
+            recargo_tipo=item.recargo_tipo,
+            recargo_cuota=item.recargo_cuota,
+        )
         for item in extract.desglose_iva
         if item.base is not None or item.iva_cuota is not None
     ]
+
+
+def avisos_documento(extract: InvoiceExtract) -> list[str]:
+    """Avisos fiscales que impiden dar el documento por bueno sin mirarlo."""
+    avisos: list[str] = []
+    if tipo_factura_de(extract) == "no_factura":
+        avisos.append(
+            "El documento no parece una factura (presupuesto, albarán, proforma, recibo…): "
+            "no justifica el gasto ni el IVA. Recházalo si no lo es."
+        )
+    if extract.moneda and extract.moneda != "EUR":
+        avisos.append(
+            f"Factura en {extract.moneda}: los libros van en euros. Convierte con el tipo de "
+            "cambio vigente en la fecha de devengo antes de validar."
+        )
+    if extract.campos_dudosos:
+        avisos.append("Campos poco legibles en el documento: " + ", ".join(extract.campos_dudosos) + ".")
+    return avisos
 
 
 def _numeros_casan(a: str | None, b: str | None) -> bool:
