@@ -762,10 +762,10 @@ def libros_cmd(
 
 @app.command("modelo")
 def modelo_cmd(
-    modelo: str = typer.Argument(..., help="303 o 130"),
+    modelo: str = typer.Argument(..., help="303, 130, 111, 115, 349 (trimestrales) · 347, 390 (anuales)"),
     actividad: str = typer.Option(..., "--actividad"),
     year: int = typer.Option(..., "--year"),
-    trimestre: int = typer.Option(..., "--trimestre", min=1, max=4),
+    trimestre: Optional[int] = typer.Option(None, "--trimestre", min=1, max=4),
     detalle: bool = typer.Option(False, "--detalle", help="Muestra de qué asientos sale cada casilla"),
     data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
 ) -> None:

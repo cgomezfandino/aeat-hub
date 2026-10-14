@@ -12,6 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from aeat_hub.fiscal.libros import Anotacion, Libros, construir
+from aeat_hub.fiscal.informativas import (
+    borrador_111,
+    borrador_115,
+    borrador_347,
+    borrador_349,
+    resumen_iva_anual,
+)
 from aeat_hub.fiscal.modelos import Borrador, borrador_130, borrador_303
 from aeat_hub.models import Actividad, Asiento, Cuenta, Titular
 from aeat_hub.paths import DataLayout
@@ -143,14 +150,24 @@ def libros_de(session: Session, layout: DataLayout, codigo: str, year: int, trim
     return libros, exportar_libros(libros, layout.exports / f"libros_{codigo}_{year}{sufijo}.xlsx")
 
 
+TRIMESTRALES = {"303": borrador_303, "130": borrador_130, "111": borrador_111, "115": borrador_115, "349": borrador_349}
+ANUALES = {"347": borrador_347, "390": resumen_iva_anual}
+
+
 def borrador_de(
-    session: Session, layout: DataLayout, modelo: str, codigo: str, year: int, trimestre: int
+    session: Session, layout: DataLayout, modelo: str, codigo: str, year: int, trimestre: int | None
 ) -> tuple[Borrador, Path]:
     actividad, nif, asientos, _ = datos(session, codigo)
-    funcion = {"303": borrador_303, "130": borrador_130}.get(modelo)
-    if funcion is None:
-        raise RuntimeError("Modelos disponibles: 303 y 130.")
-    borrador = funcion(asientos, actividad, year, trimestre, titular_nif=nif)
+    if modelo in TRIMESTRALES:
+        if trimestre is None:
+            raise RuntimeError(f"El modelo {modelo} es trimestral: indica --trimestre.")
+        borrador = TRIMESTRALES[modelo](asientos, actividad, year, trimestre, titular_nif=nif)
+        sufijo = f"{trimestre}T"
+    elif modelo in ANUALES:
+        borrador = ANUALES[modelo](asientos, actividad, year, titular_nif=nif)
+        sufijo = "anual"
+    else:
+        raise RuntimeError("Modelos disponibles: " + ", ".join(sorted({*TRIMESTRALES, *ANUALES})) + ".")
     return borrador, exportar_borrador(
-        borrador, layout.exports / f"borrador_{modelo}_{codigo}_{year}_{trimestre}T.xlsx"
+        borrador, layout.exports / f"borrador_{modelo}_{codigo}_{year}_{sufijo}.xlsx"
     )

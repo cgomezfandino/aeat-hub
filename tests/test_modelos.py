@@ -172,3 +172,70 @@ def test_exportacion_excel_de_libros_y_borrador(session, layout, profesional):
     _b, ruta303 = borrador_de(session, layout, "303", "AE-PRO-001", 2026, 1)
     filas = {row[0]: row[2] for row in load_workbook(ruta303).active.iter_rows(min_row=2, values_only=True)}
     assert filas["46"] == 36.75
+
+
+# --- Retenciones, informativas y resumen anual --------------------------------
+
+from aeat_hub.fiscal.informativas import (  # noqa: E402
+    borrador_111,
+    borrador_115,
+    borrador_347,
+    borrador_349,
+    resumen_iva_anual,
+)
+
+
+def _mas(session, actividad, **kw):
+    datos = {"actividad_id": actividad.id, "tipo": "gasto", "estado": "confirmado", "validado": True,
+             "tipo_factura": "completa", "moneda": "EUR", "nif_receptor": NIF}
+    datos.update(kw)
+    datos.setdefault("ejercicio", datos["fecha"].year)
+    session.add(Asiento(**datos))
+    session.commit()
+    return list(session.scalars(select(Asiento).where(Asiento.actividad_id == actividad.id)))
+
+
+def test_111_y_115_separan_profesionales_y_alquiler(session, profesional):
+    actividad, _, _ = profesional
+    _mas(session, actividad, cuenta_codigo="AE.GAS.PROFESIONALES", fecha=date(2026, 2, 2), nif_emisor="B84818442",
+         base=D("1000"), iva_cuota=D("210"), retencion_tipo=D("15"), retencion_cuota=D("150"), total=D("1060"))
+    asientos = _mas(session, actividad, cuenta_codigo="AE.GAS.ALQUILER", fecha=date(2026, 3, 1),
+                    nif_emisor="12345678Z", base=D("800"), iva_cuota=D("168"), retencion_tipo=D("19"),
+                    retencion_cuota=D("152"), total=D("816"))
+    m111 = borrador_111(asientos, actividad, 2026, 1, titular_nif=NIF)
+    assert (m111.importe("07"), m111.importe("08"), m111.importe("09")) == (D("1"), D("1000.00"), D("150.00"))
+    m115 = borrador_115(asientos, actividad, 2026, 1, titular_nif=NIF)
+    assert (m115.importe("01"), m115.importe("02"), m115.importe("03")) == (D("1"), D("800.00"), D("152.00"))
+
+
+def test_capital_inmobiliario_no_retiene(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    assert not borrador_111([], actividad, 2026, 1).aplica
+
+
+def test_347_umbral_y_exclusiones(session, profesional):
+    actividad, _, _ = profesional
+    _mas(session, actividad, cuenta_codigo="AE.GAS.COMPRAS", fecha=date(2026, 5, 2), nif_emisor="A28812618",
+         emisor="PROVEEDOR SA", base=D("1652.89"), iva_cuota=D("347.11"), total=D("2000"))
+    asientos = _mas(session, actividad, cuenta_codigo="AE.GAS.COMPRAS", fecha=date(2026, 8, 2),
+                    nif_emisor="A28812618", base=D("826.45"), iva_cuota=D("173.55"), total=D("1000"))
+    m347 = borrador_347(asientos, actividad, 2026)
+    # A28812618: ticket 12,10 + 2.000 + 1.000 = 3.012,10 > 3.005,06
+    assert m347.importe("A-A28812618") == D("3012.10")
+    assert "1T 12.10" in m347.casillas["A-A28812618"].concepto
+    # el cliente con retención va al 190 del cliente, no al 347; el ordenador no llega al umbral
+    assert "B-B12345674" not in m347.casillas and "A-B12345674" not in m347.casillas
+
+
+def test_349_saas_irlandes_como_servicio(profesional):
+    actividad, asientos, ids = profesional
+    m349 = borrador_349(asientos, actividad, 2026, 1)
+    assert m349.importe("I-IE6388047V") == D("20.00")
+    assert m349.casillas["I-IE6388047V"].asientos == [ids["saas"]]
+
+
+def test_resumen_anual_suma_los_cuatro_trimestres(profesional):
+    actividad, asientos, _ = profesional
+    anual = resumen_iva_anual(asientos, actividad, 2026, titular_nif=NIF)
+    assert anual.importe("09") == D("525.00")  # 315 (1T) + 210 (2T)
+    assert anual.resultado == D("36.75") + D("210.00")
