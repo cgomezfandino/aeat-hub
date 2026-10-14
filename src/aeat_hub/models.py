@@ -46,6 +46,16 @@ class Actividad(Base):
     titular_id: Mapped[int] = mapped_column(ForeignKey("titulares.id"))
     nombre: Mapped[str] = mapped_column(String(200))
     regimen: Mapped[str] = mapped_column(String(40))
+    # --- Perfil fiscal (fiscal/perfil.py) ---
+    epigrafe_iae: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    regimen_irpf: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    regimen_iva: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    territorio: Mapped[str] = mapped_column(String(20), default="comun", server_default="comun")
+    fecha_alta: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # % de la vivienda afecto a la actividad (m² afectos / m² totales)
+    afectacion_vivienda_pct: Mapped[Decimal | None] = mapped_column(Rate(), nullable=True)
+    # rendimiento neto del ejercicio anterior (minoración casilla 13 del 130)
+    rendimiento_anterior: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
     titular: Mapped[Titular] = relationship(back_populates="actividades")
     inmuebles: Mapped[list[Inmueble]] = relationship(back_populates="actividad")
     asientos: Mapped[list[Asiento]] = relationship(back_populates="actividad")
@@ -218,6 +228,8 @@ class Asiento(Base):
     moneda: Mapped[str] = mapped_column(String(3), default="EUR", server_default="EUR")
     # exenta_art20 | inversion_sujeto_pasivo | criterio_caja | no_sujeta …
     mencion_legal: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # % de afectación a la actividad decidido por la persona (anula la regla)
+    afectacion_pct: Mapped[Decimal | None] = mapped_column(Rate(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     actividad: Mapped[Actividad] = relationship(back_populates="asientos")

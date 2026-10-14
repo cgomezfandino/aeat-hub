@@ -16,6 +16,17 @@ from aeat_hub.models import Asiento, Base
 from aeat_hub.paths import DataLayout
 
 
+def _head() -> str:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    from aeat_hub.db import MIGRATIONS
+
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS))
+    return ScriptDirectory.from_config(config).get_current_head()
+
+
 def _layout(tmp_path) -> DataLayout:
     layout = DataLayout(tmp_path / "data")
     layout.ensure()
@@ -93,7 +104,7 @@ def test_base_antigua_migra_importes_exactos_y_recupera_campos(tmp_path):
     create_schema(engine)
 
     with engine.connect() as conn:
-        assert conn.execute(text("select version_num from alembic_version")).scalar() == "0002"
+        assert conn.execute(text("select version_num from alembic_version")).scalar() == _head()
         # el SUM en SQL ya es exacto: céntimos enteros
         assert conn.execute(text("select sum(total) from asientos where id in (1, 2)")).scalar() == 30
         assert conn.execute(text("select typeof(total) from asientos where id = 1")).scalar() == "integer"

@@ -40,6 +40,7 @@ from aeat_hub.services import (
     get_cuenta_por_nombre,
     initialize,
     patch_expediente,
+    patch_perfil,
     require_layout,
 )
 
@@ -154,6 +155,61 @@ def actividad_titulo(
         bits.append(data["inmueble"])
     console.print(" · ".join(bits))
     console.print("Regenera el libro: aeat-hub dashboard --actividad … --year …")
+
+
+@actividad_app.command("perfil")
+def actividad_perfil(
+    actividad: str = typer.Option(..., "--actividad"),
+    nif_titular: Optional[str] = typer.Option(None, "--nif-titular", help="NIF real del titular"),
+    regimen_irpf: Optional[str] = typer.Option(
+        None, "--irpf", help="estimacion_directa_normal | estimacion_directa_simplificada | estimacion_objetiva | capital_inmobiliario"
+    ),
+    regimen_iva: Optional[str] = typer.Option(
+        None, "--iva", help="general | recargo_equivalencia | simplificado | exento | criterio_caja | reagyp"
+    ),
+    epigrafe_iae: Optional[str] = typer.Option(None, "--iae", help="Epígrafe IAE (p. ej. 763)"),
+    territorio: Optional[str] = typer.Option(None, "--territorio", help="comun | canarias | ceuta_melilla | foral"),
+    fecha_alta: Optional[str] = typer.Option(None, "--alta", help="Fecha de alta en la actividad (AAAA-MM-DD)"),
+    afectacion_vivienda: Optional[str] = typer.Option(
+        None, "--afectacion-vivienda", help="% de la vivienda afecto a la actividad (m² afectos / totales)"
+    ),
+    rendimiento_anterior: Optional[str] = typer.Option(
+        None, "--rendimiento-anterior", help="Rendimiento neto del año anterior (casilla 13 del 130)"
+    ),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Perfil fiscal de la actividad: regímenes, IAE, afectación y NIF del titular."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    payload = {
+        "nif_titular": nif_titular,
+        "regimen_irpf": regimen_irpf,
+        "regimen_iva": regimen_iva,
+        "epigrafe_iae": epigrafe_iae,
+        "territorio": territorio,
+        "fecha_alta": fecha_alta,
+        "afectacion_vivienda_pct": afectacion_vivienda,
+        "rendimiento_anterior": rendimiento_anterior,
+    }
+    try:
+        with session_scope(factory) as session:
+            data = patch_perfil(session, actividad, payload)
+    except (RuntimeError, ValueError) as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(1) from err
+    table = Table(title=f"Perfil fiscal · {data['codigo']}")
+    table.add_column("campo")
+    table.add_column("valor")
+    for clave in (
+        "nif_titular", "regimen_irpf", "regimen_iva", "territorio", "epigrafe_iae",
+        "fecha_alta", "afectacion_vivienda_pct", "rendimiento_anterior",
+    ):
+        valor = data[clave]
+        marca = " (por defecto)" if clave in data["por_defecto"] else ""
+        table.add_row(clave, f"{'—' if valor in (None, '') else valor}{marca}")
+    console.print(table)
+    for aviso in data["avisos"]:
+        console.print(f"[yellow]{aviso}[/yellow]")
 
 
 @cuenta_app.command("alta")
