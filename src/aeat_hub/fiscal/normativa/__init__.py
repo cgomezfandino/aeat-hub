@@ -63,6 +63,9 @@ class Normativa:
     retencion_profesional_inicio: Decimal
     retencion_arrendamiento: Decimal
     avisos: tuple[str, ...] = field(default_factory=tuple)
+    # Capital inmobiliario
+    amortizacion_inmueble_pct: Decimal = Decimal("3")  # art. 14.2.a RIRPF
+    anos_arrastre_exceso: int = 4  # art. 23.1.a.1º LIRPF
 
 
 def para(ejercicio: int) -> Normativa:

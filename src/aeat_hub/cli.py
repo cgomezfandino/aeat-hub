@@ -40,6 +40,7 @@ from aeat_hub.services import (
     get_cuenta_por_nombre,
     initialize,
     patch_expediente,
+    patch_inmueble,
     patch_perfil,
     require_layout,
 )
@@ -210,6 +211,51 @@ def actividad_perfil(
     console.print(table)
     for aviso in data["avisos"]:
         console.print(f"[yellow]{aviso}[/yellow]")
+
+
+@actividad_app.command("inmueble")
+def actividad_inmueble(
+    actividad: str = typer.Option(..., "--actividad"),
+    valor_catastral: Optional[str] = typer.Option(None, "--valor-catastral", help="Valor catastral total (recibo del IBI)"),
+    valor_construccion: Optional[str] = typer.Option(None, "--valor-construccion", help="Valor catastral de la construcción"),
+    coste: Optional[str] = typer.Option(None, "--coste", help="Coste de adquisición con gastos y tributos"),
+    mejoras_anteriores: Optional[str] = typer.Option(None, "--mejoras-anteriores", help="Mejoras de años anteriores"),
+    adquisicion: Optional[str] = typer.Option(None, "--adquisicion", help="Fecha de adquisición (AAAA-MM-DD)"),
+    dias: Optional[int] = typer.Option(None, "--dias", help="Días arrendados en el ejercicio"),
+    reduccion: Optional[str] = typer.Option(None, "--reduccion", help="Reducción art. 23.2 LIRPF: 0, 50, 60, 70 o 90"),
+    exceso: list[str] = typer.Option([], "--exceso", help="Exceso pendiente de intereses+conservación: AÑO=IMPORTE"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """Datos del inmueble para amortización (3 %), límite del art. 23 y reducción."""
+    layout = _layout(data_dir)
+    factory = _session_factory(layout)
+    excesos = {}
+    for item in exceso:
+        ano, _, valor = item.partition("=")
+        excesos[ano.strip()] = valor.strip()
+    payload = {
+        "valor_catastral": valor_catastral,
+        "valor_catastral_construccion": valor_construccion,
+        "coste_adquisicion": coste,
+        "mejoras_anteriores": mejoras_anteriores,
+        "fecha_adquisicion": adquisicion,
+        "dias_arrendado": dias,
+        "reduccion_pct": reduccion,
+        "excesos": excesos,
+    }
+    try:
+        with session_scope(factory) as session:
+            data = patch_inmueble(session, actividad, payload)
+    except (RuntimeError, ValueError) as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(1) from err
+    table = Table(title=f"Inmueble · {data['alias']}")
+    table.add_column("campo")
+    table.add_column("valor")
+    for clave, valor in data.items():
+        if clave != "alias":
+            table.add_row(clave, "—" if valor in (None, "", "{}") else str(valor))
+    console.print(table)
 
 
 @cuenta_app.command("alta")

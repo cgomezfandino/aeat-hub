@@ -269,3 +269,70 @@ def patch_perfil(session: Session, codigo: str, payload: dict) -> dict:
         "por_defecto": list(perfil.por_defecto),
         "avisos": avisos,
     }
+
+
+def patch_inmueble(session: Session, codigo: str, payload: dict) -> dict:
+    """Datos del inmueble para amortización, límite del art. 23 y reducción."""
+    import json
+    from datetime import date as _date
+
+    from aeat_hub.fiscal.money import parse_amount
+
+    actividad = get_actividad(session, codigo)
+    inmueble = session.scalar(
+        select(Inmueble).where(Inmueble.actividad_id == actividad.id).order_by(Inmueble.id)
+    )
+    if inmueble is None:
+        raise RuntimeError("El expediente no tiene inmueble; créalo con `aeat-hub actividad titulo --inmueble`.")
+
+    def importe(clave: str) -> None:
+        if payload.get(clave) is None:
+            return
+        valor = parse_amount(str(payload[clave]))
+        if valor is None or valor < 0:
+            raise ValueError(f"{clave}: importe no válido.")
+        setattr(inmueble, clave, valor)
+
+    for clave in ("valor_catastral", "valor_catastral_construccion", "coste_adquisicion", "mejoras_anteriores"):
+        importe(clave)
+    if (
+        inmueble.valor_catastral is not None
+        and inmueble.valor_catastral_construccion is not None
+        and inmueble.valor_catastral_construccion > inmueble.valor_catastral
+    ):
+        raise ValueError("El valor catastral de la construcción no puede superar el valor catastral total.")
+    if payload.get("fecha_adquisicion") is not None:
+        try:
+            inmueble.fecha_adquisicion = _date.fromisoformat(str(payload["fecha_adquisicion"]))
+        except ValueError as err:
+            raise ValueError("La fecha de adquisición va en formato AAAA-MM-DD.") from err
+    if payload.get("dias_arrendado") is not None:
+        dias = int(payload["dias_arrendado"])
+        if not 0 <= dias <= 366:
+            raise ValueError("Los días arrendados van de 0 a 366.")
+        inmueble.dias_arrendado = dias
+    if payload.get("reduccion_pct") is not None:
+        pct = parse_amount(str(payload["reduccion_pct"]))
+        if pct not in (Decimal("0"), Decimal("50"), Decimal("60"), Decimal("70"), Decimal("90")):
+            raise ValueError("La reducción por alquiler de vivienda es 0, 50, 60, 70 o 90 (art. 23.2 LIRPF).")
+        inmueble.reduccion_pct = pct
+    if payload.get("excesos"):
+        excesos = json.loads(inmueble.excesos_anteriores or "{}")
+        for ano, valor in payload["excesos"].items():
+            cantidad = parse_amount(str(valor))
+            if not str(ano).isdigit() or cantidad is None:
+                raise ValueError("Los excesos van como AÑO=IMPORTE (p. ej. 2024=1000).")
+            excesos[str(ano)] = str(cantidad)
+        inmueble.excesos_anteriores = json.dumps(excesos, sort_keys=True)
+    session.flush()
+    return {
+        "alias": inmueble.alias,
+        "valor_catastral": inmueble.valor_catastral,
+        "valor_catastral_construccion": inmueble.valor_catastral_construccion,
+        "coste_adquisicion": inmueble.coste_adquisicion,
+        "mejoras_anteriores": inmueble.mejoras_anteriores,
+        "fecha_adquisicion": inmueble.fecha_adquisicion.isoformat() if inmueble.fecha_adquisicion else None,
+        "dias_arrendado": inmueble.dias_arrendado,
+        "reduccion_pct": inmueble.reduccion_pct,
+        "excesos_anteriores": inmueble.excesos_anteriores,
+    }

@@ -121,7 +121,16 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
     ]
     por_mes = _by_month(libro)
     irpf = (
-        summarize_irpf(libro, extra_casillas) if actividad.regimen == REGIMEN_CI else None
+        summarize_irpf(
+            libro,
+            extra_casillas,
+            inmueble=session.scalar(
+                select(Inmueble).where(Inmueble.actividad_id == actividad.id).order_by(Inmueble.id)
+            ),
+            ejercicio=year,
+        )
+        if actividad.regimen == REGIMEN_CI
+        else None
     )
     sin_fecha = (
         session.scalars(

@@ -99,7 +99,10 @@ def export_xlsx(
     _write_summary_rubro(wb.create_sheet("Resumen_rubro"), libro, nombres)
     _write_summary_inmueble(wb.create_sheet("Resumen_inmueble"), libro, inmuebles)
     if actividad.regimen == REGIMEN_CI:
-        _write_casillas_irpf(wb.create_sheet("Casillas_IRPF"), libro, year, extra_casillas)
+        inmueble = session.scalar(
+            select(Inmueble).where(Inmueble.actividad_id == actividad.id).order_by(Inmueble.id)
+        )
+        _write_casillas_irpf(wb.create_sheet("Casillas_IRPF"), libro, year, extra_casillas, inmueble)
 
     layout.exports.mkdir(parents=True, exist_ok=True)
     dest = layout.exports / f"libro_{actividad.codigo}_{year}.xlsx"
@@ -239,9 +242,10 @@ def _write_casillas_irpf(
     rows: list[Asiento],
     year: int,
     extra_casillas: dict[str, str],
+    inmueble=None,
 ) -> None:
     ws.title = "Casillas_IRPF"
-    summary = summarize_irpf(rows, extra_casillas)
+    summary = summarize_irpf(rows, extra_casillas, inmueble=inmueble, ejercicio=year)
     ws.append(["Borrador IRPF · rendimientos de capital inmobiliario", year])
     ws.append(
         [
@@ -266,9 +270,18 @@ def _write_casillas_irpf(
         )
     ws.append([])
     ws.append(["Ingresos íntegros", _num(summary["ingresos"])])
+    ws.append(["Intereses + conservación del año", _num(summary["limitados"])])
+    ws.append(["  aplicados con el límite del art. 23.1.a LIRPF", _num(summary["limitados_aplicados"])])
+    ws.append(["  excesos de años anteriores aplicados", _num(summary["excesos_aplicados"])])
+    ws.append(["  exceso a deducir en los 4 años siguientes", _num(summary["exceso_generado"])])
+    ws.append(["Amortización", _num(summary["amortizacion"])])
     ws.append(["Gastos deducibles (incl. amortización)", _num(summary["gastos_deducibles"])])
     ws.append(["Rendimiento neto", _num(summary["rendimiento"])])
+    ws.append(["Reducción por alquiler de vivienda", _num(summary["reduccion"])])
+    ws.append(["Rendimiento neto reducido", _num(summary["rendimiento_reducido"])])
     ws.append(["Mejoras (no restan del ejercicio)", _num(summary["mejoras"])])
+    for aviso in summary["avisos"]:
+        ws.append(["Aviso", aviso])
     _autosize(ws)
 
 
