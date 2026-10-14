@@ -18,6 +18,7 @@ from aeat_hub.fiscal.irpf import summarize_irpf
 from aeat_hub.fiscal.accounts import REGIMEN_CI
 from aeat_hub.models import Actividad, Asiento, Cuenta, Inmueble
 from aeat_hub.paths import DataLayout
+from aeat_hub.xlsx_seguro import guardar
 
 SHEET_COLUMNS = [
     ("fecha", "Fecha compra"),
@@ -102,7 +103,7 @@ def export_xlsx(
 
     layout.exports.mkdir(parents=True, exist_ok=True)
     dest = layout.exports / f"libro_{actividad.codigo}_{year}.xlsx"
-    wb.save(dest)
+    guardar(wb, dest)
     return dest
 
 

@@ -10,6 +10,7 @@ from openpyxl.utils import get_column_letter
 
 from aeat_hub.ocr.dual import DualDocument
 from aeat_hub.paths import DataLayout
+from aeat_hub.xlsx_seguro import guardar
 
 HEADER = Font(bold=True)
 WRAP = Alignment(wrap_text=True, vertical="top")
@@ -35,7 +36,7 @@ def write_dual_xlsx(layout: DataLayout, docs: list[DualDocument], dest: Path | N
     _textos(wb.create_sheet("Textos_OCR"), docs)
     if dest is None:
         dest = layout.exports / "dual_vision_rapid.xlsx"
-    wb.save(dest)
+    guardar(wb, dest)
     return dest
 
 

@@ -610,3 +610,20 @@ def test_rectificativa_de_otro_emisor_no_se_enlaza(session):
     )
     assert vincular_rectificativa(session, rect) is None
     assert rect.factura_rectificada_id is None
+
+
+# --- Seguridad: inyección de fórmulas en Excel -----------------------------------
+
+
+def test_excel_no_ejecuta_formulas_del_ocr(session, layout):
+    actividad = _actividad(session)
+    malicioso = '=HYPERLINK("http://evil.example","pulsa")'
+    _asiento(
+        session, actividad, fecha=date(2026, 3, 10), total=Decimal("10.00"), emisor=malicioso,
+        numero_factura="@SUM(1+1)", validado=True,
+    )
+    session.commit()
+    ws = load_workbook(export_xlsx(session, layout, actividad, 2026))["Gastos"]
+    celdas = [c for fila in ws.iter_rows(min_row=2) for c in fila if c.value in (malicioso, "@SUM(1+1)")]
+    assert len(celdas) == 2
+    assert all(c.data_type == "s" for c in celdas)

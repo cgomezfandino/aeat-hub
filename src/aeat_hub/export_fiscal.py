@@ -15,6 +15,7 @@ from aeat_hub.fiscal.libros import Anotacion, Libros, construir
 from aeat_hub.fiscal.modelos import Borrador, borrador_130, borrador_303
 from aeat_hub.models import Actividad, Asiento, Cuenta, Titular
 from aeat_hub.paths import DataLayout
+from aeat_hub.xlsx_seguro import guardar
 
 FORMATO = "#,##0.00"
 COLUMNAS_INGRESOS = (
@@ -110,7 +111,7 @@ def exportar_libros(libros: Libros, destino: Path) -> Path:
     for aviso in libros.avisos:
         notas.append([aviso])
     destino.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(destino)
+    guardar(wb, destino)
     return destino
 
 
@@ -131,7 +132,7 @@ def exportar_borrador(borrador: Borrador, destino: Path) -> Path:
     for aviso in borrador.avisos:
         notas.append([aviso])
     destino.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(destino)
+    guardar(wb, destino)
     return destino
 
 

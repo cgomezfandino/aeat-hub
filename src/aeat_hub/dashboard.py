@@ -7198,7 +7198,10 @@ _JS = r"""
   }
 
   const csvCell = (value) => {
-    const text = String(value ?? "");
+    let text = String(value ?? "");
+    // Inyección de fórmulas: un texto del OCR que empiece por = @ o +/- no
+    // numérico se ejecutaría al abrir el CSV en Excel. Los importes (-12,50) no se tocan.
+    if (/^[=@\t\r]/.test(text) || /^[+-](?![\d.,\s]*$)/.test(text)) text = "'" + text;
     if (/[;"\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
     return text;
   };
