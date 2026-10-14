@@ -255,6 +255,16 @@ def patch_asiento(session: Session, asiento_id: int, payload: dict) -> Asiento:
             if "total" in payload:
                 factura.total = asiento.total
 
+    if "afectacion_pct" in payload:
+        raw = payload.get("afectacion_pct")
+        nueva = None if raw in (None, "") else parse_money_field(raw)
+        if nueva is not None and not (Decimal("0") <= nueva <= Decimal("100")):
+            raise ValueError("La afectación es un porcentaje entre 0 y 100.")
+        if nueva != asiento.afectacion_pct:
+            _registrar(session, asiento, "afectacion_pct", asiento.afectacion_pct, nueva)
+            asiento.afectacion_pct = nueva
+            dirty = True
+
     if "rubro" in payload and _aplicar_rubro(session, asiento, payload.get("rubro")):
         dirty = True
 

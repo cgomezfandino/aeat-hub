@@ -32,6 +32,7 @@ from aeat_hub.fiscal.money import q2
 from aeat_hub.models import Actividad, Asiento, Cambio, Cuenta, Titular
 from aeat_hub.paths import DataLayout
 from aeat_hub.services import patch_expediente
+from aeat_hub.subidas import nombre_seguro as _safe_upload_name
 
 
 def _regenerar_libro(session, layout: DataLayout, actividad: Actividad, year: int, body: dict) -> None:
@@ -487,21 +488,6 @@ _DASHBOARD_NAME = re.compile(r"^dashboard_(.+)_(\d{4})\.html$")
 
 def _quiere_ui2(query: str) -> bool:
     return any(key == "ui" and value == "v2" for key, value in parse_qsl(query or ""))
-
-
-def _safe_upload_name(raw: str) -> str | None:
-    """Nombre de fichero subido sin rutas ni extensiones fuera del ingest.
-
-    El cliente manda el nombre; nunca debe decidir dónde se escribe.
-    """
-    from aeat_hub.ingest import INGEST_SUFFIXES
-
-    name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
-    if not name or name in {".", ".."} or name.startswith("."):
-        return None
-    if Path(name).suffix.lower() not in INGEST_SUFFIXES:
-        return None
-    return name
 
 
 def _parse_dashboard_name(name: str) -> tuple[str, int]:

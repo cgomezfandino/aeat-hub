@@ -802,6 +802,32 @@ def modelo_cmd(
         console.print(f"[yellow]{aviso}[/yellow]")
 
 
+@app.command("api")
+def api_cmd(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    openapi: Optional[Path] = typer.Option(None, "--openapi", help="Escribe el OpenAPI en este fichero y sale"),
+    data_dir: Optional[Path] = typer.Option(None, "--data-dir", envvar="AEAT_HUB_DATA_DIR"),
+) -> None:
+    """API HTTP del motor fiscal para la web (FastAPI)."""
+    import json
+    import os
+
+    from aeat_hub.api.app import ENV_TOKEN, create_app
+
+    layout = _layout(data_dir)
+    if openapi is not None:
+        openapi.write_text(json.dumps(create_app(layout, token="").openapi(), indent=2, ensure_ascii=False) + "\n")
+        console.print(f"OpenAPI → {openapi}")
+        return
+    if host not in ("127.0.0.1", "localhost", "::1") and not os.environ.get(ENV_TOKEN):
+        console.print(f"[red]Escuchar en {host} exige {ENV_TOKEN}: la API maneja datos fiscales.[/red]")
+        raise typer.Exit(1)
+    import uvicorn
+
+    uvicorn.run(create_app(layout), host=host, port=port)
+
+
 @app.command("reparse")
 def reparse_cmd(
     actividad: str = typer.Option(..., "--actividad"),
