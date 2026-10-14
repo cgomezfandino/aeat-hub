@@ -3,18 +3,15 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { crearLimitador } from "@/lib/limite";
 import { destinoSeguro } from "@/lib/seguridad";
 import { COOKIE, firmarSesion, passwordCorrecta } from "@/lib/sesion";
 
-// Límite de intentos. La IP solo es fiable detrás de un proxy que la fije
-// (Vercel: x-real-ip); sin él, una clave por IP se esquiva falseando la
-// cabecera y una clave global dejaría fuera al titular. Por eso:
-// - AEAT_HUB_TRUST_PROXY=1: bloqueo por IP con espera creciente.
-// - Sin proxy de confianza: sin bloqueo; cada fallo espera ~1 s. La defensa
-//   real es la contraseña de 16+ caracteres (fuerza bruta inviable).
-const intentos = new Map<string, { n: number; hasta: number }>();
-const MAX_IPS = 1000;
-const ESPERA_FALLO_MS = 1000;
+// Límite de intentos (src/lib/limite.ts): cola global, ~1 fallo por segundo
+// aunque lleguen en paralelo. La IP solo se usa para bloquear si viene de un
+// proxy de confianza (AEAT_HUB_TRUST_PROXY=1); si no, se podría falsear.
+// La defensa de fondo es la contraseña de 16+ caracteres.
+const limitador = crearLimitador();
 
 export type EstadoLogin = { error?: string };
 
@@ -26,23 +23,11 @@ async function ipDeConfianza(): Promise<string | null> {
 }
 
 export async function entrar(_previo: EstadoLogin, formulario: FormData): Promise<EstadoLogin> {
-  const ahora = Date.now();
-  const ip = await ipDeConfianza();
-  const registro = ip ? (intentos.get(ip) ?? { n: 0, hasta: 0 }) : null;
-  if (registro && registro.hasta > ahora) {
-    return { error: "Demasiados intentos desde esta conexión. Espera unos minutos." };
-  }
-  if (!passwordCorrecta(String(formulario.get("password") ?? ""))) {
-    await new Promise((resolver) => setTimeout(resolver, ESPERA_FALLO_MS));
-    if (ip && registro) {
-      const n = registro.n + 1;
-      if (intentos.size >= MAX_IPS) intentos.delete(intentos.keys().next().value!);
-      const espera = n >= 5 ? Math.min(60_000 * 2 ** (n - 5), 15 * 60_000) : 0;
-      intentos.set(ip, { n, hasta: espera ? ahora + espera : 0 });
-    }
-    return { error: "Contraseña incorrecta." };
-  }
-  if (ip) intentos.delete(ip);
+  const resultado = await limitador.intentar(await ipDeConfianza(), () =>
+    passwordCorrecta(String(formulario.get("password") ?? "")),
+  );
+  if (resultado === "bloqueada") return { error: "Demasiados intentos desde esta conexión. Espera unos minutos." };
+  if (resultado === "incorrecta") return { error: "Contraseña incorrecta." };
   const { valor, maxAge } = await firmarSesion();
   (await cookies()).set(COOKIE, valor, {
     httpOnly: true,
