@@ -22,6 +22,7 @@ def test_export_xlsx_crea_hojas(session, layout):
             numero_factura="F1",
             total=Decimal("48.40"),
             estado="confirmado",
+            validado=True,
         )
     )
     session.add(
@@ -34,6 +35,7 @@ def test_export_xlsx_crea_hojas(session, layout):
             emisor="Inquilino",
             total=Decimal("700.00"),
             estado="confirmado",
+            validado=True,
         )
     )
     session.commit()
@@ -45,7 +47,7 @@ def test_export_xlsx_crea_hojas(session, layout):
         "Ingresos",
         "Mejoras",
         "Duplicados",
-        "Reclasificar",
+        "Por revisar",
         "Resumen_rubro",
         "Resumen_inmueble",
         "Casillas_IRPF",
@@ -85,6 +87,7 @@ def test_export_xlsx_hoja_trimestres(session, layout):
             total=Decimal("100.00"),
             iva_cuota=Decimal("21.00"),
             estado="confirmado",
+            validado=True,
         )
     )
     session.add(
@@ -98,6 +101,7 @@ def test_export_xlsx_hoja_trimestres(session, layout):
             total=Decimal("50.00"),
             iva_cuota=Decimal("10.50"),
             estado="confirmado",
+            validado=True,
         )
     )
     session.add(
@@ -109,6 +113,7 @@ def test_export_xlsx_hoja_trimestres(session, layout):
             ejercicio=2026,
             total=Decimal("700.00"),
             estado="confirmado",
+            validado=True,
         )
     )
     session.commit()

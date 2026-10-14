@@ -85,6 +85,32 @@ Cada negocio propio (p. ej. una aplicación web) es **otro expediente**
 `actividad_economica`, no el de Valladolid. Hasta que exista el libro IVA,
 ese expediente solo sirve para no mezclar facturas; no genera un 303.
 
+## Qué computa (una sola regla)
+
+`fiscal/computo.py`: computa lo **validado por una persona** que no es
+duplicado ni rechazado. Se aplica a KPIs, insights, libro, trimestres, IRPF y
+Excel. La confianza del clasificador (estado `confirmado` automático) no basta:
+acierta el rubro, no garantiza que los importes leídos sean los del documento.
+Lo no validado se muestra siempre aparte («Pendiente de revisar: N · X €») y
+va a la hoja Excel *Por revisar*.
+
+## Campos legales de la factura
+
+`Asiento` guarda los campos de los art. 6, 7 y 15 RD 1619/2012 que antes solo
+vivían en el JSON de la extracción: dirección (recibida/emitida respecto al
+titular), tipo (completa/simplificada/rectificativa; `sin_determinar` si el
+documento no lo dice), receptor y su NIF, retención IRPF, recargo de
+equivalencia, factura rectificada y su enlace, moneda y mención legal. El
+desglose por tipo va en `asiento_iva`.
+
+Una rectificativa se enlaza con la factura que rectifica (en ambos sentidos),
+pero no excluye nada: si sustituye a la original (p. ej. factura completa en
+lugar del ticket) hay que rechazar la original; si es por diferencias, se suman.
+
+El NIF del titular decide la dirección y, más adelante, si el IVA es deducible
+(art. 97 LIVA: factura a nombre del titular). Con el NIF de ejemplo
+`00000000T` no se puede comprobar.
+
 ## Cortes (año y trimestre)
 
 - **Alquiler (capital inmobiliario):** lo que va a Hacienda es **anual**

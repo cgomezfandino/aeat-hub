@@ -20,6 +20,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from aeat_hub.types import Money, Quantity, Rate
+
 
 class Base(DeclarativeBase):
     pass
@@ -58,7 +60,7 @@ class Inmueble(Base):
     municipio: Mapped[str | None] = mapped_column(String(120), nullable=True)
     provincia: Mapped[str | None] = mapped_column(String(80), nullable=True)
     ref_catastral: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    porcentaje_titularidad: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("100.00"))
+    porcentaje_titularidad: Mapped[Decimal] = mapped_column(Rate(), default=Decimal("100.00"))
     uso: Mapped[str] = mapped_column(String(40), default="vivienda")
     actividad: Mapped[Actividad] = relationship(back_populates="inmuebles")
 
@@ -113,12 +115,12 @@ class Extraccion(Base):
     numero_norm: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     emisor: Mapped[str | None] = mapped_column(String(200), nullable=True)
     emisor_norm: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    nif_emisor: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    nif_emisor: Mapped[str | None] = mapped_column(String(20), nullable=True)
     fecha: Mapped[date | None] = mapped_column(Date, nullable=True)
-    base: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    iva_tipo: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
-    iva_cuota: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    base: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    iva_tipo: Mapped[Decimal | None] = mapped_column(Rate(), nullable=True)
+    iva_cuota: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    total: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
     pagina_ticket: Mapped[int | None] = mapped_column(Integer, nullable=True)
     paginas_ticket: Mapped[int | None] = mapped_column(Integer, nullable=True)
     json_completo: Mapped[str] = mapped_column(Text, default="{}")
@@ -131,16 +133,16 @@ class Factura(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     actividad_id: Mapped[int] = mapped_column(ForeignKey("actividades.id"), index=True)
-    nif_emisor: Mapped[str | None] = mapped_column(String(12), nullable=True, index=True)
+    nif_emisor: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     emisor: Mapped[str | None] = mapped_column(String(200), nullable=True)
     emisor_norm: Mapped[str | None] = mapped_column(String(80), nullable=True)
     numero_norm: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     numero_visible: Mapped[str | None] = mapped_column(String(120), nullable=True)
     fecha: Mapped[date | None] = mapped_column(Date, nullable=True)
-    base: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    iva_tipo: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
-    iva_cuota: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    base: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    iva_tipo: Mapped[Decimal | None] = mapped_column(Rate(), nullable=True)
+    iva_cuota: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    total: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
     estado_er: Mapped[str] = mapped_column(String(20), default="propuesta", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     asientos: Mapped[list[Asiento]] = relationship(back_populates="factura")
@@ -181,13 +183,13 @@ class Asiento(Base):
     fecha: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     ejercicio: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     emisor: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    nif_emisor: Mapped[str | None] = mapped_column(String(12), nullable=True, index=True)
+    nif_emisor: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     numero_factura: Mapped[str | None] = mapped_column(String(120), nullable=True)
     descripcion: Mapped[str] = mapped_column(Text, default="")
-    base: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    iva_tipo: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
-    iva_cuota: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    base: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    iva_tipo: Mapped[Decimal | None] = mapped_column(Rate(), nullable=True)
+    iva_cuota: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    total: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
     estado: Mapped[str] = mapped_column(String(20), default="pendiente", index=True)
     confianza_clasificacion: Mapped[Decimal] = mapped_column(Numeric(4, 3), default=Decimal("0"))
     origen_clasificacion: Mapped[str] = mapped_column(String(20), default="pendiente")
@@ -195,6 +197,27 @@ class Asiento(Base):
     motivo_rechazo: Mapped[str | None] = mapped_column(String(200), nullable=True)
     duplicado_de_id: Mapped[int | None] = mapped_column(ForeignKey("asientos.id"), nullable=True)
     duplicado_nivel: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # --- Campos legales (RD 1619/2012 art. 6, 7 y 15) ---
+    # recibida | emitida, respecto al titular del expediente.
+    direccion: Mapped[str] = mapped_column(String(10), default="recibida", server_default="recibida")
+    # completa | simplificada | rectificativa (los códigos SII F1/F2/R1-R5 se
+    # derivan al exportar; la causa de la rectificativa decide el R).
+    tipo_factura: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    serie: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    fecha_operacion: Mapped[date | None] = mapped_column(Date, nullable=True)
+    receptor: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    nif_receptor: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    factura_rectificada: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    factura_rectificada_id: Mapped[int | None] = mapped_column(
+        ForeignKey("asientos.id"), nullable=True
+    )
+    causa_rectificacion: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    retencion_tipo: Mapped[Decimal | None] = mapped_column(Rate(), nullable=True)
+    retencion_cuota: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    recargo_cuota: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    moneda: Mapped[str] = mapped_column(String(3), default="EUR", server_default="EUR")
+    # exenta_art20 | inversion_sujeto_pasivo | criterio_caja | no_sujeta …
+    mencion_legal: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     actividad: Mapped[Actividad] = relationship(back_populates="asientos")
@@ -207,6 +230,31 @@ class Asiento(Base):
         order_by="Linea.posicion, Linea.id",
         cascade="all, delete-orphan",
     )
+    desglose_iva: Mapped[list[AsientoIVA]] = relationship(
+        back_populates="asiento",
+        order_by="AsientoIVA.id",
+        cascade="all, delete-orphan",
+    )
+
+
+class AsientoIVA(Base):
+    """Desglose por tipo impositivo (art. 6.1.g RD 1619/2012).
+
+    Una factura con 21 % y 10 % tiene dos filas; la cabecera del asiento
+    conserva las sumas. El recargo de equivalencia va en la misma fila.
+    """
+
+    __tablename__ = "asiento_iva"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asiento_id: Mapped[int] = mapped_column(ForeignKey("asientos.id"), index=True)
+    base: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    tipo: Mapped[Decimal | None] = mapped_column(Rate(), nullable=True)
+    cuota: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    recargo_tipo: Mapped[Decimal | None] = mapped_column(Rate(), nullable=True)
+    recargo_cuota: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+
+    asiento: Mapped[Asiento] = relationship(back_populates="desglose_iva")
 
 
 class Linea(Base):
@@ -223,11 +271,11 @@ class Linea(Base):
     posicion: Mapped[int] = mapped_column(Integer, default=1)
     codigo: Mapped[str | None] = mapped_column(String(80), nullable=True)
     descripcion: Mapped[str] = mapped_column(String(200), default="")
-    cantidad: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
-    base: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    iva_tipo: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
-    iva_cuota: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    importe: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    cantidad: Mapped[Decimal | None] = mapped_column(Quantity(), nullable=True)
+    base: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    iva_tipo: Mapped[Decimal | None] = mapped_column(Rate(), nullable=True)
+    iva_cuota: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
+    importe: Mapped[Decimal | None] = mapped_column(Money(), nullable=True)
     eliminada: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

@@ -22,6 +22,8 @@ from aeat_hub.fiscal.accounts import (
     TIPO_INGRESO,
     TIPO_MEJORA,
 )
+from aeat_hub.fiscal.computo import computables, es_computable, por_revisar
+from aeat_hub.fiscal.computo import total as total_computo
 from aeat_hub.fiscal.irpf import INDEX_CI, casilla_clave, summarize_irpf
 from aeat_hub.fiscal.money import format_euro, q2
 from aeat_hub.fiscal.cuadres import TOLERANCIA_TOTAL
@@ -95,12 +97,15 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
     }
     titular = session.get(Titular, actividad.titular_id)
     vivos = [row for row in rows if row.estado not in ("duplicado", "rechazado")]
+    # Solo lo validado computa; lo demás se enseña como pendiente de revisar.
+    libro = computables(rows)
+    sin_revisar = por_revisar(rows)
     factura_ids = [row.factura_id for row in rows if row.factura_id]
     n_docs_map = counts_por_factura(session, factura_ids)
     er_map = estados_er_por_factura(session, factura_ids)
-    gastos = _sum_tipo(vivos, TIPO_GASTO)
-    ingresos = _sum_tipo(vivos, TIPO_INGRESO)
-    mejoras = _sum_tipo(vivos, TIPO_MEJORA)
+    gastos = _sum_tipo(libro, TIPO_GASTO)
+    ingresos = _sum_tipo(libro, TIPO_INGRESO)
+    mejoras = _sum_tipo(libro, TIPO_MEJORA)
     pendientes = [row for row in vivos if row.estado == "pendiente"]
     asientos = [
         _asiento_view(
@@ -114,9 +119,9 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         )
         for row in rows
     ]
-    por_mes = _by_month(vivos)
+    por_mes = _by_month(libro)
     irpf = (
-        summarize_irpf(vivos, extra_casillas) if actividad.regimen == REGIMEN_CI else None
+        summarize_irpf(libro, extra_casillas) if actividad.regimen == REGIMEN_CI else None
     )
     sin_fecha = (
         session.scalars(
@@ -141,6 +146,9 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         "inmueble": next(iter(inmuebles.values()), ""),
         "generated": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "n_asientos": len(vivos),
+        "n_computables": len(libro),
+        "n_por_revisar": len(sin_revisar),
+        "total_por_revisar": total_computo(sin_revisar),
         "n_duplicados": sum(1 for row in rows if row.estado == "duplicado"),
         "n_pendientes": len(pendientes),
         "gastos": gastos,
@@ -148,13 +156,13 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
         "mejoras": mejoras,
         "resultado": ingresos - gastos,
         "por_mes": por_mes,
-        "iva_tipos": _iva_por_tipo(vivos),
+        "iva_tipos": _iva_por_tipo(libro),
         "sin_fecha": [
             {"id": row.id, "emisor": row.emisor or "sin emisor"} for row in sin_fecha
         ],
         "n_conflictos": n_conflictos,
         "por_naturaleza": _by_nature(
-            vivos, extra_casillas, nombres, actividad.regimen
+            libro, extra_casillas, nombres, actividad.regimen
         ),
         "asientos": asientos,
         "pendientes": [item for item in asientos if item["estado"] == "pendiente"],
@@ -2379,7 +2387,7 @@ def _rank_emisores(asientos: list[dict]) -> tuple[list[dict], Decimal]:
     buckets: dict[str, dict] = {}
     total = ZERO
     for item in asientos:
-        if item["estado"] in ("duplicado", "rechazado") or item["tipo"] != TIPO_GASTO:
+        if not es_computable(item) or item["tipo"] != TIPO_GASTO:
             continue
         amount = q2(item["total"]) or ZERO
         raw = str(item.get("emisor") or "").strip()
@@ -2547,6 +2555,20 @@ def _masthead(data: dict) -> str:
 """
 
 
+def _aviso_por_revisar(data: dict) -> str:
+    """Lo no validado no entra en los totales: se dice siempre, con su importe."""
+    n = int(data.get("n_por_revisar") or 0)
+    if not n:
+        return ""
+    facturas = "factura" if n == 1 else "facturas"
+    return (
+        '<p class="hint revisar-aviso" role="note">Los totales solo incluyen lo validado. '
+        f"<strong>Pendiente de revisar: {n} {facturas} · "
+        f"{format_euro(data.get('total_por_revisar'))}</strong>, fuera de estas cifras "
+        "hasta que las valides.</p>"
+    )
+
+
 def _kpi_carousel(cards: str, carousel_id: str) -> str:
     return (
         f'<div class="kpi-carousel" id="{escape(carousel_id)}">'
@@ -2568,12 +2590,13 @@ def _kpis(data: dict) -> str:
         f'{_kpi_btn("Ingresos", data["ingresos"], "ingreso")}'
         f'{_kpi_btn("Mejoras (inversión)", data["mejoras"], "mejora")}'
         f'{_kpi_btn("Rendimiento neto", data["resultado"], "neto")}'
-        f'{_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], kpi_id="mast-kpi-revisar")}'
+        f'{_kpi_btn_count("Por revisar", data["n_por_revisar"], data["n_asientos"], kpi_id="mast-kpi-revisar")}'
     )
     return f"""
 <section class="kpis" aria-label="Resumen del ejercicio">
   <div class="wrap">
     {_kpi_carousel(cards, "mast-kpis")}
+    {_aviso_por_revisar(data)}
   </div>
   {mejora_note}
 </section>
@@ -3318,7 +3341,7 @@ def _panel_insights_v2(data: dict) -> str:
         f'{_kpi_btn("Ingresos", data["ingresos"], "ingreso", kpi_id="insight-kpi-ingresos")}'
         f'{_kpi_btn("Mejoras", data["mejoras"], "mejora", kpi_id="insight-kpi-mejoras")}'
         f'{_kpi_btn("Neto", data["resultado"], "neto", kpi_id="insight-kpi-neto")}'
-        f'{_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], kpi_id="insight-kpi-revisar")}'
+        f'{_kpi_btn_count("Por revisar", data["n_por_revisar"], data["n_asientos"], kpi_id="insight-kpi-revisar")}'
     )
     return f"""
 <section class="panel v2-ins-panel" role="tabpanel" id="panel-insights" data-panel="insights"
@@ -3330,6 +3353,7 @@ def _panel_insights_v2(data: dict) -> str:
     </div>
   </div>
   {_kpi_carousel(cards, "insight-kpis")}
+  {_aviso_por_revisar(data)}
   <p class="hint" id="insight-kpi-hint" hidden>KPIs y tablas siguen el rango de fechas de abajo; la Renta usa el ejercicio completo.</p>
   {mejora_note}
   {_aviso_linea(data)}
@@ -3547,13 +3571,14 @@ def _panel_insights(data: dict) -> str:
         f'{_kpi_btn("Ingresos", data["ingresos"], "ingreso", kpi_id="insight-kpi-ingresos")}'
         f'{_kpi_btn("Mejoras", data["mejoras"], "mejora", kpi_id="insight-kpi-mejoras")}'
         f'{_kpi_btn("Neto", data["resultado"], "neto", kpi_id="insight-kpi-neto")}'
-        f'{_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], kpi_id="insight-kpi-revisar")}'
+        f'{_kpi_btn_count("Por revisar", data["n_por_revisar"], data["n_asientos"], kpi_id="insight-kpi-revisar")}'
     )
     return f"""
 <section class="panel" role="tabpanel" id="panel-insights" data-panel="insights"
   aria-labelledby="tab-insights">
   <p class="panel-lead">Arriba, cómo va el ejercicio. Abajo, el borrador de la Renta.</p>
   {_kpi_carousel(cards, "insight-kpis")}
+  {_aviso_por_revisar(data)}
   <p class="hint" id="insight-kpi-hint" hidden>KPIs y tablas siguen el rango de fechas de abajo; la Renta usa el ejercicio completo.</p>
   {mejora_note}
   {_aviso_linea(data)}
@@ -3566,7 +3591,7 @@ def _panel_insights(data: dict) -> str:
 def _insight_rows_json(asientos: list[dict]) -> str:
     rows = []
     for item in asientos:
-        if item.get("estado") in ("duplicado", "rechazado"):
+        if not es_computable(item):
             continue
         if item.get("tipo") not in {TIPO_GASTO, TIPO_INGRESO, TIPO_MEJORA}:
             continue
@@ -6930,7 +6955,11 @@ _JS = r"""
     let baseVisible = 0;
     let ivaVisible = 0;
     let totalLibro = 0;
-    const countsInBook = (row) => row.dataset.estado !== "duplicado";
+    // misma regla que fiscal/computo.py: validado y ni duplicado ni rechazado
+    const countsInBook = (row) =>
+      row.dataset.validado === "1" &&
+      row.dataset.estado !== "duplicado" &&
+      row.dataset.estado !== "rechazado";
     const matched = [];
     for (const row of rows) {
       const amount = Number(row.dataset.total || 0);
