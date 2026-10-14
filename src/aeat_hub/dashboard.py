@@ -178,21 +178,28 @@ def collect_dashboard(session: Session, actividad: Actividad, year: int) -> dict
 
 
 def render_dashboard(data: dict) -> str:
+    v2 = data.get("ui", "v1") == "v2"
+    masthead = _masthead_v2(data) if v2 else _masthead(data)
+    revision = _panel_revision_v2(data) if v2 else _panel_revision(data)
+    libro = _panel_libro_v2(data) if v2 else _panel_libro(data)
+    duplicados = _panel_duplicados_v2(data) if v2 else _panel_duplicados(data)
+    insights = _panel_insights_v2(data) if v2 else _panel_insights(data)
+    extra_css = '<link rel="stylesheet" href="/static/v2.css">\n' if v2 else ""
     return (
         "<!DOCTYPE html>\n"
         '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
         f"<title>Libro {escape(data['codigo'])} · {data['year']}</title>\n"
-        f"{_FONT_LINKS}<style>{_CSS}</style>\n</head>\n"
-        f'<body data-default-panel="{"revision" if data["n_pendientes"] else "libro"}" '
+        f"{_FONT_LINKS}{_STATIC_LINKS}{extra_css}<style>{_CSS}</style>\n</head>\n"
+        f'<body data-ui="{"v2" if v2 else "v1"}" data-default-panel="{"revision" if data["n_pendientes"] else "libro"}" '
         f'data-actividad="{escape(data["codigo"])}" '
         f"data-year=\"{data['year']}\">\n"
-        f"{_masthead(data)}\n"
+        f"{masthead}\n"
         '<main class="wrap panels">\n'
-        f"{_panel_revision(data)}\n"
-        f"{_panel_libro(data)}\n"
-        f"{_panel_duplicados(data)}\n"
-        f"{_panel_insights(data)}\n"
+        f"{revision}\n"
+        f"{libro}\n"
+        f"{duplicados}\n"
+        f"{insights}\n"
         "</main>\n"
         f"{_site_footer()}\n"
         f"{_edit_dialog(data)}\n"
@@ -271,6 +278,10 @@ def collect_asiento_ficha(session: Session, asiento: Asiento, *, dashboard_name:
 
 
 def render_asiento_page(data: dict) -> str:
+    v2 = data.get("ui", "v1") == "v2"
+    back_href = _con_ui2(data["dashboard_href"]) if v2 else data["dashboard_href"]
+    extra_css = '<link rel="stylesheet" href="/static/v2.css">\n' if v2 else ""
+    num_script = _ficha_num_script() if v2 else ""
     lineas = data["lineas"]
     n_lineas = int(data.get("n_lineas") or len(lineas))
     score = _criterios_html(
@@ -304,6 +315,7 @@ def render_asiento_page(data: dict) -> str:
         "fecha": "Fecha de compra",
         "rubro": "Rubro",
         "iva_tipo": "IVA %",
+        "numero_factura": "Número",
     }
 
     def _log_valor(value: str) -> str:
@@ -353,6 +365,25 @@ def render_asiento_page(data: dict) -> str:
             '<button type="button" class="ghost" id="ficha-dup-marcar">Marcar duplicado de…</button>'
             "</div>"
         )
+
+    val_btn = ""
+    if data.get("estado") == "duplicado":
+        val_pill = '<span class="pill is-bad" id="ficha-val-pill">Duplicado</span>'
+    elif data.get("validado"):
+        val_pill = '<span class="pill is-ok" id="ficha-val-pill">✓ Validado</span>'
+        val_btn = (
+            f'<button type="button" class="ghost ficha-val-btn" id="ficha-btn-reopen" '
+            f'title="Reabrir este asiento para que vuelva a estar pendiente de revisión">'
+            f'{_RESTORE_SVG}<span>Reabrir</span></button>'
+        )
+    else:
+        val_pill = '<span class="pill is-warn" id="ficha-val-pill">Por revisar</span>'
+        val_btn = (
+            f'<button type="button" class="export-btn ficha-val-btn" id="ficha-btn-validate" '
+            f'title="Confirmar y validar este asiento">'
+            f'{_CHECK_SVG}<span>Validar asiento</span></button>'
+        )
+
     sugeridos = data.get("duplicados_sugeridos") or []
     conocido = data.get("duplicado_conocido")
     opciones_dup: list[tuple[str, str]] = []
@@ -400,67 +431,156 @@ def render_asiento_page(data: dict) -> str:
         '<button type="button" class="export-btn" id="ficha-dup-ok" disabled>Fusionar</button>'
         "</div></dialog>"
     )
-    return (
-        "<!DOCTYPE html>\n"
-        '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
-        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
-        f"<title>Factura {escape(str(data['numero']))} · {escape(str(data['emisor']))}</title>\n"
-        f"{_FONT_LINKS}<style>{_CSS}</style>\n</head>\n"
-        f"<body class=\"ficha-page\" data-asiento=\"{data['id']}\">\n"
-        '<header class="ficha-bar wrap">'
-        f'<a class="back-link" href="{escape(data["dashboard_href"])}">{_BACK_SVG} Volver al libro</a>'
-        f'<button type="button" class="row-edit" id="ficha-log" '
-        f'title="Historial de cambios" aria-haspopup="dialog" aria-label="Historial de cambios">{_CLOCK_SVG}</button>'
-        "</header>\n"
-        '<main class="wrap ficha">\n'
-        '<div class="ficha-head">'
-        "<div>"
-        f'<p class="ficha-kicker">{escape(data["actividad_codigo"])} · {data["year"]} · asiento #{data["id"]}</p>\n'
-        f"<h1>{escape(data['emisor'])}</h1>\n"
-        f'<p class="ficha-sub">{escape(data["numero"])} · {escape(data["fecha_label"])} · '
-        f'<span class="pill {escape(data["estado"])}">{escape(data["estado_label"])}</span></p>\n'
-        "</div>"
-        f"{doc}"
-        f"{dup}"
-        "</div>\n"
-        '<div class="kpi-carousel" id="ficha-kpis">'
-        '<dl class="ficha-grid">'
-        f"<div><dt>NIF emisor</dt><dd class=\"mono\">{escape(data['nif'])}</dd></div>"
-        f"<div><dt>Rubro</dt><dd>{escape(data['cuenta_nombre'])}</dd></div>"
-        f"<div><dt>Base</dt><dd id=\"kpi-base\">{escape(format_euro(data['base']))}</dd></div>"
-        f"<div><dt>IVA</dt><dd id=\"kpi-iva\">{escape(format_euro(data['iva']))}</dd></div>"
-        f"<div><dt>Total</dt><dd id=\"kpi-total\">{escape(format_euro(data['total']))}</dd></div>"
-        f"<div><dt>Elementos</dt><dd id=\"kpi-elementos\">{escape(articulos_label(lineas))}</dd></div>"
-        f"<div><dt>Casilla</dt><dd>{escape(data['casilla_etiqueta'])}</dd></div>"
+
+    dup_alert = ""
+    if sugeridos and data.get("estado") != "duplicado":
+        top = sugeridos[0]
+        dup_alert = (
+            '<div class="ficha-dup-alert" role="alert">\n'
+            '<div class="ficha-dup-alert-info">\n'
+            '<span class="dup-alert-badge">⚠️ Sospecha de duplicado</span>\n'
+            f'<p class="dup-alert-desc">Coincidencia con el asiento <strong>#{top["id"]}</strong> '
+            f'({escape(top["emisor"])} · {escape(str(top["numero"]))} · {escape(top["fecha"])} · {escape(format_euro(top["total"]))}): '
+            f'<em>{escape(top["motivo"])}</em></p>\n'
+            '</div>\n'
+            '<button type="button" class="ghost is-warn ficha-dup-alert-btn" id="ficha-dup-alert-btn">Revisar candidato</button>\n'
+            '</div>\n'
+        )
+
+    mob_doc_btn = (
+        f'<button type="button" class="ghost ficha-mob-toggle" id="ficha-mob-toggle" aria-label="Alternar documento original">'
+        f'{_FILE_SVG}<span>Ver documento</span></button>'
+    ) if data["has_doc"] else ""
+
+    pane_doc = ""
+    restore_bar = ""
+    if data["has_doc"]:
+        doc_raw_name = (data.get("doc_name") or "").strip()
+        is_pdf = doc_raw_name.lower().endswith(".pdf") or not doc_raw_name.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff")
+        )
+        if is_pdf:
+            doc_viewer = (
+                f'<iframe src="/doc/{data["id"]}#view=FitH" class="ficha-doc-frame" '
+                f'title="Documento {escape(doc_raw_name or "original")}" loading="lazy"></iframe>'
+            )
+        else:
+            doc_viewer = (
+                '<div class="ficha-doc-img-wrap">'
+                f'<img src="/doc/{data["id"]}" alt="Documento {escape(doc_raw_name or "original")}" class="ficha-doc-img" />'
+                "</div>"
+            )
+        pane_doc = (
+            '<aside class="ficha-pane-doc" id="ficha-pane-doc">\n'
+            '<div class="ficha-doc-toolbar">\n'
+            f'<div class="ficha-doc-info">{_FILE_SVG}<span class="ficha-doc-name" title="{escape(doc_raw_name)}">{escape(doc_raw_name or "Documento")}</span></div>\n'
+            '<div class="ficha-doc-tools">\n'
+            f'{doc}\n'
+            f'<a class="doc-tb-btn ghost" href="/doc/{data["id"]}" download="{escape(doc_raw_name)}" title="Descargar documento">{_DOWNLOAD_SVG}<span>Descargar</span></a>\n'
+            f'<button type="button" class="doc-tb-btn ghost" id="ficha-doc-toggle-btn" title="Ocultar visor original">{_SIDEBAR_TOGGLE_SVG}<span>Ocultar visor</span></button>\n'
+            '</div>\n'
+            '</div>\n'
+            f'<div class="ficha-doc-viewport">\n{doc_viewer}\n</div>\n'
+            '</aside>\n'
+        )
+        restore_bar = (
+            '<div class="ficha-doc-restore-bar" id="ficha-doc-restore-bar" hidden>\n'
+            f'<button type="button" class="ghost ficha-doc-restore-btn" id="ficha-doc-restore-btn">{_SIDEBAR_TOGGLE_SVG}<span>Mostrar documento original</span></button>\n'
+            '</div>\n'
+        )
+
+    if v2:
+        ficha_head = _ficha_head_v2(data, val_pill, val_btn, dup)
+    else:
+        ficha_head = (
+            '<div class="ficha-head">\n'
+            '<div>\n'
+            f'<p class="ficha-kicker">{escape(data["actividad_codigo"])} · {data["year"]} · asiento #{data["id"]}</p>\n'
+            f"<h1>{escape(data['emisor'])}</h1>\n"
+            f'<p class="ficha-sub">{escape(data["numero"])} · {escape(data["fecha_label"])} · '
+            f'<span class="pill {escape(data["estado"])}">{escape(data["estado_label"])}</span> {val_pill}</p>\n'
+            '</div>\n'
+            '<div class="ficha-actions">\n'
+            f"{val_btn}\n"
+            f"{dup}\n"
+            '</div>\n'
+            '</div>\n'
+        )
+
+    pane_data_content = (
+        f"{restore_bar}"
+        f"{dup_alert}"
+        f"{ficha_head}"
+        '<div class="kpi-carousel" id="ficha-kpis">\n'
+        '<dl class="ficha-grid">\n'
+        f"<div><dt>NIF emisor</dt><dd class=\"mono\">{escape(data['nif'])}</dd></div>\n"
+        f"<div><dt>Rubro</dt><dd>{escape(data['cuenta_nombre'])}</dd></div>\n"
+        f"<div><dt>Base</dt><dd id=\"kpi-base\" data-initial=\"{escape(format_euro(data['base']))}\">{escape(format_euro(data['base']))}</dd></div>\n"
+        f"<div><dt>IVA</dt><dd id=\"kpi-iva\" data-initial=\"{escape(format_euro(data['iva']))}\">{escape(format_euro(data['iva']))}</dd></div>\n"
+        f"<div><dt>Total</dt><dd id=\"kpi-total\" data-initial=\"{escape(format_euro(data['total']))}\">{escape(format_euro(data['total']))}</dd></div>\n"
+        f"<div><dt>Elementos</dt><dd id=\"kpi-elementos\">{escape(articulos_label(lineas))}</dd></div>\n"
+        f"<div><dt>Casilla</dt><dd>{escape(data['casilla_etiqueta'])}</dd></div>\n"
         "</dl>\n"
-        '<div class="kpi-dots" hidden></div>'
+        '<div class="kpi-dots" hidden></div>\n'
         "</div>\n"
         f"{_ficha_kpi_script()}\n"
-        '<div id="ficha-lines-editor" class="ledger">'
+        '<div id="ficha-lines-editor" class="ledger">\n'
         f'<h2 class="ficha-h2">{_LIST_SVG} Líneas de la factura'
         f'<span class="ficha-count" id="ficha-count">{escape(_elementos_label(n_lineas))}</span>'
         f'<button type="button" class="row-edit" id="ficha-lines-eye" hidden '
         f'title="Ver líneas eliminadas" aria-pressed="false" aria-label="Ver líneas eliminadas">{_EYE_SVG}</button>'
         "</h2>\n"
         f"{score}"
-        '<div class="table-wrap ficha-lines"><table class="ledger-table ficha-ledger">'
+        '<div class="table-wrap ficha-lines"><table class="ledger-table ficha-ledger">\n'
         "<colgroup>"
         '<col class="fl-n"><col class="fl-id"><col class="fl-concepto"><col class="fl-uds">'
         '<col class="fl-money"><col class="fl-rate"><col class="fl-money"><col class="fl-money"><col class="fl-act">'
-        "</colgroup>"
+        "</colgroup>\n"
         f"{_lineas_thead(lineas)}\n"
         f"<tbody id=\"ficha-lines-body\">{rows}</tbody></table></div>\n"
-        '<nav class="pager" id="ficha-pager" aria-label="Páginas de las líneas">'
-        '<button type="button" class="ghost" id="ficha-prev">Anterior</button>'
-        '<span class="pager-pages" id="ficha-pages"></span>'
-        '<span class="pager-label" id="ficha-pager-label"></span>'
-        '<button type="button" class="ghost" id="ficha-next">Siguiente</button>'
+        '<nav class="pager" id="ficha-pager" aria-label="Páginas de las líneas">\n'
+        '<button type="button" class="ghost" id="ficha-prev">Anterior</button>\n'
+        '<span class="pager-pages" id="ficha-pages"></span>\n'
+        '<span class="pager-label" id="ficha-pager-label"></span>\n'
+        '<button type="button" class="ghost" id="ficha-next">Siguiente</button>\n'
         "</nav>\n"
-        '<p class="edit-actions ficha-line-actions">'
-        '<button type="button" class="ghost" id="ficha-line-add">Añadir línea</button>'
+        '<p class="edit-actions ficha-line-actions">\n'
+        '<button type="button" class="ghost" id="ficha-line-add">Añadir línea</button>\n'
         "</p>\n"
         f'<p class="edit-lines-note" id="ficha-lines-note"></p>\n'
         "</div>\n"
+    )
+
+    if data["has_doc"]:
+        main_content = (
+            '<main class="wrap ficha">\n'
+            '<div class="ficha-split">\n'
+            f"{pane_doc}"
+            f'<div class="ficha-pane-data" id="ficha-pane-data">\n{pane_data_content}</div>\n'
+            "</div>\n"
+        )
+    else:
+        main_content = (
+            '<main class="wrap ficha">\n'
+            f'<div class="ficha-single">\n{pane_data_content}</div>\n'
+        )
+
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="es">\n<head>\n<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
+        f"<title>Factura {escape(str(data['numero']))} · {escape(str(data['emisor']))}</title>\n"
+        f"{_FONT_LINKS}{_STATIC_LINKS}{extra_css}<style>{_CSS}</style>\n</head>\n"
+        f"<body class=\"ficha-page\" data-ui=\"{"v2" if v2 else "v1"}\" data-asiento=\"{data['id']}\">\n"
+        '<header class="ficha-bar wrap">\n'
+        f'<a class="back-link" href="{escape(back_href)}">{_BACK_SVG} Volver al libro</a>\n'
+        '<div class="ficha-bar-right">\n'
+        f"{mob_doc_btn}\n"
+        f'<button type="button" class="row-edit" id="ficha-log" '
+        f'title="Historial de cambios" aria-haspopup="dialog" aria-label="Historial de cambios">{_CLOCK_SVG}</button>\n'
+        "</div>\n"
+        "</header>\n"
+        f"{main_content}"
         '<dialog class="app-sheet sheet-decision app-confirm" id="app-confirm" aria-labelledby="app-confirm-title">'
         '<form method="dialog">'
         '<p class="sheet-eyebrow">Confirmar</p>'
@@ -498,6 +618,7 @@ def render_asiento_page(data: dict) -> str:
         f"{dup_dialog}\n"
         f"{_ficha_lines_script()}\n"
         f"{_ficha_filter_script()}\n"
+        f"{num_script}\n"
         '<dialog class="app-sheet sheet-form ficha-log-dialog" id="ficha-log-dialog" aria-labelledby="ficha-log-title">'
         '<p class="sheet-eyebrow">Historial</p>'
         f'<h2 id="ficha-log-title">{_CLOCK_SVG} Cambios del asiento</h2>'
@@ -543,8 +664,67 @@ def render_asiento_page(data: dict) -> str:
         "    } catch (err) {\n"
         "      const box = document.getElementById(\"ficha-dup-error\");\n"
         "      if (box) { box.hidden = false; box.textContent = \"No se pudo guardar: \" + err.message; }\n"
+        "      else { alert(\"No se pudo guardar: \" + err.message); }\n"
         "    }\n"
         "  };\n"
+        "  document.getElementById(\"ficha-btn-validate\")?.addEventListener(\"click\", () => {\n"
+        "    postDup({ validado: true, confirmado: true });\n"
+        "  });\n"
+        "  document.getElementById(\"ficha-btn-reopen\")?.addEventListener(\"click\", () => {\n"
+        "    const confirm = document.getElementById(\"app-confirm\");\n"
+        "    const msg = document.getElementById(\"app-confirm-text\");\n"
+        "    const title = document.getElementById(\"app-confirm-title\");\n"
+        "    const ok = document.getElementById(\"app-confirm-ok\");\n"
+        "    if (!confirm || typeof confirm.showModal !== \"function\") {\n"
+        "      postDup({ validado: false, confirmado: true });\n"
+        "      return;\n"
+        "    }\n"
+        "    title.textContent = \"Reabrir asiento\";\n"
+        "    msg.textContent = \"Este asiento volverá a estar pendiente de revisión y saldrá de la lista de validados.\";\n"
+        "    ok.textContent = \"Reabrir\";\n"
+        "    confirm.addEventListener(\"close\", () => {\n"
+        "      if (confirm.returnValue === \"ok\") postDup({ validado: false, confirmado: true });\n"
+        "    }, { once: true });\n"
+        "    if (!confirm.open) confirm.showModal();\n"
+        "  });\n"
+        "  document.getElementById(\"ficha-dup-alert-btn\")?.addEventListener(\"click\", () => {\n"
+        "    document.getElementById(\"ficha-dup-marcar\")?.click();\n"
+        "  });\n"
+        "  const paneDoc = document.getElementById(\"ficha-pane-doc\");\n"
+        "  const splitWrap = document.querySelector(\".ficha-split\");\n"
+        "  const restoreBar = document.getElementById(\"ficha-doc-restore-bar\");\n"
+        "  const toggleBtn = document.getElementById(\"ficha-doc-toggle-btn\");\n"
+        "  const restoreBtn = document.getElementById(\"ficha-doc-restore-btn\");\n"
+        "  const mobToggle = document.getElementById(\"ficha-mob-toggle\");\n"
+        "  const hideDoc = () => {\n"
+        "    if (!splitWrap) return;\n"
+        "    splitWrap.classList.add(\"is-doc-hidden\");\n"
+        "    if (restoreBar) restoreBar.hidden = false;\n"
+        "    try { sessionStorage.setItem(\"aeat_doc_hidden\", \"1\"); } catch (_) {}\n"
+        "  };\n"
+        "  const showDoc = () => {\n"
+        "    if (!splitWrap) return;\n"
+        "    splitWrap.classList.remove(\"is-doc-hidden\");\n"
+        "    if (paneDoc) paneDoc.classList.remove(\"is-mobile-collapsed\");\n"
+        "    if (restoreBar) restoreBar.hidden = true;\n"
+        "    try { sessionStorage.removeItem(\"aeat_doc_hidden\"); } catch (_) {}\n"
+        "  };\n"
+        "  toggleBtn?.addEventListener(\"click\", hideDoc);\n"
+        "  restoreBtn?.addEventListener(\"click\", showDoc);\n"
+        "  if (mobToggle) {\n"
+        "    mobToggle.addEventListener(\"click\", () => {\n"
+        "      if (!paneDoc) return;\n"
+        "      const isHidden = paneDoc.classList.toggle(\"is-mobile-collapsed\");\n"
+        "      mobToggle.setAttribute(\"aria-pressed\", String(!isHidden));\n"
+        "      const label = mobToggle.querySelector(\"span\");\n"
+        "      if (label) label.textContent = isHidden ? \"Ver documento\" : \"Ocultar doc\";\n"
+        "    });\n"
+        "  }\n"
+        "  try {\n"
+        "    if (window.innerWidth > 1024 && sessionStorage.getItem(\"aeat_doc_hidden\") === \"1\") {\n"
+        "      hideDoc();\n"
+        "    }\n"
+        "  } catch (_) {}\n"
         "  const dialog = document.getElementById(\"ficha-dup-dialog\");\n"
         "  const okBtn = document.getElementById(\"ficha-dup-ok\");\n"
         "  const manualEl = document.getElementById(\"dup-manual\");\n"
@@ -906,7 +1086,12 @@ def _ficha_lines_script() -> str:
     }
     const put = (id, amount, has) => {
       const el = document.getElementById(id);
-      if (el) el.textContent = has ? euro(round2(amount)) : "—";
+      if (el) {
+        if (!has && el.dataset.initial && el.dataset.initial !== "—") {
+          return;
+        }
+        el.textContent = has ? euro(round2(amount)) : "—";
+      }
     };
     put("kpi-base", base, nBase);
     put("kpi-iva", iva, nIva);
@@ -1559,9 +1744,8 @@ def _asiento_view(
         doc_name = documento.nombre_original
     total = q2(asiento.total)
     lineas = lineas_de_asiento(asiento)
-    faltas = [
-        item["detail"]
-        for item in criterios_calidad(
+    calidad = list(
+        criterios_calidad(
             numero=asiento.numero_factura,
             fecha=asiento.fecha.strftime("%d/%m/%Y") if asiento.fecha else "",
             emisor=asiento.emisor,
@@ -1573,18 +1757,26 @@ def _asiento_view(
             lineas=lineas,
             titular_nif=titular_nif,
         )
+    )
+    faltas_criticas = [
+        item["detail"]
+        for item in calidad
+        if not item["ok"] and item["id"] in {"numero", "fecha", "emisor", "nif", "total", "base", "desglose", "suma", "conceptos", "importes"}
+    ]
+    faltas = [
+        item["detail"]
+        for item in calidad
         if not item["ok"]
     ]
     conf_ocr = q2(documento.confianza) if documento is not None else None
     conf_class = q2(asiento.confianza_clasificacion)
+    sin_cuenta = not codigo or not cuenta_nombre
+    conf_min = conf_ocr if conf_class is None else min([v for v in (conf_ocr, conf_class) if v is not None])
     baja = (not asiento.validado) and (
-        (conf_ocr is not None and conf_ocr < Decimal("0.80"))
-        or (conf_class is not None and conf_class < Decimal("0.80"))
-        or conf_class is None
-        or asiento.estado == "pendiente"
+        (conf_ocr is not None and conf_ocr < Decimal("0.70"))
+        or sin_cuenta
+        or bool(faltas_criticas)
     )
-    conf_scores = [value for value in (conf_ocr, conf_class) if value is not None]
-    conf_min = min(conf_scores) if conf_scores else None
     return {
         "id": asiento.id,
         "fecha": asiento.fecha.isoformat() if asiento.fecha else "",
@@ -1625,7 +1817,8 @@ def _asiento_view(
         "n_docs": n_docs,
         "er_estado": er_estado,
         "n_articulos": articulos_label(lineas),
-        "calidad_faltas": faltas,
+        "calidad_faltas": faltas_criticas,
+        "calidad_todas": faltas,
     }
 
 
@@ -2095,8 +2288,8 @@ def _cola_revision(asientos: list[dict]) -> list[dict]:
     def sort_key(item: dict) -> tuple:
         min_pct = item["conf_min_pct"]
         return (
-            0 if item["baja"] else 1,
             0 if item["estado"] == "pendiente" else 1,
+            0 if item["baja"] else 1,
             min_pct if min_pct is not None else -1,
             item["id"],
         )
@@ -2189,17 +2382,19 @@ def _rank_emisores(asientos: list[dict]) -> tuple[list[dict], Decimal]:
         if item["estado"] in ("duplicado", "rechazado") or item["tipo"] != TIPO_GASTO:
             continue
         amount = q2(item["total"]) or ZERO
-        if amount <= ZERO:
-            continue
         raw = str(item.get("emisor") or "").strip()
-        key = raw.casefold() or "sin emisor"
+        nif = str(item.get("nif") or "").strip()
+        # El NIF identifica al proveedor; el nombre del OCR varía de grafía.
+        key = f"nif:{nif}" if nif and nif != "—" else (raw.casefold() or "sin emisor")
         slot = buckets.get(key)
         if slot is None:
             buckets[key] = {"label": raw or "Sin emisor", "total": amount}
         else:
+            # los abonos (importes negativos) netean el gasto del proveedor
             slot["total"] += amount
         total += amount
-    ranked = sorted(buckets.values(), key=lambda row: (-row["total"], row["label"].casefold()))
+    con_gasto = [row for row in buckets.values() if row["total"] > ZERO]
+    ranked = sorted(con_gasto, key=lambda row: (-row["total"], row["label"].casefold()))
     return ranked, total
 
 
@@ -2404,35 +2599,55 @@ def _kpi_btn_count(label: str, pendientes: int, total: int, *, kpi_id: str = "")
     )
 
 
+def _asiento_badge(item: dict) -> tuple[str, str, str]:
+    """Calcula unívocamente (label, tone, hint) para sincronizar tabla y kanban.
+
+    Tones:
+      - 'ok': Verde (Validada, 99 %, etc.)
+      - 'warn': Ámbar (Sin rubro, Revisar)
+      - 'err': Rojo (OCR dudoso, Rechazada)
+      - 'dup': Pizarra/Gris (Duplicado)
+    """
+    estado = item.get("estado")
+    if estado == "duplicado":
+        dup_id = item.get("duplicado_de_id") or "—"
+        return f"de #{dup_id}", "dup", f"Duplicado económico o fiscal vinculado al asiento #{dup_id}."
+    if estado == "rechazado":
+        motivo = (item.get("motivo_rechazo") or "").strip()
+        label = motivo[:40] or "Rechazada"
+        return label, "err", f"Factura descartada: {motivo or 'No deducible o error irrecuperable'}"
+    if item.get("validado"):
+        return "Validada ✓", "ok", "Bloqueado: revisada, cuadrada y consolidada en el libro."
+
+    ocr_pct = item.get("conf_ocr_pct")
+    faltas = item.get("calidad_faltas") or []
+    sin_cuenta = not item.get("cuenta") or item.get("cuenta") in ("sin-cuenta", "")
+
+    if ocr_pct is not None and ocr_pct < 70:
+        return f"OCR {ocr_pct} %", "err", "Calidad de extracción baja. Verifica NIF, fecha e importes con el documento."
+    if faltas:
+        return "Revisar", "warn", "En la ficha: " + " ".join(faltas[:3])
+    if sin_cuenta:
+        return "Sin rubro", "warn", "Extracción completa pero falta asignar la cuenta contable o rubro de gasto."
+
+    pct = ocr_pct if ocr_pct is not None else 99
+    return f"{pct} %", "ok", "Número, fecha, emisor, NIF, importes y cuadre fiscal completos."
+
+
 def _quality_pct_label(pct: int | None) -> str:
     return "—" if pct is None else f"{pct} %"
 
 
 def _quality_cell(item: dict, *, prefix: str) -> str:
-    faltas = item.get("calidad_faltas") or []
-    if item["validado"]:
-        tone = "ok"
-        label = "Validado"
-        hint = "Bloqueado: reparse y OCR no pisan fecha, emisor, importes ni rubro."
-    elif faltas:
-        tone = "warn"
-        label = "Revisar"
-        hint = "En la ficha: " + " ".join(faltas[:4])
-    elif item["baja"]:
-        tone = "warn"
-        label = "Revisar"
-        hint = (
-            "El modelo no está seguro. Abre el documento, corrige NIF o importes "
-            "si hace falta y pulsa Por validar."
-        )
-    else:
-        tone = "ok"
-        label = "Aceptable"
-        hint = "Número, fecha, emisor, NIF, importes, ids y suma están rellenos."
-    ocr = _quality_pct_label(item["conf_ocr_pct"])
-    clasificacion = _quality_pct_label(item["conf_class_pct"])
-    rubro = item["cuenta_nombre"]
-    casilla = item["casilla_etiqueta"]
+    label, tone, hint = _asiento_badge(item)
+    ocr_pct = item.get("conf_ocr_pct")
+    class_pct = item.get("conf_class_pct")
+    sin_cuenta = not item.get("cuenta") or item.get("cuenta") in ("sin-cuenta", "")
+
+    ocr = _quality_pct_label(ocr_pct)
+    clasificacion = "Sin asignar" if sin_cuenta else _quality_pct_label(class_pct)
+    rubro = item.get("cuenta_nombre") or "Sin rubro"
+    casilla = item.get("casilla_etiqueta") or "Sin casilla"
     pop_id = f"q-pop-{prefix}-{item['id']}"
     return (
         f'<div class="q-chip-wrap">'
@@ -2459,24 +2674,8 @@ def _amount_attr(value: Decimal | None) -> str:
     return "" if quantized is None else f"{quantized:.2f}"
 
 
-def _kan_card(item: dict) -> str:
-    """Tarjeta de factura para el tablero Kanban."""
-    estado = item["estado"]
-    total = item.get("total")
-    total_label = escape(format_euro(total)) if total is not None else "—"
-    if estado == "duplicado":
-        chip = f'<span class="pill duplicado">de #{item.get("duplicado_de_id") or "—"}</span>'
-    elif estado == "rechazado":
-        motivo = (item.get("motivo_rechazo") or "").strip()
-        chip = (
-            '<span class="pill rechazado">'
-            f"{escape(motivo[:40] or 'Rechazada')}</span>"
-        )
-    elif item["baja"]:
-        chip = '<span class="pill pendiente">Confianza baja</span>'
-    else:
-        pct = item.get("conf_min_pct")
-        chip = f'<span class="pill confirmado">{pct if pct is not None else "—"} %</span>'
+def _kan_acciones(item: dict, estado: str) -> list[str]:
+    """Botones de acción cableados por el JS (data-kan). Compartidos v1/v2."""
     acciones = []
     if estado == "pendiente":
         acciones.append(f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar: revisada y buena">✓</button>')
@@ -2488,6 +2687,24 @@ def _kan_card(item: dict) -> str:
         acciones.append(f'<button type="button" class="kan-act" data-kan="recuperar" data-id="{item["id"]}" title="Recuperar a revisión">↩</button>')
     if estado in ("pendiente", "rechazado"):
         acciones.append(f'<button type="button" class="kan-act" data-kan="rechazar" data-id="{item["id"]}" title="Rechazar: no es una factura">✕</button>')
+    return acciones
+
+
+def _kan_card(item: dict) -> str:
+    """Tarjeta de factura para el tablero Kanban."""
+    estado = item["estado"]
+    total = item.get("total")
+    total_label = escape(format_euro(total)) if total is not None else "—"
+
+    label, tone, _ = _asiento_badge(item)
+    pill_class = {
+        "ok": "confirmado",
+        "warn": "pendiente",
+        "err": "rechazado",
+        "dup": "duplicado",
+    }.get(tone, "pendiente")
+    chip = f'<span class="pill {pill_class}">{escape(label)}</span>'
+    acciones = _kan_acciones(item, estado)
     return (
         f'<article class="kan-card" draggable="true" data-id="{item["id"]}" '
         f'data-estado="{estado}" data-total="{total_label}" '
@@ -2532,33 +2749,7 @@ def _panel_revision(data: dict) -> str:
             f'<div class="kan-cuerpo">{cuerpo}</div></section>'
         )
 
-    def _fila_tabla(item: dict) -> str:
-        total = item.get("total")
-        total_label = escape(format_euro(total)) if total is not None else "—"
-        faltas = " · ".join(item.get("calidad_faltas") or [])[:90] or "—"
-        row_attrs = _smart_row_attrs(
-            id=item["id"],
-            emisor=item.get("emisor") or "",
-            numero=item.get("numero") or "",
-            fecha=item.get("fecha_label") or "",
-            total=total if total is not None else "",
-            motivo=faltas,
-        )
-        return (
-            f"<tr {row_attrs}>"
-            f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
-            f"<td>{escape(item['emisor'])}</td>"
-            f"<td>{escape(item['numero'])}</td>"
-            f"<td>{escape(item['fecha_label'])}</td>"
-            f'<td class="num">{total_label}</td>'
-            f"<td>{escape(faltas)}</td>"
-            f'<td class="kan-celda-act">'
-            f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar">✓</button>'
-            f'<button type="button" class="kan-act" data-kan="rechazar" data-id="{item["id"]}" title="Rechazar">✕</button>'
-            "</td></tr>"
-        )
-
-    tabla_rows = "".join(_fila_tabla(item) for item in pendientes_ordenadas) or (
+    tabla_rows = "".join(_fila_revision(item) for item in pendientes_ordenadas) or (
         '<tr><td colspan="7" class="muted">Nada pendiente.</td></tr>'
     )
 
@@ -2576,9 +2767,22 @@ def _panel_revision(data: dict) -> str:
       <div class="kan-barra"><i style="width: {progreso}%"></i></div>
       <strong>{progreso} %</strong></div>
   </div>
-  <div class="rev-vistas" role="group" aria-label="Vista de revisión">
-    <button type="button" class="ghost" id="rev-vista-tablero" aria-pressed="true">Tablero</button>
-    <button type="button" class="ghost" id="rev-vista-tabla" aria-pressed="false">Tabla</button>
+  <div class="rev-vistas" role="group" aria-label="Vista de revisión" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+    <div style="display:flex; gap:6px;">
+      <button type="button" class="ghost" id="rev-vista-tablero" aria-pressed="true">Tablero</button>
+      <button type="button" class="ghost" id="rev-vista-tabla" aria-pressed="false">Tabla</button>
+    </div>
+    <div class="rev-upload-wrap">
+      <input type="file" id="factura-upload-input" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" style="display:none">
+      <button type="button" class="export-btn" id="btn-subir-factura" style="font-size:12px; padding:6px 12px; display:inline-flex; align-items:center; gap:6px; cursor:pointer;" title="Cargar factura con Gemini Vision AI">
+        <span>↑</span> <span>Cargar factura</span>
+      </button>
+    </div>
+  </div>
+  <div class="drop-banner" id="drop-banner" style="border: 2px dashed var(--line); border-radius: 6px; padding: 10px 14px; text-align: center; margin: 0 0 12px; background: #faf9f6; cursor: pointer; transition: all 0.2s ease;">
+    <p style="margin: 0; font-size: 13px; color: var(--muted);" id="drop-banner-text">
+      Arrastra aquí tu factura en <strong>PDF o imagen</strong> (o haz clic para examinar)
+    </p>
   </div>
   <div class="kan-board" id="kan-board">
     {_columna("pendiente", "Por revisar", pendientes_ordenadas, "Nada pendiente. Ingresa facturas y vuelve.", "validar|rechazar")}
@@ -2596,6 +2800,576 @@ def _panel_revision(data: dict) -> str:
       <button type="button" class="ghost" id="rev-next">Siguiente</button>
     </nav>
   </div>
+  {_rechazo_dialog()}
+
+  {_footer(data)}
+</div>
+"""
+
+
+def _masthead_v2(data: dict) -> str:
+    """Cabecera v2: mismos ids cableados, marca visible y meta compacta."""
+    inmueble = data.get("inmueble") or ""
+    inmueble_wrap = (
+        f'<span id="mast-inmueble-wrap"> · <span id="mast-inmueble">{escape(inmueble)}</span></span>'
+        if inmueble
+        else '<span id="mast-inmueble-wrap" hidden> · <span id="mast-inmueble"></span></span>'
+    )
+    badge = ""
+    if data["cola_revision"]:
+        badge = f'<span class="tab-badge">{len(data["cola_revision"])}</span>'
+    dup_badge = ""
+    n_dups_tab = int(data.get("n_duplicados") or 0) + len(data.get("sospechosos") or [])
+    if n_dups_tab:
+        dup_badge = f'<span class="tab-badge">{n_dups_tab}</span>'
+    show_inmueble = "1" if (inmueble or data["regimen"] == REGIMEN_CI) else "0"
+    return f"""
+<header class="mast v2-mast">
+  <div class="wrap v2-mast-grid">
+    <span class="v2-brand"><img src="/static/logo.svg" alt="" width="30" height="30"><span>AEAT&nbsp;Hub</span></span>
+    <div class="v2-mast-main">
+      <h1 class="v2-mast-h1">
+        <span id="mast-nombre">{escape(data["nombre"])}</span>
+        <span id="mast-kicker">{escape(data["codigo"])} · {data["year"]}</span>
+        <button type="button" class="row-edit mast-edit" id="mast-edit"
+          data-has-inmueble="{show_inmueble}"
+          title="Personalizar títulos" aria-label="Personalizar títulos del libro">{_PENCIL_SVG}</button>
+      </h1>
+      <p class="v2-mast-meta">
+        <span id="mast-titular">{escape(data["titular"])}</span>
+        · <span id="mast-regimen">{escape(data["regimen_label"])}</span>{inmueble_wrap}
+      </p>
+    </div>
+    <p class="v2-mast-strip">
+      <strong>{data["n_pendientes"]}</strong> por revisar ·
+      <strong>{data["n_sin_validar"]}</strong> sin validar ·
+      neto <strong>{escape(format_euro(data["resultado"]))}</strong>
+    </p>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Secciones del libro">
+    <div class="wrap tabs-row">
+      <button type="button" class="tab" role="tab" id="tab-revision" data-panel="revision"
+        aria-controls="panel-revision" aria-selected="false" tabindex="-1">Revisar {badge}</button>
+      <button type="button" class="tab" role="tab" id="tab-libro" data-panel="libro"
+        aria-controls="panel-libro" aria-selected="false" tabindex="-1">Libro</button>
+      <button type="button" class="tab" role="tab" id="tab-duplicados" data-panel="duplicados"
+        aria-controls="panel-duplicados" aria-selected="false" tabindex="-1">Duplicados {dup_badge}</button>
+      <button type="button" class="tab" role="tab" id="tab-insights" data-panel="insights"
+        aria-controls="panel-insights" aria-selected="false" tabindex="-1">Insights</button>
+    </div>
+  </nav>
+</header>
+"""
+
+
+def _kan_card_v2(item: dict) -> str:
+    """Tarjeta v2: mismo contrato JS, muestra la primera falta y enlaza con ?ui=v2."""
+    estado = item["estado"]
+    total = item.get("total")
+    total_label = escape(format_euro(total)) if total is not None else "—"
+    label, tone, _ = _asiento_badge(item)
+    pill_class = {
+        "ok": "confirmado",
+        "warn": "pendiente",
+        "err": "rechazado",
+        "dup": "duplicado",
+    }.get(tone, "pendiente")
+    chip = f'<span class="pill {pill_class}">{escape(label)}</span>'
+    acciones = _kan_acciones(item, estado)
+    falta = " · ".join(item.get("calidad_faltas") or [])[:80]
+    falta_html = f'<p class="v2-kan-falta">{escape(falta)}</p>' if falta else ""
+    return (
+        f'<article class="kan-card v2-kan" draggable="true" data-id="{item["id"]}" '
+        f'data-estado="{estado}" data-total="{total_label}" '
+        f'data-emisor="{escape(item["emisor"])}" data-numero="{escape(item["numero"])}" '
+        f'data-fecha="{escape(item["fecha_label"])}">'
+        f'<a class="kan-ref" href="/asiento/{item["id"]}?ui=v2" title="Abrir la ficha">{escape(item["emisor"])}</a>'
+        f'<p class="muted kan-datos">{escape(item["numero"])} · {escape(item["fecha_label"])}</p>'
+        f'<div class="v2-kan-total"><strong>{total_label}</strong> {chip}</div>'
+        f"{falta_html}"
+        f'<div class="kan-acciones">{" ".join(acciones)}</div>'
+        "</article>"
+    )
+
+
+def _panel_revision_v2(data: dict) -> str:
+    """Cola de revisión v2: mismos ids cableados, cabecera compacta y vacíos con blob."""
+    pendientes = [item for item in data["asientos"] if item["estado"] == "pendiente"]
+    consolidadas = [item for item in data["asientos"] if item["estado"] == "confirmado"]
+    duplicadas = [item for item in data["asientos"] if item["estado"] == "duplicado"]
+    rechazadas = [item for item in data["asientos"] if item["estado"] == "rechazado"]
+    cola = {item["id"]: item for item in data["cola_revision"]}
+    pendientes_ordenadas = [cola.get(item["id"], item) for item in pendientes]
+    vivas = len(pendientes) + len(consolidadas) + len(duplicadas)
+    hechas = vivas - len(pendientes)
+    progreso = int(round(100 * hechas / vivas)) if vivas else 100
+
+    TOPE = 12
+
+    def _columna(clave: str, titulo: str, filas: list[dict], vacio: str, soltar: str) -> str:
+        visibles = filas[:TOPE]
+        cards = "".join(_kan_card_v2(item) for item in visibles)
+        resto = len(filas) - len(visibles)
+        if resto > 0:
+            destino = "tabla" if clave == "pendiente" else clave
+            cards += (
+                f'<button type="button" class="kan-mas" data-kan-mas="{destino}">'
+                f"+{resto} más…</button>"
+            )
+        cuerpo = cards or (
+            '<div class="v2-kan-vacio">'
+            '<img src="/static/blob.svg" alt="" width="56" height="56">'
+            f"<p>{vacio}</p></div>"
+        )
+        return (
+            f'<section class="kan-col" data-col="{clave}" data-soltar="{soltar}">'
+            f'<header class="kan-col-cab"><span>{titulo}</span><span class="kan-num">{len(filas)}</span></header>'
+            f'<div class="kan-cuerpo">{cuerpo}</div></section>'
+        )
+
+    tabla_rows = "".join(_fila_revision(item) for item in pendientes_ordenadas) or (
+        '<tr><td colspan="7" class="muted">Nada pendiente.</td></tr>'
+    )
+
+    return f"""
+<div class="panel v2-rev" role="tabpanel" id="panel-revision" data-panel="revision"
+  aria-labelledby="tab-revision">
+  <div class="v2-rev-head">
+    <div class="v2-rev-title">
+      <h2>Cola de revisión</h2>
+      <p>Cada factura pasa por tus manos: valida, rechaza o abre la ficha.</p>
+    </div>
+    <div class="v2-rev-stats" aria-label="Estado de la cola">
+      <span><strong>{len(pendientes)}</strong> por revisar</span>
+      <span><strong>{len(consolidadas)}</strong> validadas</span>
+      <span><strong>{len(duplicadas)}</strong> duplicadas</span>
+      <span><strong>{len(rechazadas)}</strong> rechazadas</span>
+      <span class="v2-rev-prog"><span class="v2-rev-bar"><i style="width: {progreso}%"></i></span><strong>{progreso} %</strong></span>
+    </div>
+    <div class="v2-rev-acts">
+      <div role="group" aria-label="Vista de revisión">
+        <button type="button" class="ghost" id="rev-vista-tablero" aria-pressed="true">Tablero</button>
+        <button type="button" class="ghost" id="rev-vista-tabla" aria-pressed="false">Tabla</button>
+      </div>
+      <input type="file" id="factura-upload-input" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic" hidden>
+      <button type="button" class="export-btn" id="btn-subir-factura" title="Cargar factura con Gemini Vision AI">↑ Cargar factura</button>
+    </div>
+  </div>
+  <div class="drop-banner v2-drop" id="drop-banner">
+    <p id="drop-banner-text">Arrastra aquí tu factura en <strong>PDF o imagen</strong> (o haz clic para examinar)</p>
+  </div>
+  <div class="kan-board" id="kan-board">
+    {_columna("pendiente", "Por revisar", pendientes_ordenadas, "Nada pendiente. Ingresa facturas y vuelve.", "validar|rechazar")}
+    {_columna("confirmado", "Consolidadas", consolidadas, "Aquí caen las revisadas y buenas.", "reabrir")}
+    {_columna("duplicado", "Duplicadas", duplicadas, "Sin duplicados marcados.", "quitar-dup")}
+    {_columna("rechazado", "Rechazadas", rechazadas, "Sin documentos rechazados.", "recuperar")}
+  </div>
+  <div class="rev-tabla" id="revision-tabla" hidden>
+    <div class="table-wrap"><table class="dup-tabla smart-table" id="rev-pend-tabla" data-smart-config="{_smart_config(filters=_asiento_smart_filters("rev-pend", motivo=True), ranges=[("total", "f-rev-pend-total-min", "f-rev-pend-total-max")], default_sort="id")}">
+      {_asiento_table_thead("rev-pend", _asiento_table_choices(pendientes_ordenadas, motivos=_unique_labels([" · ".join(item.get("calidad_faltas") or [])[:90] or "—" for item in pendientes_ordenadas])), motivo=True, actions="1")}
+      <tbody id="rev-tabla-body">{tabla_rows}</tbody></table></div>
+    <nav class="pager" aria-label="Páginas de pendientes">
+      <button type="button" class="ghost" id="rev-prev">Anterior</button>
+      <span class="pager-label" id="rev-paginas"></span>
+      <button type="button" class="ghost" id="rev-next">Siguiente</button>
+    </nav>
+  </div>
+  {_rechazo_dialog()}
+
+  {_footer(data)}
+</div>
+"""
+
+
+def _con_ui2(href: str) -> str:
+    """Añade ?ui=v2 a un href interno conservando el fragmento."""
+    if "#" in href:
+        base, frag = href.split("#", 1)
+        sep = "&" if "?" in base else "?"
+        return f"{base}{sep}ui=v2#{frag}"
+    sep = "&" if "?" in href else "?"
+    return f"{href}{sep}ui=v2"
+
+
+def _ficha_head_v2(data: dict, val_pill: str, val_btn: str, dup: str) -> str:
+    """Cabecera v2: número editable inline, mismos botones cableados."""
+    numero = "" if data["numero"] == "—" else data["numero"]
+    return (
+        '<div class="ficha-head v2-ficha-head">\n'
+        "<div>\n"
+        f'<p class="ficha-kicker">{escape(data["actividad_codigo"])} · {data["year"]} · asiento #{data["id"]}</p>\n'
+        f"<h1>{escape(data['emisor'])}</h1>\n"
+        '<p class="ficha-sub">'
+        f'<span id="ficha-num-view">{escape(data["numero"])}</span>'
+        f'<button type="button" class="row-edit" id="ficha-num-edit" title="Corregir número de factura" aria-label="Corregir número de factura">{_PENCIL_SVG}</button>'
+        '<span id="ficha-num-form" hidden>'
+        f'<input id="ficha-num-input" type="text" maxlength="120" value="{escape(numero)}" aria-label="Número de factura">'
+        '<button type="button" class="ghost" id="ficha-num-save">Guardar</button>'
+        '<button type="button" class="ghost" id="ficha-num-cancel">Cancelar</button>'
+        "</span>"
+        '<span class="v2-num-error" id="ficha-num-error" role="alert" hidden></span>'
+        f" · {escape(data['fecha_label'])} · "
+        f'<span class="pill {escape(data["estado"])}">{escape(data["estado_label"])}</span> {val_pill}</p>\n'
+        "</div>\n"
+        '<div class="ficha-actions">\n'
+        f"{val_btn}\n"
+        f"{dup}\n"
+        "</div>\n"
+        "</div>\n"
+    )
+
+
+def _ficha_num_script() -> str:
+    """Guarda el número por API y recarga. Solo v2."""
+    return r"""
+<script>
+(() => {
+  const view = document.getElementById("ficha-num-view");
+  const edit = document.getElementById("ficha-num-edit");
+  const form = document.getElementById("ficha-num-form");
+  const input = document.getElementById("ficha-num-input");
+  const save = document.getElementById("ficha-num-save");
+  const cancel = document.getElementById("ficha-num-cancel");
+  const error = document.getElementById("ficha-num-error");
+  if (!view || !edit || !form || !input) return;
+  const id = document.body.dataset.asiento;
+  const showError = (msg) => {
+    if (!error) return;
+    error.hidden = false;
+    error.textContent = msg;
+  };
+  edit.addEventListener("click", () => {
+    form.hidden = false;
+    view.hidden = true;
+    edit.hidden = true;
+    if (error) error.hidden = true;
+    input.focus();
+    input.select();
+  });
+  cancel?.addEventListener("click", () => {
+    form.hidden = true;
+    view.hidden = false;
+    edit.hidden = false;
+    if (error) error.hidden = true;
+    input.value = view.textContent.trim() === "—" ? "" : view.textContent.trim();
+  });
+  save?.addEventListener("click", async () => {
+    const numero = (input.value || "").trim();
+    if (!numero) {
+      showError("Indica un número de factura (no puede estar vacío).");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/asientos/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ numero, confirmado: true }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload.ok === false) throw new Error(payload.error || String(res.status));
+      window.location.reload();
+    } catch (err) {
+      showError("No se pudo guardar: " + err.message);
+    }
+  });
+})();
+</script>
+"""
+
+
+def _ledger_v2(data: dict) -> str:
+    """Libro v2: mismos filtros/tabla cableados, cabecera compacta y vacíos con blob."""
+    consolidadas = [
+        item for item in data["asientos"] if item["estado"] not in ("pendiente", "rechazado")
+    ]
+    rows = "\n".join(_row_html(item, ui="v2") for item in consolidadas)
+    empty = ""
+    if not consolidadas:
+        if data["n_pendientes"]:
+            empty = (
+                '<div class="v2-kan-vacio">'
+                '<img src="/static/blob.svg" alt="" width="56" height="56">'
+                "<p>Aún no hay facturas consolidadas: las pendientes están "
+                'en la pestaña <a href="#panel-revision" class="kan-ir-revisar">Revisar</a>.</p></div>'
+            )
+        else:
+            empty = (
+                '<div class="v2-kan-vacio">'
+                '<img src="/static/blob.svg" alt="" width="56" height="56">'
+                "<p>No hay asientos en este ejercicio.</p></div>"
+            )
+    dup_note = ""
+    if data["n_duplicados"]:
+        dup_note = (
+            f'<p class="hint">{data["n_duplicados"]} duplicado(s) visibles en la tabla; '
+            "no entran en los totales.</p>"
+        )
+    choices = _ledger_filter_choices(data)
+    id_inner = (
+        f'<label class="filter-search">{_SEARCH_SVG}'
+        '<input id="q" type="search" class="filter-search-input" placeholder="Buscar…" autocomplete="off">'
+        "</label>"
+        '<p class="filter-hint">Emisor, NIF, nº factura o id</p>'
+    )
+    total_inner = """
+<label class="filter-field">Mínimo
+  <input id="f-min" type="number" min="0" step="0.01" placeholder="0">
+</label>
+<label class="filter-field">Máximo
+  <input id="f-max" type="number" min="0" step="0.01" placeholder="Sin tope">
+</label>
+"""
+    vivos = [item for item in data["asientos"] if item["estado"] != "duplicado"]
+    libro_total = _sum_money(vivos, "total")
+    libro_base = _sum_money(vivos, "base")
+    libro_iva = _sum_money(vivos, "iva")
+    n_facturas = len(data["asientos"])
+    return f"""
+<section class="ledger v2-libro" id="ledger">
+  <div class="v2-libro-head">
+    <div class="v2-rev-title">
+      <h2>Libro</h2>
+      <p>Asientos consolidados del ejercicio. Filtra, ordena y edita por filas.</p>
+    </div>
+    <div class="v2-rev-stats" id="libro-kpis" aria-label="Resumen del libro" aria-live="polite">
+      <span>Facturas <strong id="libro-n">{n_facturas}</strong><em id="libro-n-note"></em></span>
+      <span>Total <strong id="libro-total">{escape(format_euro(libro_total))}</strong></span>
+      <span>Total visible <strong id="libro-visible">{escape(format_euro(libro_total))}</strong></span>
+      <span>Base visible <strong id="libro-base">{escape(format_euro(libro_base))}</strong></span>
+      <span>IVA visible <strong id="libro-iva">{escape(format_euro(libro_iva))}</strong></span>
+    </div>
+  </div>
+  <div class="ledger-status">
+    <p class="status" id="status" hidden></p>
+    <button type="button" class="ghost" id="f-clear" hidden>Limpiar filtros</button>
+    <div class="ledger-actions">
+      <button type="button" class="ghost" id="cols-toggle" popovertarget="pop-cols"
+        aria-expanded="false" aria-haspopup="dialog">Columnas</button>
+    </div>
+  </div>
+  {_cols_picker()}
+  {dup_note}
+  <div class="table-wrap" tabindex="0" aria-label="Tabla de asientos con desplazamiento horizontal">
+    <table class="ledger-table">
+      <colgroup>
+        <col class="col-id">
+        <col class="col-factura">
+        <col class="col-fecha">
+        <col class="col-emisor">
+        <col class="col-calidad">
+        <col class="col-total">
+        <col class="col-articulos">
+        <col class="col-nif">
+        <col class="col-base">
+        <col class="col-iva">
+        <col class="col-doc">
+        <col class="col-estado">
+      </colgroup>
+      <thead>
+        <tr>
+          {_filter_th("Id", "pop-q", id_inner, "col-sticky", col="id", sort="id", sort_type="num", help="Número de asiento en el libro")}
+          {_filter_th("Nº factura", "pop-factura", _filter_checks("factura", choices["factura"]), col="factura", sort="factura", help="Número de factura tal como lo leyó el OCR")}
+          {_filter_th("Fecha compra", "pop-fecha", _filter_date_range(), col="fecha", sort="fecha", help="Fecha de la compra")}
+          {_filter_th("Emisor", "pop-emisor", _filter_checks("emisor", choices["emisor"]), col="emisor", sort="emisor", help="Tienda o empresa que emite la factura")}
+          {_filter_th("Confianza", "pop-confianza", _filter_checks("confianza", choices["confianza"]), col="confianza", sort="confianza", help="Calidad de la extracción: Revisar (dudosa), Aceptable o Validado por ti")}
+          {_filter_th("Total", "pop-total", total_inner, "num", col="total", sort="total", sort_type="num", help="Total pagado, IVA incluido")}
+          <th class="num th-plain" data-col="articulos" data-sort="articulos" data-sort-type="num" title="Artículos con nombre en la factura"><span class="th-label">Artículos</span></th>
+          {_filter_th("NIF emisor", "pop-nif", _filter_checks("nif", choices["nif"]), col="nif", sort="nif", help="NIF de la empresa emisora")}
+          <th class="num th-plain" data-col="base" data-sort="base" data-sort-type="num" title="Base imponible (sin IVA)"><span class="th-label">Base</span></th>
+          <th class="num th-plain" data-col="iva" data-sort="iva" data-sort-type="num" title="Cuota de IVA soportado"><span class="th-label">IVA</span></th>
+          <th class="cell-doc th-plain" data-col="doc" data-sort="doc" title="Abrir el documento original (PDF o foto)"><span class="th-label">Doc</span></th>
+          {_filter_th("Estado", "pop-estado", _filter_checks("estado", choices["estado"]), "col-estado", col="estado", sort="estado", help="Por revisar, Confirmado o Duplicado (fuera de totales)")}
+        </tr>
+      </thead>
+      <tbody>{rows}</tbody>
+    </table>
+  </div>
+  <nav class="pager" id="libro-pager" aria-label="Páginas del libro">
+    <button type="button" class="ghost" id="libro-prev">Anterior</button>
+    <span class="pager-pages" id="libro-pages"></span>
+    <span class="pager-label" id="libro-pager-label"></span>
+    <button type="button" class="ghost" id="libro-next">Siguiente</button>
+  </nav>
+  {empty}
+</section>
+"""
+
+
+def _panel_libro_v2(data: dict) -> str:
+    body = _ledger_v2(data)
+    return (
+        '<div class="panel v2-libro-panel" role="tabpanel" id="panel-libro" data-panel="libro" '
+        f'aria-labelledby="tab-libro">{body}{_footer(data)}</div>'
+    )
+
+
+def _tabla_duplicados(
+    rows: list[dict],
+    aria: str,
+    prefix: str,
+    por_id: dict,
+    data: dict,
+    *,
+    ui: str = "v1",
+) -> str:
+    """Tabla de duplicados/sospechosos. Compartida v1/v2 (mismos builders)."""
+    if not rows:
+        if ui == "v2":
+            return (
+                '<div class="v2-kan-vacio">'
+                '<img src="/static/blob.svg" alt="" width="56" height="56">'
+                "<p>Nada por aquí. Cuando el modelo detecte la misma compra dos veces, "
+                "aparecerá aquí para que decidas.</p></div>"
+            )
+        return (
+            '<p class="dup-vacio">Nada por aquí. Cuando el modelo detecte '
+            "la misma compra dos veces, aparecerá aquí para que decidas.</p>"
+        )
+    filas = []
+    gemelos: list[tuple[str, str]] = []
+    for item in rows:
+        gemelo_id = item.get("duplicado_de_id") or _gemelo_que_apunta(item["id"], data)
+        if gemelo_id:
+            gemelos.append((str(gemelo_id), f"#{gemelo_id}"))
+        filas.append(
+            _dup_card(item, por_id.get(gemelo_id) if gemelo_id else None, gemelo_id, ui=ui)
+        )
+    gemelos = sorted(set(gemelos), key=lambda pair: int(pair[0]))
+    choices = _asiento_table_choices(rows, gemelos=gemelos)
+    config = _smart_config(
+        filters=_asiento_smart_filters(prefix, gemelo=True),
+        ranges=[("total", f"f-{prefix}-total-min", f"f-{prefix}-total-max")],
+        default_sort="id",
+    )
+    return (
+        f'<div class="table-wrap" aria-label="{escape(aria)}">'
+        f'<table class="dup-tabla smart-table" data-smart-config="{config}">'
+        f'{_asiento_table_thead(prefix, choices, gemelo=True, actions="1")}'
+        f'<tbody>{"".join(filas)}</tbody></table></div>'
+    )
+
+
+def _dup_gestor_dialog() -> str:
+    """Gestor de duplicados. Compartido v1/v2 (mismos ids)."""
+    return """
+  <dialog class="app-sheet sheet-compare" id="dup-gestor" aria-labelledby="dup-gestor-title">
+    <p class="sheet-eyebrow" id="dup-gestor-eyebrow">Duplicado</p>
+    <h2 id="dup-gestor-title">Gestionar duplicado</h2>
+    <p class="sheet-lead" id="dup-gestor-motivo"></p>
+    <p class="sheet-error" id="dup-gestor-error" hidden></p>
+    <div class="dup-par" id="dup-gestor-par"></div>
+    <div class="sheet-foot">
+      <a class="ghost sheet-aside sheet-link" id="dup-gestor-ficha" target="_blank" rel="noopener">Abrir ficha ↗</a>
+      <button type="button" class="ghost" id="dup-gestor-cerrar">Cerrar</button>
+      <button type="button" class="export-btn" id="dup-gestor-fusionar" hidden>Fusionar</button>
+      <button type="button" class="export-btn is-warn" id="dup-gestor-quitar" hidden>Quitar duplicado</button>
+    </div>
+  </dialog>
+"""
+
+
+def _panel_duplicados_v2(data: dict) -> str:
+    por_id = {item["id"]: item for item in data["asientos"]}
+    fusionados = [item for item in data["asientos"] if item["estado"] == "duplicado"]
+    sospechosos = data.get("sospechosos") or []
+    return f"""
+<div class="panel v2-dup-panel" role="tabpanel" id="panel-duplicados" data-panel="duplicados"
+  aria-labelledby="tab-duplicados">
+  <div class="v2-libro-head">
+    <div class="v2-rev-title">
+      <h2>Duplicados</h2>
+      <p>La misma compra más de una vez: compara con su gemelo y decide.</p>
+    </div>
+    <div class="v2-rev-stats" aria-label="Resumen de duplicados">
+      <span><strong>{len(fusionados)}</strong> fusionados</span>
+      <span><strong>{len(sospechosos)}</strong> sospechosos</span>
+    </div>
+  </div>
+  <section class="insight-block v2-dup-sec" aria-labelledby="dup-fusionados">
+    <div class="review-head">
+      <h2 id="dup-fusionados">Duplicados fusionados</h2>
+      <p>Marcados (por el modelo o por ti) y fuera de los totales. Se deshacen desde «Gestionar».</p>
+    </div>
+    {_tabla_duplicados(fusionados, "Duplicados fusionados", "dup-fus", por_id, data, ui="v2")}
+  </section>
+  <section class="insight-block v2-dup-sec" aria-labelledby="dup-sospechosos">
+    <div class="review-head">
+      <h2 id="dup-sospechosos">Sospechosos pendientes</h2>
+      <p>Compara con su gemelo y decide: fusionar o abrir la ficha.</p>
+    </div>
+    {_tabla_duplicados(sospechosos, "Sospechosos pendientes", "dup-sos", por_id, data, ui="v2")}
+  </section>
+  {_dup_gestor_dialog()}
+  {_footer(data)}
+</div>
+"""
+
+
+def _panel_insights_v2(data: dict) -> str:
+    """Insights v2: mismos builders cableados, cabecera compacta y piel propia."""
+    mejora_note = ""
+    if data["regimen"] == REGIMEN_CI:
+        mejora_note = (
+            '<p class="hint">En capital inmobiliario las <strong>mejoras no restan</strong> '
+            "del rendimiento del año: se capitalizan y se amortizan.</p>"
+        )
+    cards = (
+        f'{_kpi_btn("Gastos", data["gastos"], "gasto", kpi_id="insight-kpi-gastos")}'
+        f'{_kpi_btn("Ingresos", data["ingresos"], "ingreso", kpi_id="insight-kpi-ingresos")}'
+        f'{_kpi_btn("Mejoras", data["mejoras"], "mejora", kpi_id="insight-kpi-mejoras")}'
+        f'{_kpi_btn("Neto", data["resultado"], "neto", kpi_id="insight-kpi-neto")}'
+        f'{_kpi_btn_count("Por revisar", data["n_pendientes"], data["n_asientos"], kpi_id="insight-kpi-revisar")}'
+    )
+    return f"""
+<section class="panel v2-ins-panel" role="tabpanel" id="panel-insights" data-panel="insights"
+  aria-labelledby="tab-insights">
+  <div class="v2-libro-head">
+    <div class="v2-rev-title">
+      <h2>Insights</h2>
+      <p>Cómo va el ejercicio arriba; el borrador de la Renta abajo.</p>
+    </div>
+  </div>
+  {_kpi_carousel(cards, "insight-kpis")}
+  <p class="hint" id="insight-kpi-hint" hidden>KPIs y tablas siguen el rango de fechas de abajo; la Renta usa el ejercicio completo.</p>
+  {mejora_note}
+  {_aviso_linea(data)}
+  {_insights_html(data)}
+  {_irpf_html(data)}
+</section>
+"""
+
+
+def _fila_revision(item: dict) -> str:
+    """Fila de pendiente para la vista tabla. Compartida v1/v2 (mismos ids)."""
+    total = item.get("total")
+    total_label = escape(format_euro(total)) if total is not None else "—"
+    faltas = " · ".join(item.get("calidad_faltas") or [])[:90] or "—"
+    row_attrs = _smart_row_attrs(
+        id=item["id"],
+        emisor=item.get("emisor") or "",
+        numero=item.get("numero") or "",
+        fecha=item.get("fecha_label") or "",
+        total=total if total is not None else "",
+        motivo=faltas,
+    )
+    return (
+        f"<tr {row_attrs}>"
+        f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
+        f"<td>{escape(item['emisor'])}</td>"
+        f"<td>{escape(item['numero'])}</td>"
+        f"<td>{escape(item['fecha_label'])}</td>"
+        f'<td class="num">{total_label}</td>'
+        f"<td>{escape(faltas)}</td>"
+        f'<td class="kan-celda-act">'
+        f'<button type="button" class="kan-act" data-kan="validar" data-id="{item["id"]}" title="Consolidar">✓</button>'
+        f'<button type="button" class="kan-act" data-kan="rechazar" data-id="{item["id"]}" title="Rechazar">✕</button>'
+        "</td></tr>"
+    )
+
+
+def _rechazo_dialog() -> str:
+    """Diálogo de motivo de rechazo. Compartido v1/v2 (mismos ids)."""
+    return """
   <dialog class="app-sheet sheet-form" id="rechazo-dialog" aria-labelledby="rechazo-title">
       <p class="sheet-eyebrow">Rechazar factura</p>
       <h2 id="rechazo-title">¿Por qué se rechaza?</h2>
@@ -2616,9 +3390,6 @@ def _panel_revision(data: dict) -> str:
         <button type="button" class="export-btn is-warn" id="rechazo-ok">Rechazar</button>
       </div>
   </dialog>
-
-  {_footer(data)}
-</div>
 """
 
 
@@ -2694,9 +3465,12 @@ def _dup_attrs(item: dict, gemelo_view: dict | None, gemelo_id: int | None) -> s
     )
 
 
-def _dup_card(item: dict, gemelo_view: dict | None, gemelo_id: int | None) -> str:
+def _dup_card(
+    item: dict, gemelo_view: dict | None, gemelo_id: int | None, *, ui: str = "v1"
+) -> str:
+    flag = "?ui=v2" if ui == "v2" else ""
     gemelo_celda = (
-        f'<a href="/asiento/{gemelo_id}">#{gemelo_id}</a>' if gemelo_id else "—"
+        f'<a href="/asiento/{gemelo_id}{flag}">#{gemelo_id}</a>' if gemelo_id else "—"
     )
     total = item.get("total")
     total_label = escape(format_euro(total)) if total is not None else "—"
@@ -2710,7 +3484,7 @@ def _dup_card(item: dict, gemelo_view: dict | None, gemelo_id: int | None) -> st
     )
     return (
         f'<tr tabindex="0" role="button" {_dup_attrs(item, gemelo_view, gemelo_id)} {row_attrs}>'
-        f'<td><a href="/asiento/{item["id"]}">#{item["id"]}</a></td>'
+        f'<td><a href="/asiento/{item["id"]}{flag}">#{item["id"]}</a></td>'
         f"<td>{escape(item['emisor'])}</td>"
         f"<td>{escape(item['numero'])}</td>"
         f"<td>{escape(item['fecha_label'])}</td>"
@@ -2726,33 +3500,6 @@ def _panel_duplicados(data: dict) -> str:
     fusionados = [item for item in data["asientos"] if item["estado"] == "duplicado"]
     sospechosos = data.get("sospechosos") or []
 
-    def _tabla(rows: list[dict], aria: str, prefix: str) -> str:
-        if not rows:
-            return (
-                '<p class="dup-vacio">Nada por aquí. Cuando el modelo detecte '
-                "la misma compra dos veces, aparecerá aquí para que decidas.</p>"
-            )
-        filas = []
-        gemelos: list[tuple[str, str]] = []
-        for item in rows:
-            gemelo_id = item.get("duplicado_de_id") or _gemelo_que_apunta(item["id"], data)
-            if gemelo_id:
-                gemelos.append((str(gemelo_id), f"#{gemelo_id}"))
-            filas.append(_dup_card(item, por_id.get(gemelo_id) if gemelo_id else None, gemelo_id))
-        gemelos = sorted(set(gemelos), key=lambda pair: int(pair[0]))
-        choices = _asiento_table_choices(rows, gemelos=gemelos)
-        config = _smart_config(
-            filters=_asiento_smart_filters(prefix, gemelo=True),
-            ranges=[("total", f"f-{prefix}-total-min", f"f-{prefix}-total-max")],
-            default_sort="id",
-        )
-        return (
-            f'<div class="table-wrap" aria-label="{escape(aria)}">'
-            f'<table class="dup-tabla smart-table" data-smart-config="{config}">'
-            f'{_asiento_table_thead(prefix, choices, gemelo=True, actions="1")}'
-            f'<tbody>{"".join(filas)}</tbody></table></div>'
-        )
-
     resumen = (
         f'{len(fusionados)} fusionado{"s" if len(fusionados) != 1 else ""} · '
         f'{len(sospechosos)} sospechoso{"s" if len(sospechosos) != 1 else ""}'
@@ -2766,28 +3513,16 @@ def _panel_duplicados(data: dict) -> str:
       <h2 id="dup-fusionados">Duplicados fusionados</h2>
       <p>Marcados (por el modelo o por ti) y fuera de los totales. Se deshacen desde «Gestionar».</p>
     </div>
-    {_tabla(fusionados, "Duplicados fusionados", "dup-fus")}
+    {_tabla_duplicados(fusionados, "Duplicados fusionados", "dup-fus", por_id, data)}
   </section>
   <section class="insight-block" aria-labelledby="dup-sospechosos">
     <div class="review-head">
       <h2 id="dup-sospechosos">Sospechosos pendientes</h2>
       <p>Compara con su gemelo y decide: fusionar o abrir la ficha.</p>
     </div>
-    {_tabla(sospechosos, "Sospechosos pendientes", "dup-sos")}
+    {_tabla_duplicados(sospechosos, "Sospechosos pendientes", "dup-sos", por_id, data)}
   </section>
-  <dialog class="app-sheet sheet-compare" id="dup-gestor" aria-labelledby="dup-gestor-title">
-    <p class="sheet-eyebrow" id="dup-gestor-eyebrow">Duplicado</p>
-    <h2 id="dup-gestor-title">Gestionar duplicado</h2>
-    <p class="sheet-lead" id="dup-gestor-motivo"></p>
-    <p class="sheet-error" id="dup-gestor-error" hidden></p>
-    <div class="dup-par" id="dup-gestor-par"></div>
-    <div class="sheet-foot">
-      <a class="ghost sheet-aside sheet-link" id="dup-gestor-ficha" target="_blank" rel="noopener">Abrir ficha ↗</a>
-      <button type="button" class="ghost" id="dup-gestor-cerrar">Cerrar</button>
-      <button type="button" class="export-btn" id="dup-gestor-fusionar" hidden>Fusionar</button>
-      <button type="button" class="export-btn is-warn" id="dup-gestor-quitar" hidden>Quitar duplicado</button>
-    </div>
-  </dialog>
+  {_dup_gestor_dialog()}
   {_footer(data)}
 </div>
 """
@@ -3228,6 +3963,22 @@ _CALENDAR_SVG = (
     '<path fill="none" stroke="currentColor" stroke-width="1.3" d="M2.4 6.8h11.2M5.4 2.4v2.4M10.6 2.4v2.4"/>'
     "</svg>"
 )
+_CHECK_SVG = (
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">'
+    '<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m3.5 8.5 3 3 6.5-7"/>'
+    "</svg>"
+)
+_DOWNLOAD_SVG = (
+    '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">'
+    '<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M8 2.5v7.5M5 7.5l3 3 3-3M3 13.5h10"/>'
+    "</svg>"
+)
+_SIDEBAR_TOGGLE_SVG = (
+    '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">'
+    '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/>'
+    '<path fill="none" stroke="currentColor" stroke-width="1.3" d="M6.5 2.5v11"/>'
+    "</svg>"
+)
 
 
 def _filter_date_range() -> str:
@@ -3588,7 +4339,7 @@ def _estado_action(item: dict) -> str:
     )
 
 
-def _row_html(item: dict) -> str:
+def _row_html(item: dict, *, ui: str = "v1") -> str:
     blob = " ".join(
         [
             str(item["id"]),
@@ -3611,7 +4362,8 @@ def _row_html(item: dict) -> str:
             f'<a class="doc-link" href="/doc/{item["id"]}" target="_blank" '
             f'rel="noopener" title="{title}">Abrir</a>'
         )
-    href = f"/asiento/{item['id']}"
+    flag = "?ui=v2" if ui == "v2" else ""
+    href = f"/asiento/{item['id']}{flag}"
     emisor = escape(item["emisor"])
     if item["emisor"] != "—":
         emisor = f'<span class="cell-text" title="{emisor}">{emisor}</span>'
@@ -3632,7 +4384,7 @@ def _row_html(item: dict) -> str:
     )
     accion = f"{pencil}{_estado_action(item)}"
     return (
-        f'<tr id="asiento-{item["id"]}" data-href="/asiento/{item["id"]}" data-id="{item["id"]}" '
+        f'<tr id="asiento-{item["id"]}" data-href="/asiento/{item["id"]}{flag}" data-id="{item["id"]}" '
         f'data-tipo="{escape(item["tipo"])}" '
         f'data-estado="{escape(item["estado"])}" data-baja="{baja_flag}" '
         f'data-fecha="{escape(item["fecha"])}" data-fecha-label="{escape(item["fecha_label"])}" '
@@ -3646,14 +4398,14 @@ def _row_html(item: dict) -> str:
         f'data-estado-label="{escape(item["estado_label"])}" '
         f'data-q="{escape(blob)}">'
         f'<td class="mono col-sticky" data-col="id" data-label="Id">'
-        f'<a class="row-go" href="/asiento/{item["id"]}">{item["id"]}</a></td>'
+        f'<a class="row-go" href="/asiento/{item["id"]}{flag}">{item["id"]}</a></td>'
         f'<td class="mono cell-clip" data-col="factura" data-label="Nº factura">{factura}</td>'
         f'<td class="cell-nowrap" data-col="fecha" data-label="Fecha">'
-        f'<a class="row-go" href="/asiento/{item["id"]}">{escape(item["fecha_label"])}</a></td>'
+        f'<a class="row-go" href="/asiento/{item["id"]}{flag}">{escape(item["fecha_label"])}</a></td>'
         f'<td class="cell-clip" data-col="emisor" data-label="Emisor">{emisor}</td>'
         f'<td class="cell-calidad" data-col="confianza" data-label="Confianza">{calidad}</td>'
         f'<td class="num cell-nowrap" data-col="total" data-label="Total">'
-        f'<a class="total-drill" href="/asiento/{item["id"]}" '
+        f'<a class="total-drill" href="/asiento/{item["id"]}{flag}" '
         f'title="Ver detalle de la factura" aria-label="Detalle de la factura {item["id"]}">'
         f'<span class="total-amt">{escape(format_euro(item["total"]))}</span>'
         f'<span class="total-caret" aria-hidden="true">▸</span></a></td>'
@@ -3673,6 +4425,10 @@ _FONT_LINKS = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
     '<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">\n'
+)
+_STATIC_LINKS = (
+    '<link rel="stylesheet" href="/static/tokens.css">\n'
+    '<link rel="icon" type="image/svg+xml" href="/static/logo.svg">\n'
 )
 
 _CSS = r"""
@@ -4839,6 +5595,20 @@ a.row-go:hover { text-decoration: underline; }
   gap: 12px;
   padding: 18px 0 0;
 }
+.ficha-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ficha-mob-toggle {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
 .back-link {
   display: inline-flex;
   align-items: center;
@@ -4850,6 +5620,201 @@ a.row-go:hover { text-decoration: underline; }
 .back-link svg { flex-shrink: 0; }
 .back-link:hover { color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
 .ficha { flex: 1 1 auto; padding: 12px 0 48px; }
+.ficha-split {
+  display: grid;
+  grid-template-columns: minmax(440px, 48%) 1fr;
+  gap: 28px;
+  align-items: start;
+}
+.ficha-split.is-doc-hidden {
+  grid-template-columns: 1fr;
+}
+.ficha-split.is-doc-hidden .ficha-pane-doc {
+  display: none !important;
+}
+.ficha-pane-doc {
+  position: sticky;
+  top: 14px;
+  height: calc(100vh - 28px);
+  min-height: 600px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+}
+.ficha-doc-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ficha-doc-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+  font-weight: 500;
+  font-size: 13px;
+}
+.ficha-doc-info svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.ficha-doc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 22ch;
+}
+.ficha-doc-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.ficha-doc-tools .doc-open {
+  margin: 0;
+  font-size: 12.5px;
+}
+.doc-tb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.doc-tb-btn:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+.ficha-doc-viewport {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: auto;
+  background: #474b4e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ficha-doc-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+.ficha-doc-img-wrap {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ficha-doc-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  background: #fff;
+}
+.ficha-pane-data {
+  min-width: 0;
+}
+.ficha-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ficha-val-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ficha-val-btn svg {
+  flex-shrink: 0;
+}
+.ficha-dup-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  background: rgba(234, 153, 31, 0.08);
+  border: 1px solid rgba(234, 153, 31, 0.35);
+  border-radius: 10px;
+}
+.ficha-dup-alert-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.dup-alert-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: #c05621;
+}
+.dup-alert-desc {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--text);
+  line-height: 1.4;
+}
+.dup-alert-desc strong {
+  font-weight: 600;
+}
+.dup-alert-desc em {
+  color: var(--muted);
+  font-style: normal;
+}
+.ficha-dup-alert-btn {
+  flex-shrink: 0;
+  font-size: 13px;
+  padding: 7px 12px;
+}
+.ficha-doc-restore-bar {
+  margin-bottom: 14px;
+}
+.ficha-doc-restore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--link);
+  cursor: pointer;
+}
+.ficha-doc-restore-btn:hover {
+  background: var(--bg-alt);
+  border-style: solid;
+}
 .ficha-head {
   display: flex;
   justify-content: space-between;
@@ -4860,7 +5825,7 @@ a.row-go:hover { text-decoration: underline; }
 }
 .ficha-kicker { margin: 0 0 4px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .ficha h1 { margin: 0 0 8px; font: 600 28px/1.2 var(--font-display); }
-.ficha-sub { margin: 0; }
+.ficha-sub { margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .doc-open {
   display: inline-flex;
   align-items: center;
@@ -5575,10 +6540,32 @@ th {
 .doc-link { font-weight: 600; color: var(--purple); text-decoration: none; border-bottom: 1px solid transparent; }
 .doc-link:hover { border-bottom-color: var(--purple); }
 .empty { color: var(--muted); padding: 12px; }
+@media (min-width: 1025px) {
+  .ficha-page .wrap {
+    width: min(1760px, calc(100% - 48px));
+    max-width: 1760px;
+  }
+}
 @media (max-width: 1100px) {
   .kan-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .wrap { width: calc(100% - 20px); }
   .ficha-page .wrap { width: calc(100% - 20px); }
+  .ficha-split {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .ficha-pane-doc {
+    position: static;
+    height: 520px;
+    min-height: 380px;
+    margin-bottom: 12px;
+  }
+  .ficha-pane-doc.is-mobile-collapsed {
+    display: none !important;
+  }
+  .ficha-mob-toggle {
+    display: inline-flex;
+  }
   h1 { font-size: 28px; }
   .mast { padding-top: 20px; }
   .mast-h1 #mast-kicker, h1 span { font-size: 18px; }
@@ -5690,6 +6677,9 @@ th {
   thead th.line-actions::after { display: none; }
   .ficha { padding-bottom: 28px; }
   .ficha h1 { font-size: 22px; }
+  .ficha-pane-doc { height: 400px; }
+  .ficha-dup-alert { flex-direction: column; align-items: flex-start; }
+  .ficha-dup-alert-btn { width: 100%; text-align: center; }
   .ficha-grid > div { flex-basis: calc((100% - 10px) / 2); }
   .ficha-lines input { width: 100%; box-sizing: border-box; font: inherit; }
   .ficha-score { align-items: flex-start; }
@@ -6404,6 +7394,75 @@ _JS = r"""
   document.getElementById("rev-prev")?.addEventListener("click", () => { revPagina -= 1; revPintar(); });
   document.getElementById("rev-next")?.addEventListener("click", () => { revPagina += 1; revPintar(); });
   revPintar();
+
+  const dropBanner = document.getElementById("drop-banner");
+  const fileInput = document.getElementById("factura-upload-input");
+  const btnSubir = document.getElementById("btn-subir-factura");
+  const dropText = document.getElementById("drop-banner-text");
+
+  const procesarFichero = (file) => {
+    if (!file) return;
+    if (dropText) dropText.innerHTML = `⏳ Analizando <strong>${file.name}</strong> con Gemini Vision AI...`;
+    if (dropBanner) {
+      dropBanner.style.borderColor = "var(--purple)";
+      dropBanner.style.background = "#f7f1f7";
+    }
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: file.name,
+            data: e.target.result,
+            ocr: "gemini"
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || "Fallo en la ingesta");
+        const emisor = data.asiento?.emisor ? ` · ${data.asiento.emisor}` : "";
+        if (dropText) dropText.innerHTML = `✓ Factura procesada (Asiento #${data.asiento_id}${emisor}). Actualizando libro...`;
+        setTimeout(() => {
+          window.location.hash = "#revisar";
+          window.location.reload();
+        }, 900);
+      } catch (err) {
+        alert("Error al cargar la factura: " + err.message);
+        if (dropText) dropText.innerHTML = "Arrastra aquí tu factura en <strong>PDF o imagen</strong> (o haz clic para examinar)";
+        if (dropBanner) {
+          dropBanner.style.borderColor = "var(--line)";
+          dropBanner.style.background = "#faf9f6";
+        }
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  btnSubir?.addEventListener("click", () => fileInput?.click());
+  dropBanner?.addEventListener("click", () => fileInput?.click());
+  fileInput?.addEventListener("change", (e) => {
+    if (e.target.files?.length) procesarFichero(e.target.files[0]);
+  });
+  dropBanner?.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropBanner.style.background = "#f1e9f1";
+    dropBanner.style.borderColor = "var(--purple)";
+  });
+  dropBanner?.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    dropBanner.style.background = "#faf9f6";
+    dropBanner.style.borderColor = "var(--line)";
+  });
+  dropBanner?.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropBanner.style.background = "#faf9f6";
+    dropBanner.style.borderColor = "var(--line)";
+    if (e.dataTransfer?.files?.length) {
+      procesarFichero(e.dataTransfer.files[0]);
+    }
+  });
+
   for (const id of ["insight-kpi-revisar", "mast-kpi-revisar"]) {
     const revisar = document.getElementById(id);
     revisar?.addEventListener("click", () => showPanel("revision"));

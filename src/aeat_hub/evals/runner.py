@@ -16,6 +16,7 @@ from aeat_hub.evals.metrics import score_emisor, score_fields, score_tokens
 from aeat_hub.extract.parser import parse_invoice
 from aeat_hub.ocr.apple_vision import AppleVisionProvider
 from aeat_hub.ocr.base import OCRProvider, ProviderUnavailable
+from aeat_hub.ocr.gemini import GeminiOCRProvider
 from aeat_hub.ocr.ollama_deepseek import OllamaOCRProvider
 from aeat_hub.ocr.paddle_vl import PaddleVLProvider
 from aeat_hub.ocr.pdf_native import PdfNativeProvider
@@ -23,7 +24,7 @@ from aeat_hub.ocr.rapid import RapidOCRProvider
 from aeat_hub.ocr.tesseract import TesseractProvider
 from aeat_hub.ocr.unlimited import UnlimitedOCRProvider
 
-ENGINE_ORDER = ("native", "rapid", "vision", "deepseek", "tesseract", "unlimited", "paddle")
+ENGINE_ORDER = ("native", "rapid", "vision", "deepseek", "tesseract", "unlimited", "paddle", "gemini")
 
 PROVIDERS: dict[str, Callable[[], OCRProvider]] = {
     "native": PdfNativeProvider,
@@ -33,6 +34,7 @@ PROVIDERS: dict[str, Callable[[], OCRProvider]] = {
     "tesseract": TesseractProvider,
     "unlimited": UnlimitedOCRProvider,
     "paddle": PaddleVLProvider,
+    "gemini": GeminiOCRProvider,
 }
 
 IMAGE_KINDS = {"photo", "raster"}
@@ -53,6 +55,7 @@ class EngineRun:
     tokens: dict = field(default_factory=dict)
     fields: dict = field(default_factory=dict)
     preview: str = ""
+    usage: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -68,6 +71,7 @@ class EngineSummary:
     parser_accuracy: float | None = None
     median_latency_ms: int | None = None
     mean_latency_ms: int | None = None
+    total_tokens: int | None = None
 
 
 @dataclass
@@ -194,6 +198,7 @@ def _normalize_engines(engines: list[str] | None) -> list[str]:
         "apple": "vision",
         "deepseek": "deepseek",
         "deepseek-ocr": "deepseek",
+        "gemini-2.5-flash": "gemini",
         "ollama": "deepseek",
         "unlimited-ocr": "unlimited",
         "paddleocr-vl": "paddle",
@@ -253,6 +258,7 @@ def _run_one(provider: OCRProvider, engine: str, case: GoldCase) -> EngineRun:
         tokens=tokens,
         fields=fields,
         preview=preview,
+        usage=dict(result.usage or {}),
     )
 
 
@@ -269,6 +275,11 @@ def _summarize(
         skipped = sum(1 for item in subset if item.status == "skipped")
         errors = sum(1 for item in subset if item.status == "error")
         latencies = [item.latency_ms for item in applicable]
+        totals = [
+            item.usage.get("totalTokenCount")
+            for item in applicable
+            if isinstance(item.usage.get("totalTokenCount"), int)
+        ]
         zeros = [0.0] * errors
         summary = EngineSummary(
             engine=engine,
@@ -282,6 +293,7 @@ def _summarize(
             parser_accuracy=_mean([item.parser_accuracy for item in applicable] + zeros),
             median_latency_ms=int(statistics.median(latencies)) if latencies else None,
             mean_latency_ms=int(statistics.mean(latencies)) if latencies else None,
+            total_tokens=sum(totals) if totals else None,
         )
         summaries.append(summary)
     return summaries

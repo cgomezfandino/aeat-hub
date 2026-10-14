@@ -11,7 +11,7 @@ from aeat_hub.dashboard import (
     render_dashboard,
     write_dashboard,
 )
-from aeat_hub.models import Actividad, Asiento, Factura
+from aeat_hub.models import Actividad, Asiento, Documento, Factura
 
 
 def _seed_asientos(session, actividad):
@@ -812,3 +812,292 @@ def test_tablero_kanban_de_revision(session, layout):
     assert '>Revisar' in html  # pestaña del tablero
     # el KPI de Insights lleva al tablero
     assert 'id="insight-kpi-revisar"' in html
+
+
+def test_ficha_asiento_split_view_con_documento(session, layout):
+    """La ficha divide la pantalla con visor PDF a la izquierda y datos a la derecha."""
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    doc_path = layout.archivo / "factura_test.pdf"
+    doc_path.write_bytes(b"%PDF-1.4 mock")
+    doc = Documento(
+        nombre_original="factura_test.pdf",
+        ruta_almacenada=str(doc_path),
+        sha256="mocksha256",
+        mime="application/pdf",
+    )
+    session.add(doc)
+    session.flush()
+
+    asiento = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        cuenta_codigo="CI.GAS.LUZ",
+        fecha=date(2026, 4, 15),
+        ejercicio=2026,
+        emisor="PROVEEDOR SPLIT S.L.",
+        nif_emisor="B99887766",
+        numero_factura="FAC-2026-001",
+        base=Decimal("100.00"),
+        iva_cuota=Decimal("21.00"),
+        total=Decimal("121.00"),
+        estado="pendiente",
+        validado=False,
+        documento_id=doc.id,
+    )
+    session.add(asiento)
+    session.commit()
+
+    data = collect_asiento_ficha(session, asiento, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html = render_asiento_page(data)
+
+    # Contenedor split view y paneles
+    assert 'class="ficha-split"' in html
+    assert 'id="ficha-pane-doc"' in html
+    assert 'id="ficha-pane-data"' in html
+    # Visor PDF embebido con FitH
+    assert f'src="/doc/{asiento.id}#view=FitH"' in html
+    assert 'class="ficha-doc-frame"' in html
+    assert "factura_test.pdf" in html
+    # Herramientas de visualización y alternancia
+    assert 'id="ficha-doc-toggle-btn"' in html
+    assert 'id="ficha-doc-restore-btn"' in html
+    assert 'id="ficha-mob-toggle"' in html
+    # Botón de validación rápida en un clic
+    assert 'id="ficha-btn-validate"' in html
+    assert "Validar asiento" in html
+    assert 'id="ficha-btn-reopen"' not in html
+
+
+def test_ficha_asiento_reabrir_y_alerta_duplicado(session, layout):
+    """Ficha validada permite reabrir y alerta con scoring si hay gemelo sospechoso."""
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    asiento_ok = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        cuenta_codigo="CI.GAS.LUZ",
+        fecha=date(2026, 5, 10),
+        ejercicio=2026,
+        emisor="ENEL ENERGIA",
+        nif_emisor="A12345678",
+        numero_factura="E-001",
+        base=Decimal("50.00"),
+        iva_cuota=Decimal("10.50"),
+        total=Decimal("60.50"),
+        estado="confirmado",
+        validado=True,
+    )
+    session.add(asiento_ok)
+    session.flush()
+
+    gemelo = Asiento(
+        actividad_id=actividad.id,
+        tipo="gasto",
+        cuenta_codigo="CI.GAS.LUZ",
+        fecha=date(2026, 5, 10),
+        ejercicio=2026,
+        emisor="ENEL ENERGIA",
+        nif_emisor="A12345678",
+        numero_factura="E-002",
+        base=Decimal("50.00"),
+        iva_cuota=Decimal("10.50"),
+        total=Decimal("60.50"),
+        estado="pendiente",
+        validado=False,
+    )
+    session.add(gemelo)
+    session.commit()
+
+    # Asiento validado muestra botón de reabrir
+    data_ok = collect_asiento_ficha(session, asiento_ok, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html_ok = render_asiento_page(data_ok)
+    assert 'id="ficha-btn-reopen"' in html_ok
+    assert "Reabrir" in html_ok
+    assert "Validado" in html_ok
+
+    # Gemelo pendiente muestra banner de sospecha de duplicado
+    data_gemelo = collect_asiento_ficha(session, gemelo, dashboard_name="dashboard_CI-VA-001_2026.html")
+    html_gemelo = render_asiento_page(data_gemelo)
+    assert 'class="ficha-dup-alert"' in html_gemelo
+    assert 'id="ficha-dup-alert-btn"' in html_gemelo
+    assert "Revisar candidato" in html_gemelo
+    assert f"#{asiento_ok.id}" in html_gemelo
+
+
+def test_paginas_enlazan_tokens_y_favicon(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert 'href="/static/tokens.css"' in html
+    assert 'href="/static/logo.svg"' in html
+    row = session.scalar(select(Asiento).where(Asiento.emisor == "LEROY MERLIN ARROYO"))
+    ficha = render_asiento_page(
+        collect_asiento_ficha(session, row, dashboard_name="dashboard_CI-VA-001_2026.html")
+    )
+    assert 'href="/static/tokens.css"' in ficha
+    assert 'href="/static/logo.svg"' in ficha
+
+
+def test_render_v2_marca_cola_masthead_y_enlaces(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    data = collect_dashboard(session, actividad, 2026)
+    data["ui"] = "v2"
+    html = render_dashboard(data)
+    assert 'data-ui="v2"' in html
+    assert 'href="/static/v2.css"' in html
+    assert 'src="/static/logo.svg"' in html
+    assert 'src="/static/blob.svg"' in html
+    assert "Cola de revisión" in html
+    for needle in (
+        "kan-board", "rev-vista-tablero", "rev-vista-tabla", "revision-tabla",
+        "rev-tabla-body", "rev-prev", "rev-next", "rev-paginas", "rechazo-dialog",
+        "rechazo-ok", "mast-edit", "mast-nombre", "mast-titular", "tab-revision",
+        "btn-subir-factura", "factura-upload-input", "drop-banner", "drop-banner-text",
+    ):
+        assert f'id="{needle}"' in html, needle
+    assert 'data-kan="validar"' in html
+    assert "?ui=v2" in html
+
+
+def test_render_v1_sin_marcas_v2(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert 'data-ui="v1"' in html
+    assert "/static/v2.css" not in html
+    assert "Cola de revisión" not in html
+    assert 'src="/static/logo.svg"' not in html
+
+
+def test_ficha_v2_con_numero_editable_y_bandera(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    row = session.scalar(select(Asiento).where(Asiento.emisor == "LEROY MERLIN ARROYO"))
+    data = collect_asiento_ficha(session, row, dashboard_name="dashboard_CI-VA-001_2026.html")
+    data["ui"] = "v2"
+    html = render_asiento_page(data)
+    assert 'data-ui="v2"' in html
+    assert 'href="/static/v2.css"' in html
+    for needle in (
+        "ficha-num-view", "ficha-num-edit", "ficha-num-form", "ficha-num-input",
+        "ficha-num-save", "ficha-num-cancel", "ficha-num-error",
+    ):
+        assert f'id="{needle}"' in html, needle
+    assert "?ui=v2" in html
+    for needle in (
+        "ficha-btn-validate", "ficha-lines-body", "ficha-line-dialog",
+        "app-confirm", "ficha-log", "ficha-dup-marcar",
+    ):
+        assert f'id="{needle}"' in html, needle
+
+
+def test_ficha_v1_sin_editor_numero(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    row = session.scalar(select(Asiento).where(Asiento.emisor == "LEROY MERLIN ARROYO"))
+    html = render_asiento_page(
+        collect_asiento_ficha(session, row, dashboard_name="dashboard_CI-VA-001_2026.html")
+    )
+    assert 'data-ui="v1"' in html
+    assert "/static/v2.css" not in html
+    assert 'id="ficha-num-input"' not in html
+    assert "?ui=v2" not in html
+
+
+def test_con_ui2_conserva_fragmento():
+    from aeat_hub.dashboard import _con_ui2
+
+    assert _con_ui2("/d.html#revisar") == "/d.html?ui=v2#revisar"
+    assert _con_ui2("/d.html") == "/d.html?ui=v2"
+    assert _con_ui2("/d.html?a=1#x") == "/d.html?a=1&ui=v2#x"
+
+
+def test_libro_v2_con_cabecera_y_bandera(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    data = collect_dashboard(session, actividad, 2026)
+    data["ui"] = "v2"
+    html = render_dashboard(data)
+    assert 'class="ledger v2-libro"' in html
+    assert 'class="panel v2-libro-panel"' in html
+    for needle in (
+        "ledger", "libro-kpis", "libro-n", "libro-total", "libro-visible",
+        "libro-base", "libro-iva", "status", "f-clear", "cols-toggle",
+        "pop-cols", "q", "f-min", "f-max", "libro-pager", "libro-prev",
+        "libro-next", "libro-pages", "libro-pager-label", "export-visible",
+    ):
+        assert f'id="{needle}"' in html, needle
+    assert "/asiento/" in html and "?ui=v2" in html
+    assert 'data-edit="' in html
+
+
+def test_libro_v1_sin_marcas_v2(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert "v2-libro" not in html
+    assert "?ui=v2" not in html
+
+
+def test_duplicados_v2_con_gestor_y_bandera(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    data = collect_dashboard(session, actividad, 2026)
+    data["ui"] = "v2"
+    html = render_dashboard(data)
+    assert 'class="panel v2-dup-panel"' in html
+    for needle in (
+        "dup-fusionados", "dup-sospechosos", "dup-gestor", "dup-gestor-eyebrow",
+        "dup-gestor-title", "dup-gestor-motivo", "dup-gestor-error", "dup-gestor-par",
+        "dup-gestor-ficha", "dup-gestor-cerrar", "dup-gestor-fusionar", "dup-gestor-quitar",
+    ):
+        assert f'id="{needle}"' in html, needle
+    assert 'data-dup-id="' in html
+    assert "?ui=v2" in html
+
+
+def test_duplicados_v1_sin_marcas_v2(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert "v2-dup-panel" not in html
+    assert 'id="dup-gestor"' in html
+
+
+def test_insights_v2_con_todo_cableado(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    data = collect_dashboard(session, actividad, 2026)
+    data["ui"] = "v2"
+    html = render_dashboard(data)
+    assert 'class="panel v2-ins-panel"' in html
+    for needle in (
+        "insight-kpis", "insight-kpi-gastos", "insight-kpi-neto", "insight-kpi-hint",
+        "insight-operativo", "insight-range", "insight-range-trigger",
+        "insight-range-label", "insight-range-clear", "insight-range-pop",
+        "insight-desde", "insight-hasta", "insight-range-all", "insight-range-apply",
+        "insight-range-name", "insight-range-save", "insight-trims", "insight-presets",
+        "insight-frase", "charts", "insight-month", "insight-emisor",
+        "iva-soportado", "iva-tabla", "insight-rows", "irpf", "insight-renta",
+    ):
+        assert f'id="{needle}"' in html, needle
+
+
+def test_insights_v1_sin_marcas_v2(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    _seed_asientos(session, actividad)
+    session.commit()
+    html = render_dashboard(collect_dashboard(session, actividad, 2026))
+    assert "v2-ins-panel" not in html
+    assert 'id="insight-kpis"' in html
+

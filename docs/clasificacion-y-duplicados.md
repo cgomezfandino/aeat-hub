@@ -96,16 +96,33 @@ Para fusionar a mano un duplicado evidente sin cambiar el número: `aeat-hub dup
 
 ## Escaneo de duplicados factura-contra-factura (Splink)
 
-`aeat-hub escaneo` aplica el mismo modelo Fellegi-Sunter a nivel de factura:
-compara NIF, número normalizado, fecha, importe exacto en céntimos y nombre
-limpio de cada par de asientos vivos, y menciona los que superan P≥0,90 con
-su desglose («nif igual +17,9b · numero distinto −6,5b · fecha igual +6,2b …»).
-El NIF pesa mucho porque en bloque casi asegura la misma tienda, pero la
-identidad de factura la deciden fecha+importe+nombre: importes distintos son
-casi demoledores, y números distintos (factura vs servicio IKEA) no descartan.
-Con `--aplicar` los pares quedan como sospechosos (nivel 3) en la pestaña
-Duplicados; fusionar o descartar sigue siendo humano. Excluye los ya
-fusionados y los pares del mismo cluster de factura.
+`aeat-hub escaneo` y el motor de deduplicación aplican el modelo Fellegi-Sunter probabilístico a nivel de factura mediante backend DuckDB en memoria:
+compara NIF, número normalizado, fecha, importe exacto en céntimos, nombre limpio de emisor y **códigos SKU de líneas extraídas**:
+
+Pesos actuales (`_PESOS` en `linkage_facturas.py`; bits = log₂(m/u), prior 1/2048 ≈ −11 bits):
+
+| Campo | Nivel | m | u | bits |
+|---|---|---|---|---|
+| NIF | igual | 0,99 | 0,05 | +4,3 |
+| NIF | distinto | 0,01 | 0,95 | −6,6 |
+| Número | igual | 0,97 | 0,00001 | +16,6 |
+| Número | distinto | 0,10 | 0,9999 | −3,3 |
+| Fecha | igual / misma semana / distinta | 0,75 / 0,10 / 0,02 | 0,01 / 0,06 / 0,95 | +6,2 / +0,7 / −5,6 |
+| Importe | igual / distinto | 0,95 / 0,00005 | 0,02 / 0,999 | +5,6 / −14,3 |
+| Nombre | JW≥0,95 / JW≥0,85 / distinto | 0,90 / 0,50 / 0,02 | 0,05 / 0,10 / 0,95 | +4,2 / +2,3 / −5,6 |
+| SKUs | ≥2 / 1 / ninguno | 0,90 / 0,08 / 0,02 | 0,0005 / 0,01 / 0,9895 | +10,8 / +3,0 / −5,6 |
+
+**Por qué u(NIF)=0,05 y no 4·10⁻⁶:** u es la probabilidad de coincidir entre
+dos facturas cualesquiera *del mismo libro*. En un libro de gastos el mismo
+proveedor se repite (alquiler, luz, cuotas), así que compartir NIF no es raro.
+Con la calibración anterior toda factura recurrente del mismo importe salía
+como duplicada (P≈0,96). Casos de referencia: alquiler mensual (números y
+meses distintos) P≈0,02; ticket canjeado por factura el mismo día P≈0,98;
+misma factura con número mal leído P≈0,95.
+
+3. **Explicabilidad:**
+   - Cada par evaluado ofrece un desglose en bits («nif igual +17,9b · skus coincidentes +10,8b · total igual +10,9b …») y probabilidad final $P = 1/(1 + 2^{-\text{peso}})$.
+   - Los pares con $P \ge 0,90$ se señalan con aviso destacado tanto en el dashboard como en la ficha del asiento (`ficha-dup-alert`), permitiendo comparar y fusionar en un solo clic. Con `--aplicar` en CLI los pares **pendientes** quedan como sospechosos (nivel 3) en la pestaña Duplicados; los ya confirmados o validados no vuelven a la cola. Excluye los ya fusionados y los pares del mismo cluster de factura.
 
 ## Nombres canónicos por NIF
 

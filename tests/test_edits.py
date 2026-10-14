@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal
 from threading import Thread
 
+import pytest
 from sqlalchemy import select
 
 from aeat_hub.db import make_engine, session_factory
@@ -67,6 +68,28 @@ def test_patch_asiento_corrige_nif_iva_y_valida(session):
     assert campos["total"].despues == "24.20"
     assert campos["validado"].antes == "false"
     assert campos["validado"].despues == "true"
+
+
+def test_patch_asiento_cambia_numero_y_lo_registra(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    row = _asiento(session, actividad)
+    patched = patch_asiento(session, row.id, {"numero": "F2026-000123"})
+    session.commit()
+    assert patched.numero_factura == "F2026-000123"
+    assert patched.factura.numero_visible == "F2026-000123"
+    logs = {
+        item.campo: item
+        for item in session.scalars(select(Cambio).where(Cambio.asiento_id == row.id))
+    }
+    assert logs["numero_factura"].antes == "F-1"
+    assert logs["numero_factura"].despues == "F2026-000123"
+
+
+def test_patch_numero_vacio_da_error(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    row = _asiento(session, actividad)
+    with pytest.raises(ValueError):
+        patch_asiento(session, row.id, {"numero": "  "})
 
 
 def test_patch_desde_libro_cambia_emisor_y_fecha_sin_tocar_importes(session):
@@ -509,3 +532,31 @@ def test_patch_asiento_duplicado_de_por_api(session):
     session.commit()
     assert reabierto.estado == "pendiente"
     assert reabierto.duplicado_de_id is None
+
+
+def test_patch_lineas_modificadas_registra_cambio(session):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    row = _asiento(session, actividad)
+    patch_asiento(
+        session,
+        row.id,
+        {
+            "lineas": [{"descripcion": "Línea original", "importe": "10.00", "base": "8.26", "iva_cuota": "1.74", "iva_tipo": "21.00"}],
+            "confirmado": True,
+        },
+    )
+    session.commit()
+    # Modificar contenido de la misma única línea sin alterar la cantidad de líneas
+    patch_asiento(
+        session,
+        row.id,
+        {
+            "lineas": [{"descripcion": "Línea modificada", "importe": "10.00", "base": "8.26", "iva_cuota": "1.74", "iva_tipo": "21.00"}],
+            "confirmado": True,
+        },
+    )
+    session.commit()
+    logs = list(session.scalars(select(Cambio).where(Cambio.asiento_id == row.id, Cambio.campo == "lineas")))
+    assert len(logs) >= 1
+    assert any(item.despues == "1 líneas (editadas)" for item in logs)
+

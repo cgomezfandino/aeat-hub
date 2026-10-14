@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AEAT Hub">
+  <rect x="14" y="6" width="36" height="52" rx="8" fill="#1f3a5f"/>
+  <path d="M40 6l10 10H40V6z" fill="#e8890c"/>
+  <path d="M25 33l7.5 7.5L41 30" fill="none" stroke="#f5a623" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

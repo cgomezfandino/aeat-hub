@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from aeat_hub.extract.ids import normalize_emisor, normalize_numero
 from aeat_hub.extract.schema import InvoiceExtract
-from aeat_hub.models import Asiento, Documento, Extraccion, Factura, Relacion
+from aeat_hub.models import Asiento, Cambio, Documento, Extraccion, Factura, Relacion
 
 KIND_DOCUMENTO = "documento"
 KIND_FACTURA = "factura"
@@ -154,6 +155,14 @@ def _candidatos(session: Session, actividad_id: int, extract: InvoiceExtract) ->
     emisor = normalize_emisor(extract.emisor)
     hits: list[Factura] = []
     for factura in rows:
+        # La numeración es correlativa dentro de cada serie y muchos emisores
+        # la reinician por ejercicio: la "1" de 2026 no es la "1" de 2025.
+        if (
+            extract.fecha is not None
+            and factura.fecha is not None
+            and extract.fecha.year != factura.fecha.year
+        ):
+            continue
         if nif and factura.nif_emisor:
             if factura.nif_emisor == nif:
                 hits.append(factura)
@@ -390,9 +399,10 @@ def _extract_desde_asiento(asiento: Asiento, numero: str) -> InvoiceExtract:
     )
 
 
-def _mover_evidencias(session: Session, desde_factura_id: int, hacia_factura_id: int) -> None:
+def _mover_evidencias(session: Session, desde_factura_id: int, hacia_factura_id: int) -> list[int]:
+    """Mueve las evidencias y devuelve los ids de relación movidos (para deshacer)."""
     if desde_factura_id == hacia_factura_id:
-        return
+        return []
     filas = session.scalars(
         select(Relacion).where(
             Relacion.destino_tipo == KIND_FACTURA,
@@ -403,6 +413,10 @@ def _mover_evidencias(session: Session, desde_factura_id: int, hacia_factura_id:
     ).all()
     for fila in filas:
         fila.destino_id = hacia_factura_id
+    return [fila.id for fila in filas]
+
+
+CAMPO_FUSION = "fusion"
 
 
 def _fusionar_en(
@@ -412,16 +426,86 @@ def _fusionar_en(
     origen_factura: Factura,
     destino_asiento: Asiento,
     destino_factura: Factura,
-) -> None:
+) -> dict:
+    """Fusiona origen en destino y devuelve la foto previa para poder deshacerla."""
+    previo = {
+        "estado": origen_asiento.estado,
+        "numero_factura": origen_asiento.numero_factura,
+        "factura_id": origen_asiento.factura_id,
+        "duplicado_de_id": origen_asiento.duplicado_de_id,
+        "duplicado_nivel": origen_asiento.duplicado_nivel,
+        "factura_origen_estado_er": origen_factura.estado_er,
+    }
     extract = _extract_desde_asiento(origen_asiento, destino_factura.numero_visible or origen_asiento.numero_factura or "")
     _enriquecer(destino_factura, extract)
-    _mover_evidencias(session, origen_factura.id, destino_factura.id)
+    previo["relaciones_movidas"] = _mover_evidencias(session, origen_factura.id, destino_factura.id)
     origen_asiento.estado = "duplicado"
     origen_asiento.duplicado_de_id = destino_asiento.id
     origen_asiento.duplicado_nivel = 2
     origen_asiento.factura_id = destino_factura.id
     origen_asiento.numero_factura = destino_factura.numero_visible
     destino_factura.estado_er = ER_PROPUESTA
+    return previo
+
+
+def registrar_fusion(session: Session, asiento: Asiento, previo: dict, destino_id: int, fuente: str) -> None:
+    """Deja en el historial la foto completa previa a la fusión (deshacer sin pérdidas)."""
+    session.add(
+        Cambio(
+            asiento_id=asiento.id,
+            campo=CAMPO_FUSION,
+            antes=json.dumps(previo, ensure_ascii=False),
+            despues=str(destino_id),
+            fuente=fuente,
+        )
+    )
+
+
+def deshacer_fusion(session: Session, asiento: Asiento) -> dict | None:
+    """Restaura la foto previa de la última fusión de `asiento`.
+
+    Devuelve la foto aplicada, o None si la fusión es anterior a que se
+    guardaran fotos (entonces solo se puede soltar el enlace).
+    """
+    cambio = session.scalar(
+        select(Cambio)
+        .where(
+            Cambio.asiento_id == asiento.id,
+            Cambio.campo == CAMPO_FUSION,
+            Cambio.despues == str(asiento.duplicado_de_id or ""),
+        )
+        .order_by(Cambio.id.desc())
+        .limit(1)
+    )
+    if cambio is None:
+        return None
+    previo = json.loads(cambio.antes or "{}")
+    factura_actual = asiento.factura_id
+    factura_previa = previo.get("factura_id")
+    ids = previo.get("relaciones_movidas") or []
+    if factura_previa and ids:
+        for fila in session.scalars(select(Relacion).where(Relacion.id.in_(ids))).all():
+            fila.destino_id = factura_previa
+    if factura_previa and factura_actual and factura_previa != factura_actual:
+        for rel in session.scalars(
+            select(Relacion).where(
+                Relacion.tipo == "misma_factura",
+                Relacion.origen_tipo == KIND_FACTURA,
+                Relacion.origen_id == factura_previa,
+                Relacion.destino_tipo == KIND_FACTURA,
+                Relacion.destino_id == factura_actual,
+            )
+        ).all():
+            session.delete(rel)
+    factura_origen = session.get(Factura, factura_previa) if factura_previa else None
+    if factura_origen is not None and previo.get("factura_origen_estado_er"):
+        factura_origen.estado_er = previo["factura_origen_estado_er"]
+    asiento.estado = previo.get("estado") or "pendiente"
+    asiento.numero_factura = previo.get("numero_factura")
+    asiento.factura_id = factura_previa
+    asiento.duplicado_de_id = previo.get("duplicado_de_id")
+    asiento.duplicado_nivel = previo.get("duplicado_nivel")
+    return previo
 
 
 def corregir_numero(session: Session, asiento: Asiento, numero: str) -> CorreccionNumero:
@@ -470,13 +554,14 @@ def corregir_numero(session: Session, asiento: Asiento, numero: str) -> Correcci
         destino = _asiento_de_factura(session, rival)
         if destino is None or destino.id == asiento.id:
             return CorreccionNumero(asiento=asiento, numero=visible)
-        _fusionar_en(
+        previo = _fusionar_en(
             session,
             origen_asiento=asiento,
             origen_factura=factura,
             destino_asiento=destino,
             destino_factura=rival,
         )
+        registrar_fusion(session, asiento, previo, destino.id, "corregir-numero")
         add_relacion(
             session,
             origen_tipo=KIND_FACTURA,

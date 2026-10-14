@@ -14,10 +14,17 @@ class InvoiceLine(BaseModel):
     codigo: str | None = None
     posicion: int | None = None
     cantidad: Decimal | None = None
+    precio_unitario: Decimal | None = None
     base: Decimal | None = None
     iva_cuota: Decimal | None = None
     iva_tipo: Decimal | None = None
     eliminada: bool = False
+
+
+class DesgloseIVA(BaseModel):
+    base: Decimal | None = None
+    iva_tipo: Decimal | None = None
+    iva_cuota: Decimal | None = None
 
 
 class InvoiceExtract(BaseModel):
@@ -29,11 +36,16 @@ class InvoiceExtract(BaseModel):
     fecha: date | None = None
     numero: str | None = None
     numero_norm: str | None = None
+    tipo_documento: str | None = None
+    factura_rectificada: str | None = None
     pagina_ticket: int | None = None
     paginas_ticket: int | None = None
     base: Decimal | None = None
     iva_tipo: Decimal | None = None
     iva_cuota: Decimal | None = None
+    desglose_iva: list[DesgloseIVA] = Field(default_factory=list)
+    retencion_tipo: Decimal | None = None
+    retencion_cuota: Decimal | None = None
     total: Decimal | None = None
     lineas: list[InvoiceLine] = Field(default_factory=list)
     confianza: float = 0.0
@@ -41,3 +53,4 @@ class InvoiceExtract(BaseModel):
 
     def fiscal_complete(self) -> bool:
         return bool(self.nif_emisor and self.numero and self.fecha and self.total is not None)
+

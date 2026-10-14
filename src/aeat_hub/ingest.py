@@ -61,7 +61,17 @@ def _descuadre_lineas(extract: InvoiceExtract) -> Decimal | None:
     ]
     if not importes:
         return extract.total
-    return abs(sum(importes, Decimal("0.00")) - extract.total)
+    # Las líneas suman antes de retención IRPF: el total a pagar va neto.
+    bruto = extract.total + (extract.retencion_cuota or Decimal("0.00"))
+    return abs(sum(importes, Decimal("0.00")) - bruto)
+
+
+def _nif_titular(actividad: Actividad) -> str | None:
+    titular = actividad.titular
+    return titular.nif if titular is not None and titular.nif else None
+
+
+_MOTORES_IMAGEN_LOCALES = frozenset({"apple-vision", "rapidocr"})
 
 
 def _reintentar_si_no_cuadra(
@@ -71,8 +81,13 @@ def _reintentar_si_no_cuadra(
     notes: list[str],
     *,
     rapid: OCRProvider | None,
+    nif_titular: str | None = None,
 ) -> tuple[OCRResult, InvoiceExtract]:
     """Si las líneas no suman el total, prueba el otro motor de imagen una vez."""
+    # Solo entre los dos motores de imagen locales: una lectura LLM (Gemini…)
+    # entiende la estructura y nunca se cambia por la heurística de otro OCR.
+    if ocr.engine not in _MOTORES_IMAGEN_LOCALES:
+        return ocr, extract
     gap = _descuadre_lineas(extract)
     if gap is None or gap <= TOLERANCIA_LINEAS or rapid is not None:
         return ocr, extract
@@ -85,7 +100,7 @@ def _reintentar_si_no_cuadra(
     if not alt.text.strip() or alt.engine == ocr.engine:
         notes.append("La segunda lectura no aporta otro texto.")
         return ocr, extract
-    alt_extract = parse_invoice(alt.text, motor=alt.engine)
+    alt_extract = parse_invoice(alt.text, motor=alt.engine, nif_titular=nif_titular)
     alt_gap = _descuadre_lineas(alt_extract)
     if alt_gap is not None and alt_gap < gap:
         notes.append(f"La segunda lectura ({alt.engine}) encaja mejor.")
@@ -159,8 +174,11 @@ def ingest_file(
         )
 
     with etapa("parsear", name):
-        extract = parse_invoice(ocr.text, motor=ocr.engine)
-        ocr, extract = _reintentar_si_no_cuadra(path, ocr, extract, warnings, rapid=rapid)
+        titular_nif = _nif_titular(actividad)
+        extract = parse_invoice(ocr.text, motor=ocr.engine, nif_titular=titular_nif)
+        ocr, extract = _reintentar_si_no_cuadra(
+            path, ocr, extract, warnings, rapid=rapid, nif_titular=titular_nif
+        )
         log_detalle(
             "parsear",
             "emisor=%s nif=%s numero=%s fecha=%s total=%s confianza=%.3f",
@@ -284,12 +302,7 @@ def ingest_file(
         if conflicto:
             asiento.estado = "pendiente"
         else:
-            _apply_duplicate_and_state(
-                asiento,
-                dup,
-                classification.confianza,
-                con_numero=bool(extract.numero_norm or extract.numero),
-            )
+            _apply_duplicate_and_state(asiento, dup, classification.confianza)
         session.add(asiento)
         session.flush()
         replace_lineas(session, asiento, extract.lineas)
@@ -298,6 +311,8 @@ def ingest_file(
             iva_cuota=extract.iva_cuota,
             iva_tipo=extract.iva_tipo,
             total=extract.total,
+            retencion=extract.retencion_cuota,
+            fecha=extract.fecha,
         ):
             warnings.append(aviso)
         log_detalle("guardar", "documento=%s asiento=%s factura=%s estado=%s", documento.id, asiento.id, factura.id, asiento.estado)
@@ -391,18 +406,16 @@ def _apply_duplicate_and_state(
     asiento: Asiento,
     dup: DuplicateHit | None,
     confianza,
-    *,
-    con_numero: bool = False,
 ) -> None:
     if dup:
         asiento.duplicado_de_id = dup.asiento_id
         asiento.duplicado_nivel = dup.nivel
-        if not con_numero or dup.nivel <= 2:
+        if dup.nivel <= 2:
             asiento.estado = "duplicado"
         else:
-            # Con número distinto no se marca duplicado sin más: la misma
-            # compra puede aparecer con número de factura y de servicio.
-            # Queda pendiente como sospechoso para revisión humana.
+            # Una sospecha (nivel 3) nunca saca una factura del libro por sí
+            # sola, tenga número o no: dos tickets iguales el mismo día son
+            # dos gastos reales. Queda pendiente, enlazada a su gemela.
             asiento.estado = "pendiente"
         return
     if asiento.cuenta_codigo and confianza >= 0.8:
@@ -417,16 +430,19 @@ def reparse_asientos(session: Session, actividad: Actividad) -> int:
     No toca asientos validados por el usuario: el libro humano gana al modelo.
     """
     updated = 0
+    titular_nif = _nif_titular(actividad)
     rows = session.scalars(select(Asiento).where(Asiento.actividad_id == actividad.id)).all()
     for asiento in rows:
-        if asiento.validado:
+        if asiento.validado or asiento.estado == "rechazado":
             continue
         if asiento.documento_id is None:
             continue
         documento = session.get(Documento, asiento.documento_id)
         if documento is None or not (documento.texto_crudo or "").strip():
             continue
-        extract = parse_invoice(documento.texto_crudo, motor=documento.motor_ocr)
+        extract = parse_invoice(
+            documento.texto_crudo, motor=documento.motor_ocr, nif_titular=titular_nif
+        )
         factura = asiento.factura
         divergencia = _divergencias_con_factura(asiento, factura)
         # el nombre canónico ya conocido del NIF gana a la grafía del OCR
@@ -456,7 +472,9 @@ def reparse_asientos(session: Session, actividad: Actividad) -> int:
             asiento.tipo = classification.tipo
             asiento.origen_clasificacion = classification.origen
             asiento.confianza_clasificacion = classification.confianza
-            _apply_duplicate_and_state(asiento, None, classification.confianza)
+            if asiento.duplicado_de_id is None:
+                # un sospechoso enlazado a su gemela sigue pendiente de decisión
+                _apply_duplicate_and_state(asiento, None, classification.confianza)
         updated += 1
     return updated
 

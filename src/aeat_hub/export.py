@@ -55,12 +55,14 @@ def export_xlsx(
         item.id: item.alias
         for item in session.scalars(select(Inmueble).where(Inmueble.actividad_id == actividad.id))
     }
+    # Los duplicados solo van a su hoja: sumar Gastos no puede contar dos veces.
+    libro = [r for r in rows if r.estado != "duplicado"]
     wb = Workbook()
-    _write_sheet(wb.active, "Gastos", [r for r in rows if r.tipo == "gasto"], actividad, inmuebles, nombres)
+    _write_sheet(wb.active, "Gastos", [r for r in libro if r.tipo == "gasto"], actividad, inmuebles, nombres)
     _write_sheet(
         wb.create_sheet("Ingresos"),
         "Ingresos",
-        [r for r in rows if r.tipo == "ingreso"],
+        [r for r in libro if r.tipo == "ingreso"],
         actividad,
         inmuebles,
         nombres,
@@ -68,7 +70,7 @@ def export_xlsx(
     _write_sheet(
         wb.create_sheet("Mejoras"),
         "Mejoras",
-        [r for r in rows if r.tipo == "mejora"],
+        [r for r in libro if r.tipo == "mejora"],
         actividad,
         inmuebles,
         nombres,

@@ -13,6 +13,37 @@ def test_parse_amount_espanol():
     assert format_euro(None) == "—"
 
 
+def test_parse_solo_nif_titular_no_inventa_emisor():
+    texto = (
+        "TIENDA BARRIO\n"
+        "Factura nº: T-55\n"
+        "Fecha: 05/04/2026\n"
+        "Cliente: 12345678Z\n"
+        "Base imponible: 10,00 €\n"
+        "IVA 21%: 2,10 €\n"
+        "Total factura: 12,10 €\n"
+    )
+    assert parse_invoice(texto, nif_titular="12345678Z").nif_emisor is None
+    # Sin contexto de titular se mantiene el criterio actual.
+    assert parse_invoice(texto).nif_emisor == "12345678Z"
+
+
+def test_parse_json_respeta_emisor_aunque_coincida_con_titular():
+    import json
+
+    data = {
+        "emisor": "YO AUTONOMO",
+        "nif_emisor": "12345678Z",
+        "nif_receptor": "B12345674",
+        "numero": "E-1",
+        "fecha": "2026-04-05",
+        "total": 121.00,
+    }
+    extract = parse_invoice(json.dumps(data), nif_titular="12345678Z")
+    assert extract.nif_emisor == "12345678Z"
+    assert extract.nif_receptor == "B12345674"
+
+
 def test_parse_factura_luz():
     extract = parse_invoice(FACTURA_LUZ)
     assert extract.nif_emisor == "B12345674"
@@ -684,3 +715,74 @@ Fecha servicio
 """
     extract = parse_invoice(texto)
     assert extract.numero is None
+
+
+def test_parse_json_con_retencion_irpf_y_reconciliacion():
+    import json
+    from aeat_hub.extract.parser import parse_invoice
+
+    data = {
+        "emisor": "JUAN PEREZ ARQUITECTO",
+        "nif_emisor": "12345678Z",
+        "numero": "FAC-2026-01",
+        "fecha": "2026-09-10",
+        "base": 1000.00,
+        "iva_tipo": 21.00,
+        "iva_cuota": 210.00,
+        "retencion_tipo": 15.00,
+        "retencion_cuota": 150.00,
+        "total": 1060.00,
+        "lineas": [
+            {
+                "descripcion": "Honorarios proyecto técnico",
+                "cantidad": 1,
+                "precio_unitario": 1000.00,
+                "base": 1000.00,
+                "iva_tipo": 21.00,
+                "iva_cuota": 210.00,
+                "importe": 1210.00,
+            }
+        ],
+    }
+    extract = parse_invoice(json.dumps(data))
+    assert extract.base == Decimal("1000.00")
+    assert extract.iva_cuota == Decimal("210.00")
+    assert extract.retencion_tipo == Decimal("15.00")
+    assert extract.retencion_cuota == Decimal("150.00")
+    assert extract.total == Decimal("1060.00")
+    assert len(extract.lineas) == 1
+    assert extract.lineas[0].precio_unitario == Decimal("1000.00")
+
+
+def test_parse_json_multi_iva_y_desglose():
+    import json
+    from aeat_hub.extract.parser import parse_invoice
+
+    data = {
+        "emisor": "SUPERMERCADO CENTRAL",
+        "nif_emisor": "A12345674",
+        "numero": "T-9988",
+        "fecha": "2026-09-15",
+        "total": 71.40,
+        "desglose_iva": [
+            {"base": 40.00, "iva_tipo": 21.00, "iva_cuota": 8.40},
+            {"base": 20.00, "iva_tipo": 10.00, "iva_cuota": 2.00},
+            {"base": 1.00, "iva_tipo": 0.00, "iva_cuota": 0.00},
+        ],
+        "lineas": [
+            {"descripcion": "Herramienta", "cantidad": 1, "importe": 48.40, "iva_tipo": 21.00},
+            {"descripcion": "Café", "cantidad": 2, "importe": 22.00, "iva_tipo": 10.00},
+            {"descripcion": "Bolsa papel", "cantidad": 1, "importe": 1.00, "iva_tipo": 0.00},
+        ],
+    }
+    extract = parse_invoice(json.dumps(data))
+    assert extract.total == Decimal("71.40")
+    assert extract.base == Decimal("61.00")
+    assert extract.iva_cuota == Decimal("10.40")
+    assert len(extract.desglose_iva) == 3
+    assert len(extract.lineas) == 3
+    assert extract.lineas[0].base == Decimal("40.00")
+    assert extract.lineas[0].iva_cuota == Decimal("8.40")
+    assert extract.lineas[1].base == Decimal("20.00")
+    assert extract.lineas[1].iva_cuota == Decimal("2.00")
+

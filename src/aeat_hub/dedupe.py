@@ -54,6 +54,9 @@ def find_duplicate(
     by_number = _numero_fecha_total_match(session, actividad_id, extract, exclude_asiento_id)
     if by_number:
         return by_number
+    by_sku = _sku_match(session, actividad_id, extract, exclude_asiento_id)
+    if by_sku:
+        return by_sku
     suspicious = _suspicious_match(session, actividad_id, extract, exclude_asiento_id)
     if suspicious:
         return suspicious
@@ -61,7 +64,7 @@ def find_duplicate(
     if by_emisor:
         return by_emisor
     if phash:
-        hashed = _phash_match(session, phash, exclude_asiento_id)
+        hashed = _phash_match(session, actividad_id, phash, exclude_asiento_id)
         if hashed:
             return hashed
     return None
@@ -105,6 +108,7 @@ def _suspicious_match(
             Asiento.nif_emisor == nif,
             Asiento.total == extract.total,
             Asiento.fecha.is_not(None),
+            Asiento.estado != "rechazado",
         )
     ).all()
     for row in rows:
@@ -140,10 +144,24 @@ def _numero_fecha_total_match(
     for row in rows:
         if exclude_asiento_id and row.id == exclude_asiento_id:
             continue
+        if not _mismo_emisor(extract, row):
+            continue
         other = _numero_key(row.numero_factura, row.fecha, row.total)
         if other and other == key:
             return DuplicateHit(2, row.id, row.documento_id, "número+fecha+total")
     return None
+
+
+def _mismo_emisor(extract: InvoiceExtract, row: Asiento) -> bool:
+    """El número de factura solo identifica dentro de un emisor (art. 6.1.a RD 1619/2012).
+
+    Con NIF en ambos lados manda el NIF; si falta en alguno, el nombre
+    normalizado. Sin ninguno de los dos no hay identidad que comparar.
+    """
+    if extract.nif_emisor and row.nif_emisor:
+        return normalize_nif(extract.nif_emisor) == normalize_nif(row.nif_emisor)
+    emisor = normalize_emisor(extract.emisor)
+    return emisor is not None and emisor == normalize_emisor(row.emisor)
 
 
 def _emisor_fecha_total_match(
@@ -162,6 +180,7 @@ def _emisor_fecha_total_match(
             Asiento.actividad_id == actividad_id,
             Asiento.total == extract.total,
             Asiento.fecha.is_not(None),
+            Asiento.estado != "rechazado",
         )
     ).all()
     for row in rows:
@@ -174,21 +193,65 @@ def _emisor_fecha_total_match(
     return None
 
 
-def _phash_match(session: Session, phash: str, exclude_asiento_id: int | None) -> DuplicateHit | None:
-    docs = session.scalars(select(Documento).where(Documento.phash.is_not(None))).all()
-    for doc in docs:
-        if not doc.phash:
+def _sku_match(
+    session: Session,
+    actividad_id: int,
+    extract: InvoiceExtract,
+    exclude_asiento_id: int | None,
+) -> DuplicateHit | None:
+    if extract.total is None or not extract.lineas:
+        return None
+    codigos_extract = {l.codigo for l in extract.lineas if l.codigo}
+    if not codigos_extract:
+        return None
+    rows = session.scalars(
+        select(Asiento)
+        .where(
+            Asiento.actividad_id == actividad_id,
+            Asiento.total == extract.total,
+            Asiento.estado != "rechazado",
+        )
+        .options(joinedload(Asiento.lineas))
+    ).unique().all()
+    for row in rows:
+        if exclude_asiento_id and row.id == exclude_asiento_id:
+            continue
+        codigos_row = {l.codigo for l in row.lineas if l.codigo and not l.eliminada}
+        if codigos_row:
+            comunes = codigos_extract.intersection(codigos_row)
+            ratio = len(comunes) / min(len(codigos_extract), len(codigos_row))
+            if ratio >= 0.6:
+                return DuplicateHit(
+                    3,
+                    row.id,
+                    row.documento_id,
+                    f"mismo importe + {len(comunes)} artículos coincidentes",
+                )
+    return None
+
+
+def _phash_match(
+    session: Session,
+    actividad_id: int,
+    phash: str,
+    exclude_asiento_id: int | None,
+) -> DuplicateHit | None:
+    # Solo dentro del expediente y nunca contra un rechazado: plantillas
+    # mensuales (luz, alquiler) de otro expediente se parecen sin ser la misma factura.
+    rows = session.execute(
+        select(Asiento, Documento)
+        .join(Documento, Asiento.documento_id == Documento.id)
+        .where(
+            Asiento.actividad_id == actividad_id,
+            Asiento.estado != "rechazado",
+            Documento.phash.is_not(None),
+        )
+    ).all()
+    for asiento, doc in rows:
+        if exclude_asiento_id and asiento.id == exclude_asiento_id:
             continue
         if hamming_distance(phash, doc.phash) <= PHASH_THRESHOLD:
-            asiento = session.scalar(select(Asiento).where(Asiento.documento_id == doc.id))
-            if asiento and exclude_asiento_id and asiento.id == exclude_asiento_id:
-                continue
-            return DuplicateHit(
-                3,
-                asiento.id if asiento else None,
-                doc.id,
-                "imagen casi idéntica (phash)",
-            )
+            return DuplicateHit(3, asiento.id, doc.id, "imagen casi idéntica (phash)")
     return None
 
 
@@ -208,13 +271,29 @@ def candidatos_duplicado(session: Session, asiento: Asiento) -> list[dict]:
             Asiento.id != asiento.id,
             Asiento.estado != "duplicado",
         )
-        .options(joinedload(Asiento.documento))
+        .options(joinedload(Asiento.documento), joinedload(Asiento.lineas))
         .order_by(Asiento.id)
-    ).all()
+    ).unique().all()
     out: list[dict] = []
     for row in rows:
         motivo = _motivo_gemelo(asiento, row, phash)
         if motivo:
+            splink_meta = {}
+            try:
+                from aeat_hub.linkage_facturas import score_par_splink
+
+                splink_res = score_par_splink(asiento, row)
+                if splink_res:
+                    prob, peso, desglose = splink_res
+                    splink_meta = {
+                        "splink_prob": prob,
+                        "splink_peso": peso,
+                        "splink_desglose": desglose,
+                    }
+                    if prob >= 0.80:
+                        motivo = f"{motivo} · Splink {int(round(prob * 100))} %"
+            except Exception:
+                pass
             out.append(
                 {
                     "id": row.id,
@@ -223,14 +302,23 @@ def candidatos_duplicado(session: Session, asiento: Asiento) -> list[dict]:
                     "fecha": row.fecha.isoformat() if row.fecha else "—",
                     "total": row.total,
                     "motivo": motivo,
+                    **splink_meta,
                 }
             )
     _PRIORIDAD = {
         "mismo NIF + importe ±3 días": 0,
         "mismo emisor + importe ±3 días": 1,
-        "imagen casi idéntica (phash)": 2,
+        "mismo NIF + importe (ventana 60 días)": 2,
+        "mismo emisor + importe (ventana 60 días)": 3,
+        "imagen casi idéntica (phash)": 4,
     }
-    out.sort(key=lambda item: (_PRIORIDAD.get(item["motivo"], 3), item["id"]))
+
+    def _rank(item: dict) -> int:
+        if "artículos coincidentes" in item["motivo"]:
+            return -1
+        return _PRIORIDAD.get(item["motivo"], 5)
+
+    out.sort(key=lambda item: (_rank(item), item["id"]))
     return out
 
 
@@ -250,19 +338,44 @@ def _motivo_gemelo(asiento: Asiento, row: Asiento, phash: str | None) -> str | N
         return "imagen casi idéntica (phash)"
     if not importes_iguales:
         return None
+
+    # Coincidencia por artículos / SKU:
+    # Si coinciden en importe y comparten >= 60% de los códigos de artículo (SKUs),
+    # son gemelos evidentes aunque la fecha de emisión de la factura formal sea posterior al ticket
+    codigos_a = {l.codigo for l in asiento.lineas if l.codigo and not l.eliminada}
+    codigos_b = {l.codigo for l in row.lineas if l.codigo and not l.eliminada}
+    if codigos_a and codigos_b:
+        comunes = codigos_a.intersection(codigos_b)
+        ratio = len(comunes) / min(len(codigos_a), len(codigos_b))
+        if ratio >= 0.6:
+            return f"mismo importe + {len(comunes)} artículos coincidentes"
+
+    nif = bool(asiento.nif_emisor and row.nif_emisor == asiento.nif_emisor)
+    emisor = bool(
+        normalize_emisor(asiento.emisor)
+        and normalize_emisor(asiento.emisor) == normalize_emisor(row.emisor)
+    )
+
     ventana = (
         asiento.fecha is not None
         and row.fecha is not None
         and abs((asiento.fecha - row.fecha).days) <= 3
     )
-    if not ventana:
-        return None
-    nif = asiento.nif_emisor and row.nif_emisor == asiento.nif_emisor
-    emisor = normalize_emisor(asiento.emisor) and (
-        normalize_emisor(asiento.emisor) == normalize_emisor(row.emisor)
+    if ventana:
+        if nif:
+            return "mismo NIF + importe ±3 días"
+        if emisor:
+            return "mismo emisor + importe ±3 días"
+
+    ventana_ext = (
+        asiento.fecha is not None
+        and row.fecha is not None
+        and abs((asiento.fecha - row.fecha).days) <= 60
     )
-    if nif:
-        return "mismo NIF + importe ±3 días"
-    if emisor:
-        return "mismo emisor + importe ±3 días"
+    if ventana_ext:
+        if nif:
+            return "mismo NIF + importe (ventana 60 días)"
+        if emisor:
+            return "mismo emisor + importe (ventana 60 días)"
+
     return None

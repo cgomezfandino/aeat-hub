@@ -10,12 +10,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aeat_hub.classify import _apply_cuenta, reabrir_asiento, validar_asiento
-from aeat_hub.er import _fusionar_en, add_relacion, backfill_asientos
+from aeat_hub.er import (
+    _fusionar_en,
+    add_relacion,
+    backfill_asientos,
+    corregir_numero,
+    deshacer_fusion,
+    registrar_fusion,
+)
 from aeat_hub.extract.ids import normalize_emisor
 from aeat_hub.extract.parser import parse_invoice
 from aeat_hub.extract.schema import InvoiceExtract, InvoiceLine
 from aeat_hub.fiscal.money import parse_amount, q2
-from aeat_hub.fiscal.nif import normalize_nif
+from aeat_hub.fiscal.cuadres import tipo_iva_desde_cuota
+from aeat_hub.fiscal.nif import is_nif_iva_ue, is_valid_nif, normalize_nif
 from aeat_hub.models import Actividad, Asiento, Cambio, Cuenta, Factura, Linea
 from aeat_hub.services import get_cuenta_por_nombre
 
@@ -55,13 +63,14 @@ def marcar_duplicado(session: Session, origen_id: int, destino_id: int) -> Asien
     if factura_origen is None or factura_destino is None:
         raise RuntimeError("Faltan factura canónica tras el backfill.")
 
-    _fusionar_en(
+    previo = _fusionar_en(
         session,
         origen_asiento=origen,
         origen_factura=factura_origen,
         destino_asiento=destino,
         destino_factura=factura_destino,
     )
+    registrar_fusion(session, origen, previo, destino.id, "dashboard")
     add_relacion(
         session,
         origen_tipo="factura",
@@ -72,7 +81,7 @@ def marcar_duplicado(session: Session, origen_id: int, destino_id: int) -> Asien
         motivo="fusión manual de duplicado evidente",
         fuente="usuario",
     )
-    _registrar(session, origen, "estado", "pendiente", "duplicado")
+    _registrar(session, origen, "estado", previo["estado"], "duplicado")
     _registrar(session, origen, "duplicado_de_id", "", str(destino.id))
     if destino.duplicado_de_id == origen.id:
         _registrar(session, destino, "duplicado_de_id", str(origen.id), "")
@@ -83,23 +92,28 @@ def marcar_duplicado(session: Session, origen_id: int, destino_id: int) -> Asien
 
 
 def desmarcar_duplicado(session: Session, asiento_id: int) -> Asiento:
-    """Deshace un duplicado: vuelve a pendiente, sin enlace ni nivel."""
+    """Deshace un duplicado.
+
+    Si la fusión guardó su foto previa, restaura estado, número, factura y
+    evidencias tal como estaban. Si es una fusión antigua sin foto, vuelve a
+    pendiente sin enlace ni nivel.
+    """
     asiento = session.get(Asiento, asiento_id)
     if asiento is None:
         raise AsientoNoEncontrado(asiento_id)
     if asiento.estado != "duplicado":
         raise ValueError(f"El asiento {asiento_id} no está marcado como duplicado.")
-    _registrar(session, asiento, "estado", "duplicado", "pendiente")
-    _registrar(
-        session,
-        asiento,
-        "duplicado_de_id",
-        str(asiento.duplicado_de_id or ""),
-        "",
-    )
-    asiento.estado = "pendiente"
-    asiento.duplicado_de_id = None
-    asiento.duplicado_nivel = None
+    antes = {
+        "estado": asiento.estado,
+        "duplicado_de_id": asiento.duplicado_de_id,
+        "numero_factura": asiento.numero_factura,
+    }
+    if deshacer_fusion(session, asiento) is None:
+        asiento.estado = "pendiente"
+        asiento.duplicado_de_id = None
+        asiento.duplicado_nivel = None
+    for campo, valor in antes.items():
+        _registrar(session, asiento, campo, valor, getattr(asiento, campo))
     session.flush()
     return asiento
 
@@ -172,8 +186,11 @@ def patch_asiento(session: Session, asiento_id: int, payload: dict) -> Asiento:
     if "nif_emisor" in payload and payload["nif_emisor"] is not None:
         raw = str(payload["nif_emisor"]).strip()
         nif = normalize_nif(raw) if raw else None
-        if not nif and raw:
-            nif = raw.upper()[:12]
+        if nif and not (is_valid_nif(nif) or is_nif_iva_ue(nif)):
+            raise ValueError(
+                f"El NIF {raw} no es válido (revisa la letra o dígito de control) "
+                "ni un NIF-IVA de la UE."
+            )
         nif = nif or None
         if nif != asiento.nif_emisor:
             _registrar(session, asiento, "nif_emisor", asiento.nif_emisor, nif)
@@ -186,6 +203,14 @@ def patch_asiento(session: Session, asiento_id: int, payload: dict) -> Asiento:
             _registrar(session, asiento, "emisor", asiento.emisor, nombre or "")
             asiento.emisor = nombre
             dirty = True
+
+    if "numero" in payload and payload["numero"] is not None:
+        visible = " ".join(str(payload["numero"]).split())[:120] or None
+        if visible != (asiento.numero_factura or None):
+            antes = asiento.numero_factura or ""
+            corregir_numero(session, asiento, visible or "")
+            _registrar(session, asiento, "numero_factura", antes, asiento.numero_factura or "")
+            session.flush()
 
     if "fecha" in payload:
         nueva = _parse_fecha(payload.get("fecha"))
@@ -209,7 +234,7 @@ def patch_asiento(session: Session, asiento_id: int, payload: dict) -> Asiento:
             dirty = True
 
     if asiento.base is not None and asiento.iva_cuota is not None and asiento.base != ZERO:
-        asiento.iva_tipo = q2((asiento.iva_cuota / asiento.base) * 100)
+        asiento.iva_tipo = tipo_iva_desde_cuota(asiento.base, asiento.iva_cuota, asiento.fecha)
 
     if asiento.factura_id:
         factura = session.get(Factura, asiento.factura_id)
@@ -319,12 +344,16 @@ def _guardar_lineas(session: Session, asiento: Asiento, payload: list) -> bool:
     despues = _serialize_lineas(nuevas)
     if antes == despues:
         return False
+    antes_txt = f"{len(antes)} líneas"
+    despues_txt = f"{len(despues)} líneas"
+    if antes_txt == despues_txt:
+        despues_txt = f"{len(despues)} líneas (editadas)"
     _registrar(
         session,
         asiento,
         "lineas",
-        f"{len(antes)} líneas",
-        f"{len(despues)} líneas",
+        antes_txt,
+        despues_txt,
     )
     replace_lineas(session, asiento, nuevas)
     return True
@@ -408,7 +437,7 @@ def _totales_desde_lineas(session: Session, asiento: Asiento) -> None:
         if factura is not None:
             setattr(factura, campo, nuevo)
     if asiento.base is not None and asiento.iva_cuota is not None and asiento.base != ZERO:
-        asiento.iva_tipo = q2((asiento.iva_cuota / asiento.base) * 100)
+        asiento.iva_tipo = tipo_iva_desde_cuota(asiento.base, asiento.iva_cuota, asiento.fecha)
         if factura is not None:
             factura.iva_tipo = asiento.iva_tipo
 

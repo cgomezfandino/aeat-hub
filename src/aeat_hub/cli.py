@@ -205,7 +205,7 @@ def ingest(
     ocr: str = typer.Option(
         "auto",
         "--ocr",
-        help="auto|native|rapid|vision|deepseek|unlimited|paddle|tesseract",
+        help="auto|native|rapid|vision|gemini|deepseek|unlimited|paddle|tesseract",
     ),
     path: Optional[Path] = typer.Option(None, "--path", help="Un fichero concreto (si no, el inbox)"),
 ) -> None:
@@ -480,7 +480,9 @@ def escaneo_duplicados(
                 a = session.get(Asiento, par.id_a)
                 b = session.get(Asiento, par.id_b)
                 for uno, otro in ((a, b), (b, a)):
-                    if uno is None or uno.estado == "duplicado" or uno.validado:
+                    # Solo se enlazan pendientes: un asiento ya revisado no
+                    # vuelve a la cola por una sospecha estadística.
+                    if uno is None or uno.estado != "pendiente" or uno.validado:
                         continue
                     uno.duplicado_de_id = otro.id
                     uno.duplicado_nivel = 3
@@ -731,7 +733,7 @@ def eval_cmd(
     engines: str = typer.Option(
         ",".join(ENGINE_ORDER),
         "--engines",
-        help="Lista: native,rapid,vision,deepseek,tesseract,unlimited,paddle",
+        help="Lista: native,rapid,vision,deepseek,tesseract,unlimited,paddle,gemini",
     ),
     synthetic: bool = typer.Option(
         True, "--synthetic/--no-synthetic", help="Incluye PDF/PNG sintéticos (sin PII)"

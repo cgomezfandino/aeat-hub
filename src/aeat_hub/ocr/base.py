@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -13,6 +13,7 @@ class OCRResult:
     engine: str
     confidence: float
     pages: int = 1
+    usage: dict = field(default_factory=dict)
 
 
 class ProviderUnavailable(Exception):

@@ -11,7 +11,7 @@ Métricas por caso × motor:
 
 | Métrica | Definición |
 | --- | --- |
-| Token recall | Fracción de `must_tokens` hallados (NIF con/sin guión, importes `13,86`/`13.86`, fuzzy Levenshtein ≥ 0,86) |
+| Token recall | Fracción de `must_tokens` hallados (NIF con/sin guión, importes `13,86`/`13.86`, fechas ES/ISO, fuzzy Levenshtein ≥ 0,86) |
 | Campos en OCR | Fracción de campos fiscales presentes como subcadena normalizada en el texto |
 | Exactitud parser | Fracción de campos iguales al oro (NIF normalizado, fecha ISO, importe ±0,01 €) |
 | Latencia | `perf_counter` de `transcribe()` en esta máquina |
@@ -29,8 +29,9 @@ Métricas por caso × motor:
 | `tesseract` | CLI `tesseract` si está instalado | no |
 | `unlimited` | Unlimited-OCR HTTP/GGUF | no |
 | `paddle` | PaddleOCR-VL si el flag está on | no |
+| `gemini` | Gemini 2.5 Flash (nube, con `GEMINI_API_KEY`) | `--ocr gemini`; en web si hay key |
 
-No hay Azure ni APIs cloud. No se “compran” pesos de pago: RapidOCR descarga ONNX locales al primer uso; Vision no descarga nada.
+No hay Azure ni otras APIs cloud. `gemini` es la única excepción: si no hay key queda `unavailable`, no falla. Cada pasada guarda `usage` (`usageMetadata` tal cual) por caso y `total_tokens` por motor en el JSON del informe, para poder repetir la medición de coste/latencia sin scripts aparte. No se “compran” pesos de pago en local: RapidOCR descarga ONNX locales al primer uso; Vision no descarga nada.
 
 ## Set de oro
 

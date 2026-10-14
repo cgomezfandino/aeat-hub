@@ -54,6 +54,40 @@ El mismo titular puede tener varios expedientes. El ingest siempre lleva
 
 No mezclar gastos del piso con ads, dominio o Stripe de una web.
 
+## Dónde quedó el 13 oct 2026
+
+Dos bloques en `develop`, sin push. Detalle en `docs/handoff-ui-v2-2026-10-13.md`.
+
+- **Modelo**: NIF del titular ya no se inventa como emisor; Gemini dentro de
+  `aeat-hub eval` con `usageMetadata` por caso; scoring con fechas ES/ISO y
+  prompt reforzado para `nif_receptor`. Medido: 7/7 en sintéticos y en las dos
+  Leroy reales (~$0,06 de API en la sesión).
+- **UI v2 tras `?ui=v2`**: masthead con marca, cola, ficha (número editable
+  inline, cierra un pendiente del 4 oct), libro, duplicados e insights. Mismo
+  JS cableado; v1 intacta. Mascota elegida: blob ámbar.
+- **Suite**: 196 passed; 7 fallos ambientales (puertos en sandbox).
+- **Siguiente**: OK visual en navegador (Safari incluido), retirar v1, push.
+
+## Dónde quedó el 04 oct 2026
+
+Decisión de modelo OCR, sin cambio de código. Detalle en `docs/handoff-ocr-modelo-2026-10-04.md`.
+
+- Se mantiene **Gemini 2.5 Flash** (`gemini-2.5-flash`). `AEAT_HUB_GEMINI_MODEL` sigue sin definirse.
+- Flash Lite se midió en el set de oro y no se adopta: pierde el NIF del receptor y, en la foto, los importes.
+- DeepSeek-OCR local y la cascada Vision/Rapid siguen como estaban: el primero fuera del ingest por defecto, la segunda como camino sin nube.
+- La clave de Google se rotó en `.env` (fuera de git) y autentica.
+
+## Dónde quedó el 02 oct 2026
+
+Bloque de Split View, Deduplicación Splink con SKUs y OCR Multimodal en `develop` (commits `848b35e`, `3309e3a`, `a91060f`, `d02bc29`). Detalle en `docs/handoff-split-view-y-splink-2026-10-02.md`.
+
+- **Split View en ficha (`/asiento/<id>`):** Doble panel interactivo con visor nativo de documento (PDF/imagen) fijado a la izquierda y datos/líneas a la derecha, con alternancia rápida a pantalla completa y adaptación móvil.
+- **Validación en un clic:** Botones directos `[ Validar asiento ]` y `[ Reabrir ]` en la cabecera de la ficha.
+- **Deduplicación Splink con SKUs:** Record linkage probabilístico con DuckDB que compara listas de SKUs (+10,8b por ≥2 SKUs idénticos), penaliza importes distintos (−14,3b) y detecta canjes ticket-factura en ventanas de hasta 60 días con desglose explicativo y alertas UI.
+- **Unificación de calidad y confianza:** Calibración homogénea entre chips del Libro, tarjetas Kanban y ficha, distinguiendo faltas críticas de avisos no bloqueantes.
+- **OCR Multimodal Gemini 2.5 Flash:** Extracción estructurada y endpoint web `/api/upload` drag-and-drop.
+- **Suite de pruebas:** 177 tests pasando (100 % OK).
+
 ## Dónde quedó el 26 sep 2026
 
 Pulido grande del dashboard HTML en `develop` (commit `61dde97`, **sin push**

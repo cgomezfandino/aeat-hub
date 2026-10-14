@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import mimetypes
+import os
 import re
 import socket
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 from sqlalchemy import select
 
@@ -17,8 +19,10 @@ from aeat_hub.dashboard import (
     ESTADO_LABEL,
     REGIMEN_LABEL,
     collect_asiento_ficha,
+    collect_dashboard,
     criterios_calidad,
     render_asiento_page,
+    render_dashboard,
     write_dashboard,
 )
 from aeat_hub.db import session_scope
@@ -61,13 +65,17 @@ class HubHandler(BaseHTTPRequestHandler):
             return
         match = _ASIENTO_PAGE.fullmatch(path)
         if match:
-            self._send_asiento_page(int(match.group(1)))
+            self._send_asiento_page(int(match.group(1)), parsed.query)
             return
         match = _API_ASIENTO.fullmatch(path)
         if match:
             self._send_asiento(int(match.group(1)))
             return
-        self._send_export(path)
+        match = _STATIC.fullmatch(path)
+        if match:
+            self._send_static(match.group(1))
+            return
+        self._send_export(path, parsed.query)
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -77,6 +85,9 @@ class HubHandler(BaseHTTPRequestHandler):
             return
         if _API_EXPEDIENTE.fullmatch(parsed.path):
             self._post_expediente()
+            return
+        if parsed.path == "/api/upload":
+            self._post_upload()
             return
         self.send_error(404, "No encontrado")
 
@@ -141,6 +152,102 @@ class HubHandler(BaseHTTPRequestHandler):
             return
         self._send_json(200, body)
 
+    def _post_upload(self) -> None:
+        length = int(self.headers.get("Content-Length") or "0")
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            payload = json.loads(raw.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self._send_json(400, {"ok": False, "error": "JSON inválido"})
+            return
+        if not isinstance(payload, dict):
+            self._send_json(400, {"ok": False, "error": "Cuerpo inválido"})
+            return
+
+        filename = _safe_upload_name(str(payload.get("filename") or "factura.pdf"))
+        if filename is None:
+            self._send_json(400, {"ok": False, "error": "Nombre o tipo de fichero no admitido"})
+            return
+        b64_data = payload.get("data") or payload.get("content_base64")
+        if not b64_data:
+            self._send_json(400, {"ok": False, "error": "Falta el contenido del fichero"})
+            return
+
+        if "," in b64_data:
+            b64_data = b64_data.split(",", 1)[1]
+
+        try:
+            file_bytes = base64.b64decode(b64_data)
+        except Exception as exc:
+            self._send_json(400, {"ok": False, "error": f"Base64 inválido: {exc}"})
+            return
+
+        codigo, year = _parse_dashboard_name(self.dashboard_name)
+        if not codigo:
+            self._send_json(400, {"ok": False, "error": "No hay expediente activo en este servidor"})
+            return
+
+        inbox_root = self.layout.inbox.resolve()
+        inbox_dest = inbox_root / filename
+        stem = Path(filename).stem
+        suffix = Path(filename).suffix
+        counter = 1
+        while inbox_dest.exists():
+            inbox_dest = inbox_root / f"{stem}_{counter}{suffix}"
+            counter += 1
+        if inbox_dest.resolve().parent != inbox_root:
+            self._send_json(400, {"ok": False, "error": "Ruta de subida no válida"})
+            return
+
+        inbox_dest.write_bytes(file_bytes)
+
+        from aeat_hub.ingest import ingest_file
+
+        with session_scope(self.factory) as session:
+            actividad = session.scalar(select(Actividad).where(Actividad.codigo == codigo))
+            if actividad is None:
+                self._send_json(404, {"ok": False, "error": f"Actividad {codigo} no existe"})
+                return
+
+            ocr_pref = payload.get("ocr") or (
+                "gemini" if os.environ.get("GEMINI_API_KEY") else "auto"
+            )
+            item = ingest_file(
+                session,
+                self.layout,
+                inbox_dest,
+                actividad,
+                ocr_prefer=ocr_pref,
+                from_inbox=True,
+            )
+            session.flush()
+            session.commit()
+
+            asiento_data = None
+            if item.asiento_id is not None:
+                asiento = session.get(Asiento, item.asiento_id)
+                if asiento is not None:
+                    asiento_data = _asiento_json(session, asiento)
+                    _regenerar_libro(
+                        session,
+                        self.layout,
+                        actividad,
+                        asiento.ejercicio or year or 2026,
+                        asiento_data,
+                    )
+
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "estado": item.estado,
+                    "detalle": item.detalle,
+                    "asiento_id": item.asiento_id,
+                    "asiento": asiento_data,
+                    "warnings": item.warnings,
+                },
+            )
+
     def _send_asiento(self, asiento_id: int) -> None:
         with session_scope(self.factory) as session:
             asiento = session.get(Asiento, asiento_id)
@@ -151,13 +258,15 @@ class HubHandler(BaseHTTPRequestHandler):
             body["ok"] = True
         self._send_json(200, body)
 
-    def _send_asiento_page(self, asiento_id: int) -> None:
+    def _send_asiento_page(self, asiento_id: int, query: str = "") -> None:
         with session_scope(self.factory) as session:
             asiento = session.get(Asiento, asiento_id)
             if asiento is None:
                 self.send_error(404, "Asiento no encontrado")
                 return
             data = collect_asiento_ficha(session, asiento, dashboard_name=self.dashboard_name)
+            if _quiere_ui2(query):
+                data["ui"] = "v2"
         html = render_asiento_page(data).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -182,16 +291,43 @@ class HubHandler(BaseHTTPRequestHandler):
             return
         self._send_file(stored, download_name=name)
 
-    def _send_export(self, path: str) -> None:
+    def _send_static(self, rel: str) -> None:
+        found = _static_file(rel)
+        if found is None:
+            self.send_error(404, "No encontrado")
+            return
+        self._send_file(found)
+
+    def _send_export(self, path: str, query: str = "") -> None:
         rel = path.lstrip("/")
         if not rel or ".." in Path(rel).parts:
             self.send_error(404, "No encontrado")
+            return
+        if _DASHBOARD_NAME.fullmatch(rel) and _quiere_ui2(query):
+            self._send_dashboard_live(rel)
             return
         dest = (self.layout.exports / rel).resolve()
         if not _is_under(dest, self.layout.exports) or not dest.is_file():
             self.send_error(404, "No encontrado")
             return
         self._send_file(dest)
+
+    def _send_dashboard_live(self, name: str) -> None:
+        """Render fresco del libro (?ui=v2): la v1 sigue saliendo del fichero."""
+        codigo, year = _parse_dashboard_name(name)
+        with session_scope(self.factory) as session:
+            actividad = session.scalar(select(Actividad).where(Actividad.codigo == codigo))
+            if actividad is None:
+                self.send_error(404, "Expediente no encontrado")
+                return
+            data = collect_dashboard(session, actividad, year)
+            data["ui"] = "v2"
+            html = render_dashboard(data).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.wfile.write(html)
 
     def _send_file(self, path: Path, *, download_name: str | None = None) -> None:
         mime, _ = mimetypes.guess_type(str(path))
@@ -336,7 +472,36 @@ _DOC_PATH = re.compile(r"^/doc/(\d+)$")
 _ASIENTO_PAGE = re.compile(r"^/asiento/(\d+)$")
 _API_ASIENTO = re.compile(r"^/api/asientos/(\d+)$")
 _API_EXPEDIENTE = re.compile(r"^/api/expediente$")
+_STATIC = re.compile(r"^/static/(.+)$")
+_STATIC_ROOT = Path(__file__).resolve().parent / "static"
+
+
+def _static_file(rel: str, *, root: Path = _STATIC_ROOT) -> Path | None:
+    """Fichero estático bajo root, o None si no existe o escapa de la raíz."""
+    candidate = (root / rel).resolve()
+    if not _is_under(candidate, root) or not candidate.is_file():
+        return None
+    return candidate
 _DASHBOARD_NAME = re.compile(r"^dashboard_(.+)_(\d{4})\.html$")
+
+
+def _quiere_ui2(query: str) -> bool:
+    return any(key == "ui" and value == "v2" for key, value in parse_qsl(query or ""))
+
+
+def _safe_upload_name(raw: str) -> str | None:
+    """Nombre de fichero subido sin rutas ni extensiones fuera del ingest.
+
+    El cliente manda el nombre; nunca debe decidir dónde se escribe.
+    """
+    from aeat_hub.ingest import INGEST_SUFFIXES
+
+    name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not name or name in {".", ".."} or name.startswith("."):
+        return None
+    if Path(name).suffix.lower() not in INGEST_SUFFIXES:
+        return None
+    return name
 
 
 def _parse_dashboard_name(name: str) -> tuple[str, int]:
