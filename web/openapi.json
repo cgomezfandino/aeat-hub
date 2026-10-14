@@ -1,0 +1,3199 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AEAT Hub",
+    "description": "Motor fiscal de AEAT Hub. No es software oficial de la AEAT; nada se presenta.",
+    "version": "0.2.0"
+  },
+  "paths": {
+    "/api/salud": {
+      "get": {
+        "summary": "Salud",
+        "operationId": "salud_api_salud_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Salud Api Salud Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/actividades": {
+      "get": {
+        "summary": "Actividades",
+        "operationId": "actividades_api_actividades_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Actividad"
+                  },
+                  "type": "array",
+                  "title": "Response Actividades Api Actividades Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/actividades/{codigo}/resumen": {
+      "get": {
+        "summary": "Resumen",
+        "operationId": "resumen_api_actividades__codigo__resumen_get",
+        "parameters": [
+          {
+            "name": "codigo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Codigo"
+            }
+          },
+          {
+            "name": "ejercicio",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Ejercicio"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resumen"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/actividades/{codigo}/asientos": {
+      "get": {
+        "summary": "Asientos",
+        "operationId": "asientos_api_actividades__codigo__asientos_get",
+        "parameters": [
+          {
+            "name": "codigo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Codigo"
+            }
+          },
+          {
+            "name": "ejercicio",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ejercicio"
+            }
+          },
+          {
+            "name": "vista",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "todos",
+                "por_revisar",
+                "libro",
+                "duplicados",
+                "rechazados"
+              ],
+              "type": "string",
+              "default": "todos",
+              "title": "Vista"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FilaAsiento"
+                  },
+                  "title": "Response Asientos Api Actividades  Codigo  Asientos Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/actividades/{codigo}/incidencias": {
+      "get": {
+        "summary": "Incidencias",
+        "operationId": "incidencias_api_actividades__codigo__incidencias_get",
+        "parameters": [
+          {
+            "name": "codigo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Codigo"
+            }
+          },
+          {
+            "name": "ejercicio",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Ejercicio"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Incidencia"
+                  },
+                  "title": "Response Incidencias Api Actividades  Codigo  Incidencias Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/asientos/{asiento_id}": {
+      "get": {
+        "summary": "Ficha",
+        "operationId": "ficha_api_asientos__asiento_id__get",
+        "parameters": [
+          {
+            "name": "asiento_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Asiento Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ficha"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Corregir",
+        "operationId": "corregir_api_asientos__asiento_id__patch",
+        "parameters": [
+          {
+            "name": "asiento_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Asiento Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchAsiento"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ficha"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/asientos/{asiento_id}/documento": {
+      "get": {
+        "summary": "Documento",
+        "operationId": "documento_api_asientos__asiento_id__documento_get",
+        "parameters": [
+          {
+            "name": "asiento_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Asiento Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/actividades/{codigo}/documentos": {
+      "post": {
+        "summary": "Subir",
+        "operationId": "subir_api_actividades__codigo__documentos_post",
+        "parameters": [
+          {
+            "name": "codigo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Codigo"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_subir_api_actividades__codigo__documentos_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ResultadoSubida"
+                  },
+                  "title": "Response Subir Api Actividades  Codigo  Documentos Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/actividades/{codigo}/libros": {
+      "get": {
+        "summary": "Libros",
+        "operationId": "libros_api_actividades__codigo__libros_get",
+        "parameters": [
+          {
+            "name": "codigo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Codigo"
+            }
+          },
+          {
+            "name": "ejercicio",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Ejercicio"
+            }
+          },
+          {
+            "name": "trimestre",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 4,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Trimestre"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Libros"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/actividades/{codigo}/modelos/{modelo}": {
+      "get": {
+        "summary": "Modelo",
+        "operationId": "modelo_api_actividades__codigo__modelos__modelo__get",
+        "parameters": [
+          {
+            "name": "codigo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Codigo"
+            }
+          },
+          {
+            "name": "modelo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "303",
+                "130",
+                "111",
+                "115",
+                "349",
+                "347",
+                "390"
+              ],
+              "type": "string",
+              "title": "Modelo"
+            }
+          },
+          {
+            "name": "ejercicio",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Ejercicio"
+            }
+          },
+          {
+            "name": "trimestre",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 4,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Trimestre"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Borrador"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/actividades/{codigo}/exportar/{que}": {
+      "get": {
+        "summary": "Exportar",
+        "operationId": "exportar_api_actividades__codigo__exportar__que__get",
+        "parameters": [
+          {
+            "name": "codigo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Codigo"
+            }
+          },
+          {
+            "name": "que",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "libros",
+                "303",
+                "130",
+                "111",
+                "115",
+                "349",
+                "347",
+                "390"
+              ],
+              "type": "string",
+              "title": "Que"
+            }
+          },
+          {
+            "name": "ejercicio",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Ejercicio"
+            }
+          },
+          {
+            "name": "trimestre",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 4,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Trimestre"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/actividades/{codigo}/perfil": {
+      "get": {
+        "summary": "Perfil",
+        "operationId": "perfil_api_actividades__codigo__perfil_get",
+        "parameters": [
+          {
+            "name": "codigo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Codigo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Perfil"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Cambiar Perfil",
+        "operationId": "cambiar_perfil_api_actividades__codigo__perfil_patch",
+        "parameters": [
+          {
+            "name": "codigo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Codigo"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchPerfil"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Perfil"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Actividad": {
+        "properties": {
+          "codigo": {
+            "type": "string",
+            "title": "Codigo"
+          },
+          "nombre": {
+            "type": "string",
+            "title": "Nombre"
+          },
+          "regimen": {
+            "type": "string",
+            "title": "Regimen"
+          },
+          "regimen_irpf": {
+            "type": "string",
+            "title": "Regimen Irpf"
+          },
+          "regimen_iva": {
+            "type": "string",
+            "title": "Regimen Iva"
+          },
+          "titular": {
+            "type": "string",
+            "title": "Titular"
+          },
+          "nif_titular_real": {
+            "type": "boolean",
+            "title": "Nif Titular Real"
+          },
+          "ejercicios": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Ejercicios"
+          }
+        },
+        "type": "object",
+        "required": [
+          "codigo",
+          "nombre",
+          "regimen",
+          "regimen_irpf",
+          "regimen_iva",
+          "titular",
+          "nif_titular_real",
+          "ejercicios"
+        ],
+        "title": "Actividad"
+      },
+      "Anotacion": {
+        "properties": {
+          "asiento_id": {
+            "type": "integer",
+            "title": "Asiento Id"
+          },
+          "numero_registro": {
+            "type": "integer",
+            "title": "Numero Registro"
+          },
+          "fecha_expedicion": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fecha Expedicion"
+          },
+          "fecha_operacion": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fecha Operacion"
+          },
+          "serie": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serie"
+          },
+          "numero": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Numero"
+          },
+          "nif": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nif"
+          },
+          "nombre": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nombre"
+          },
+          "concepto": {
+            "type": "string",
+            "title": "Concepto"
+          },
+          "desglose": {
+            "items": {
+              "$ref": "#/components/schemas/TipoIVA"
+            },
+            "type": "array",
+            "title": "Desglose"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "retencion_cuota": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retencion Cuota"
+          },
+          "rectificativa": {
+            "type": "boolean",
+            "title": "Rectificativa"
+          },
+          "importe_irpf": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Importe Irpf"
+          },
+          "iva_deducible": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Iva Deducible"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asiento_id",
+          "numero_registro",
+          "fecha_expedicion",
+          "fecha_operacion",
+          "serie",
+          "numero",
+          "nif",
+          "nombre",
+          "concepto",
+          "desglose",
+          "total",
+          "retencion_cuota",
+          "rectificativa",
+          "importe_irpf",
+          "iva_deducible"
+        ],
+        "title": "Anotacion"
+      },
+      "Body_subir_api_actividades__codigo__documentos_post": {
+        "properties": {
+          "ficheros": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Ficheros"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ficheros"
+        ],
+        "title": "Body_subir_api_actividades__codigo__documentos_post"
+      },
+      "Borrador": {
+        "properties": {
+          "modelo": {
+            "type": "string",
+            "title": "Modelo"
+          },
+          "ejercicio": {
+            "type": "integer",
+            "title": "Ejercicio"
+          },
+          "periodo": {
+            "type": "string",
+            "title": "Periodo"
+          },
+          "aplica": {
+            "type": "boolean",
+            "title": "Aplica"
+          },
+          "verificado": {
+            "type": "boolean",
+            "title": "Verificado"
+          },
+          "resultado": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Resultado"
+          },
+          "casillas": {
+            "items": {
+              "$ref": "#/components/schemas/Casilla"
+            },
+            "type": "array",
+            "title": "Casillas"
+          },
+          "avisos": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Avisos"
+          },
+          "n_por_revisar": {
+            "type": "integer",
+            "title": "N Por Revisar"
+          },
+          "total_por_revisar": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Por Revisar"
+          }
+        },
+        "type": "object",
+        "required": [
+          "modelo",
+          "ejercicio",
+          "periodo",
+          "aplica",
+          "verificado",
+          "resultado",
+          "casillas",
+          "avisos",
+          "n_por_revisar",
+          "total_por_revisar"
+        ],
+        "title": "Borrador"
+      },
+      "Cambio": {
+        "properties": {
+          "campo": {
+            "type": "string",
+            "title": "Campo"
+          },
+          "antes": {
+            "type": "string",
+            "title": "Antes"
+          },
+          "despues": {
+            "type": "string",
+            "title": "Despues"
+          },
+          "fuente": {
+            "type": "string",
+            "title": "Fuente"
+          },
+          "cuando": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cuando"
+          }
+        },
+        "type": "object",
+        "required": [
+          "campo",
+          "antes",
+          "despues",
+          "fuente",
+          "cuando"
+        ],
+        "title": "Cambio"
+      },
+      "Candidato": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "emisor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emisor"
+          },
+          "fecha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fecha"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "motivo": {
+            "type": "string",
+            "title": "Motivo"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "motivo"
+        ],
+        "title": "Candidato"
+      },
+      "Casilla": {
+        "properties": {
+          "numero": {
+            "type": "string",
+            "title": "Numero"
+          },
+          "concepto": {
+            "type": "string",
+            "title": "Concepto"
+          },
+          "importe": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Importe"
+          },
+          "asientos": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Asientos"
+          }
+        },
+        "type": "object",
+        "required": [
+          "numero",
+          "concepto",
+          "importe",
+          "asientos"
+        ],
+        "title": "Casilla"
+      },
+      "Deducibilidad": {
+        "properties": {
+          "pct_iva": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Pct Iva"
+          },
+          "pct_gasto": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Pct Gasto"
+          },
+          "iva_deducible": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Iva Deducible"
+          },
+          "importe_irpf": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Importe Irpf"
+          },
+          "es_ingreso": {
+            "type": "boolean",
+            "title": "Es Ingreso"
+          },
+          "reglas": {
+            "items": {
+              "$ref": "#/components/schemas/Regla"
+            },
+            "type": "array",
+            "title": "Reglas"
+          },
+          "avisos": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Avisos"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pct_iva",
+          "pct_gasto",
+          "iva_deducible",
+          "importe_irpf",
+          "es_ingreso",
+          "reglas",
+          "avisos"
+        ],
+        "title": "Deducibilidad"
+      },
+      "Error": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "Error"
+      },
+      "Ficha": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "fecha": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fecha"
+          },
+          "emisor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emisor"
+          },
+          "nif_emisor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nif Emisor"
+          },
+          "numero": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Numero"
+          },
+          "tipo": {
+            "type": "string",
+            "title": "Tipo"
+          },
+          "rubro": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubro"
+          },
+          "base": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          },
+          "iva_cuota": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iva Cuota"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "estado": {
+            "type": "string",
+            "title": "Estado"
+          },
+          "validado": {
+            "type": "boolean",
+            "title": "Validado"
+          },
+          "computa": {
+            "type": "boolean",
+            "title": "Computa"
+          },
+          "tipo_factura": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tipo Factura"
+          },
+          "direccion": {
+            "type": "string",
+            "title": "Direccion"
+          },
+          "duplicado_de_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duplicado De Id"
+          },
+          "confianza": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confianza"
+          },
+          "tiene_documento": {
+            "type": "boolean",
+            "title": "Tiene Documento"
+          },
+          "actividad": {
+            "type": "string",
+            "title": "Actividad"
+          },
+          "serie": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serie"
+          },
+          "fecha_operacion": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fecha Operacion"
+          },
+          "receptor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receptor"
+          },
+          "nif_receptor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nif Receptor"
+          },
+          "iva_tipo": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iva Tipo"
+          },
+          "retencion_tipo": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retencion Tipo"
+          },
+          "retencion_cuota": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retencion Cuota"
+          },
+          "recargo_cuota": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recargo Cuota"
+          },
+          "moneda": {
+            "type": "string",
+            "title": "Moneda"
+          },
+          "mencion_legal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mencion Legal"
+          },
+          "factura_rectificada": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factura Rectificada"
+          },
+          "factura_rectificada_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factura Rectificada Id"
+          },
+          "afectacion_pct": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Afectacion Pct"
+          },
+          "cuenta_codigo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cuenta Codigo"
+          },
+          "motivo_rechazo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Motivo Rechazo"
+          },
+          "documento_nombre": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documento Nombre"
+          },
+          "documento_disponible": {
+            "type": "boolean",
+            "title": "Documento Disponible"
+          },
+          "desglose_iva": {
+            "items": {
+              "$ref": "#/components/schemas/TipoIVA"
+            },
+            "type": "array",
+            "title": "Desglose Iva"
+          },
+          "lineas": {
+            "items": {
+              "$ref": "#/components/schemas/Linea"
+            },
+            "type": "array",
+            "title": "Lineas"
+          },
+          "deducibilidad": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Deducibilidad"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "candidatos_duplicado": {
+            "items": {
+              "$ref": "#/components/schemas/Candidato"
+            },
+            "type": "array",
+            "title": "Candidatos Duplicado"
+          },
+          "cambios": {
+            "items": {
+              "$ref": "#/components/schemas/Cambio"
+            },
+            "type": "array",
+            "title": "Cambios"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "fecha",
+          "emisor",
+          "nif_emisor",
+          "numero",
+          "tipo",
+          "rubro",
+          "base",
+          "iva_cuota",
+          "total",
+          "estado",
+          "validado",
+          "computa",
+          "tipo_factura",
+          "direccion",
+          "duplicado_de_id",
+          "confianza",
+          "tiene_documento",
+          "actividad",
+          "serie",
+          "fecha_operacion",
+          "receptor",
+          "nif_receptor",
+          "iva_tipo",
+          "retencion_tipo",
+          "retencion_cuota",
+          "recargo_cuota",
+          "moneda",
+          "mencion_legal",
+          "factura_rectificada",
+          "factura_rectificada_id",
+          "afectacion_pct",
+          "cuenta_codigo",
+          "motivo_rechazo",
+          "documento_nombre",
+          "documento_disponible",
+          "desglose_iva",
+          "lineas",
+          "deducibilidad",
+          "candidatos_duplicado",
+          "cambios"
+        ],
+        "title": "Ficha"
+      },
+      "FilaAsiento": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "fecha": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fecha"
+          },
+          "emisor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emisor"
+          },
+          "nif_emisor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nif Emisor"
+          },
+          "numero": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Numero"
+          },
+          "tipo": {
+            "type": "string",
+            "title": "Tipo"
+          },
+          "rubro": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubro"
+          },
+          "base": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          },
+          "iva_cuota": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iva Cuota"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "estado": {
+            "type": "string",
+            "title": "Estado"
+          },
+          "validado": {
+            "type": "boolean",
+            "title": "Validado"
+          },
+          "computa": {
+            "type": "boolean",
+            "title": "Computa"
+          },
+          "tipo_factura": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tipo Factura"
+          },
+          "direccion": {
+            "type": "string",
+            "title": "Direccion"
+          },
+          "duplicado_de_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duplicado De Id"
+          },
+          "confianza": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confianza"
+          },
+          "tiene_documento": {
+            "type": "boolean",
+            "title": "Tiene Documento"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "fecha",
+          "emisor",
+          "nif_emisor",
+          "numero",
+          "tipo",
+          "rubro",
+          "base",
+          "iva_cuota",
+          "total",
+          "estado",
+          "validado",
+          "computa",
+          "tipo_factura",
+          "direccion",
+          "duplicado_de_id",
+          "confianza",
+          "tiene_documento"
+        ],
+        "title": "FilaAsiento"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Incidencia": {
+        "properties": {
+          "asiento_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asiento Id"
+          },
+          "tipo": {
+            "type": "string",
+            "title": "Tipo",
+            "description": "duplicado | cuadre | nif | no_factura | moneda | rectificativa | sin_clasificar | perfil"
+          },
+          "gravedad": {
+            "type": "string",
+            "title": "Gravedad",
+            "description": "bloquea | revisar | info"
+          },
+          "titulo": {
+            "type": "string",
+            "title": "Titulo"
+          },
+          "detalle": {
+            "type": "string",
+            "title": "Detalle"
+          },
+          "cita": {
+            "type": "string",
+            "title": "Cita",
+            "default": ""
+          },
+          "relacionado_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relacionado Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asiento_id",
+          "tipo",
+          "gravedad",
+          "titulo",
+          "detalle"
+        ],
+        "title": "Incidencia"
+      },
+      "Libros": {
+        "properties": {
+          "ejercicio": {
+            "type": "integer",
+            "title": "Ejercicio"
+          },
+          "ingresos": {
+            "items": {
+              "$ref": "#/components/schemas/Anotacion"
+            },
+            "type": "array",
+            "title": "Ingresos"
+          },
+          "gastos": {
+            "items": {
+              "$ref": "#/components/schemas/Anotacion"
+            },
+            "type": "array",
+            "title": "Gastos"
+          },
+          "bienes_inversion": {
+            "items": {
+              "$ref": "#/components/schemas/Anotacion"
+            },
+            "type": "array",
+            "title": "Bienes Inversion"
+          },
+          "n_por_revisar": {
+            "type": "integer",
+            "title": "N Por Revisar"
+          },
+          "total_por_revisar": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Por Revisar"
+          },
+          "avisos": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Avisos"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ejercicio",
+          "ingresos",
+          "gastos",
+          "bienes_inversion",
+          "n_por_revisar",
+          "total_por_revisar",
+          "avisos"
+        ],
+        "title": "Libros"
+      },
+      "Linea": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "codigo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Codigo"
+          },
+          "descripcion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Descripcion"
+          },
+          "cantidad": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cantidad"
+          },
+          "base": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          },
+          "iva_tipo": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iva Tipo"
+          },
+          "iva_cuota": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iva Cuota"
+          },
+          "importe": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Importe"
+          }
+        },
+        "type": "object",
+        "title": "Linea"
+      },
+      "Mes": {
+        "properties": {
+          "mes": {
+            "type": "integer",
+            "title": "Mes"
+          },
+          "ingresos": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Ingresos"
+          },
+          "gastos": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Gastos"
+          },
+          "mejoras": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Mejoras"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mes",
+          "ingresos",
+          "gastos",
+          "mejoras"
+        ],
+        "title": "Mes"
+      },
+      "PatchAsiento": {
+        "properties": {
+          "nif_emisor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nif Emisor"
+          },
+          "emisor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emisor"
+          },
+          "numero": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Numero"
+          },
+          "fecha": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fecha"
+          },
+          "base": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          },
+          "iva_cuota": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iva Cuota"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "rubro": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubro"
+          },
+          "afectacion_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Afectacion Pct"
+          },
+          "validado": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validado"
+          },
+          "mantener_estado": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mantener Estado"
+          },
+          "rechazar": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rechazar"
+          },
+          "motivo_rechazo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Motivo Rechazo"
+          },
+          "duplicado_de": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duplicado De"
+          },
+          "quitar_duplicado": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quitar Duplicado"
+          },
+          "lineas": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineas"
+          },
+          "recalcular_total": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recalcular Total"
+          }
+        },
+        "type": "object",
+        "title": "PatchAsiento",
+        "description": "Correcciones de la ficha; mismos campos que `edits.patch_asiento`."
+      },
+      "PatchPerfil": {
+        "properties": {
+          "nif_titular": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nif Titular"
+          },
+          "regimen_irpf": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regimen Irpf"
+          },
+          "regimen_iva": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regimen Iva"
+          },
+          "epigrafe_iae": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Epigrafe Iae"
+          },
+          "territorio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Territorio"
+          },
+          "fecha_alta": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fecha Alta"
+          },
+          "afectacion_vivienda_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Afectacion Vivienda Pct"
+          },
+          "rendimiento_anterior": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rendimiento Anterior"
+          }
+        },
+        "type": "object",
+        "title": "PatchPerfil"
+      },
+      "Perfil": {
+        "properties": {
+          "codigo": {
+            "type": "string",
+            "title": "Codigo"
+          },
+          "nif_titular": {
+            "type": "string",
+            "title": "Nif Titular"
+          },
+          "regimen_irpf": {
+            "type": "string",
+            "title": "Regimen Irpf"
+          },
+          "regimen_iva": {
+            "type": "string",
+            "title": "Regimen Iva"
+          },
+          "territorio": {
+            "type": "string",
+            "title": "Territorio"
+          },
+          "epigrafe_iae": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Epigrafe Iae"
+          },
+          "fecha_alta": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fecha Alta"
+          },
+          "afectacion_vivienda_pct": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Afectacion Vivienda Pct"
+          },
+          "rendimiento_anterior": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rendimiento Anterior"
+          },
+          "por_defecto": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Por Defecto"
+          },
+          "avisos": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Avisos"
+          }
+        },
+        "type": "object",
+        "required": [
+          "codigo",
+          "nif_titular",
+          "regimen_irpf",
+          "regimen_iva",
+          "territorio",
+          "epigrafe_iae",
+          "fecha_alta",
+          "afectacion_vivienda_pct",
+          "rendimiento_anterior",
+          "por_defecto",
+          "avisos"
+        ],
+        "title": "Perfil"
+      },
+      "Regla": {
+        "properties": {
+          "codigo": {
+            "type": "string",
+            "title": "Codigo"
+          },
+          "texto": {
+            "type": "string",
+            "title": "Texto"
+          },
+          "cita": {
+            "type": "string",
+            "title": "Cita"
+          }
+        },
+        "type": "object",
+        "required": [
+          "codigo",
+          "texto",
+          "cita"
+        ],
+        "title": "Regla"
+      },
+      "ResultadoSubida": {
+        "properties": {
+          "nombre": {
+            "type": "string",
+            "title": "Nombre"
+          },
+          "asiento_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asiento Id"
+          },
+          "estado": {
+            "type": "string",
+            "title": "Estado"
+          },
+          "detalle": {
+            "type": "string",
+            "title": "Detalle"
+          },
+          "avisos": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Avisos"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nombre",
+          "asiento_id",
+          "estado",
+          "detalle",
+          "avisos"
+        ],
+        "title": "ResultadoSubida"
+      },
+      "Resumen": {
+        "properties": {
+          "codigo": {
+            "type": "string",
+            "title": "Codigo"
+          },
+          "ejercicio": {
+            "type": "integer",
+            "title": "Ejercicio"
+          },
+          "ingresos": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Ingresos"
+          },
+          "gastos": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Gastos"
+          },
+          "mejoras": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Mejoras"
+          },
+          "resultado": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Resultado"
+          },
+          "iva_soportado_deducible": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Iva Soportado Deducible"
+          },
+          "iva_repercutido": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Iva Repercutido"
+          },
+          "retenciones_soportadas": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Retenciones Soportadas"
+          },
+          "n_computables": {
+            "type": "integer",
+            "title": "N Computables"
+          },
+          "n_por_revisar": {
+            "type": "integer",
+            "title": "N Por Revisar"
+          },
+          "total_por_revisar": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Por Revisar"
+          },
+          "n_duplicados": {
+            "type": "integer",
+            "title": "N Duplicados"
+          },
+          "n_incidencias": {
+            "type": "integer",
+            "title": "N Incidencias"
+          },
+          "por_mes": {
+            "items": {
+              "$ref": "#/components/schemas/Mes"
+            },
+            "type": "array",
+            "title": "Por Mes"
+          },
+          "avisos": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Avisos"
+          }
+        },
+        "type": "object",
+        "required": [
+          "codigo",
+          "ejercicio",
+          "ingresos",
+          "gastos",
+          "mejoras",
+          "resultado",
+          "iva_soportado_deducible",
+          "iva_repercutido",
+          "retenciones_soportadas",
+          "n_computables",
+          "n_por_revisar",
+          "total_por_revisar",
+          "n_duplicados",
+          "n_incidencias",
+          "por_mes",
+          "avisos"
+        ],
+        "title": "Resumen"
+      },
+      "TipoIVA": {
+        "properties": {
+          "base": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          },
+          "tipo": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tipo"
+          },
+          "cuota": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cuota"
+          },
+          "recargo_tipo": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recargo Tipo"
+          },
+          "recargo_cuota": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recargo Cuota"
+          }
+        },
+        "type": "object",
+        "required": [
+          "base",
+          "tipo",
+          "cuota"
+        ],
+        "title": "TipoIVA"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

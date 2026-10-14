@@ -22,3 +22,4 @@
 | [Seguridad](../SECURITY.md) | Qué no subir nunca a git |
 
 Esto **no es software oficial de la AEAT**. El usuario revisa los asientos antes de declarar.
+- [web.md](web.md) — web Next.js + API FastAPI: arranque, seguridad y pantallas.
