@@ -51,7 +51,31 @@ class HubHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         return
 
+    def _host_permitido(self) -> bool:
+        """Solo nombres locales: una web ajena que resuelva a 127.0.0.1 (DNS rebinding) no entra."""
+        host = (self.headers.get("Host") or "").lower()
+        nombre = host.split("]")[0] + "]" if host.startswith("[") else host.rsplit(":", 1)[0]
+        if nombre in HOSTS_LOCALES:
+            return True
+        self.send_error(403, "Host no permitido")
+        return False
+
+    def _post_permitido(self) -> bool:
+        """Contra CSRF: mismo origen y JSON (fuerza preflight en peticiones ajenas)."""
+        origen = self.headers.get("Origin")
+        if origen and origen.rstrip("/").lower() != f"http://{(self.headers.get('Host') or '').lower()}":
+            self.send_error(403, "Origen no permitido")
+            return False
+        if self.path.startswith("/api/") and not (self.headers.get("Content-Type") or "").lower().startswith(
+            "application/json"
+        ):
+            self.send_error(415, "Se espera application/json")
+            return False
+        return True
+
     def do_GET(self) -> None:  # noqa: N802
+        if not self._host_permitido():
+            return
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         if path in {"/", "/index.html"} and self.dashboard_name:
@@ -79,6 +103,8 @@ class HubHandler(BaseHTTPRequestHandler):
         self._send_export(path, parsed.query)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._host_permitido() or not self._post_permitido():
+            return
         parsed = urlparse(self.path)
         match = _API_ASIENTO.fullmatch(parsed.path)
         if match:
@@ -469,6 +495,7 @@ def _dec(value: object) -> str:
     return "" if value is None else f"{value:.2f}"
 
 
+HOSTS_LOCALES = {"127.0.0.1", "localhost", "[::1]"}
 _DOC_PATH = re.compile(r"^/doc/(\d+)$")
 _ASIENTO_PAGE = re.compile(r"^/asiento/(\d+)$")
 _API_ASIENTO = re.compile(r"^/api/asientos/(\d+)$")

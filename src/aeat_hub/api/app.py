@@ -1,8 +1,13 @@
 """API HTTP del motor fiscal (FastAPI).
 
-Local: sin token solo responde a 127.0.0.1. Con `AEAT_HUB_API_TOKEN` exige
-`Authorization: Bearer <token>` a todo salvo /api/salud. La web (Next.js)
-llama desde su servidor con ese token; el navegador nunca habla con la API.
+Seguridad (también en local):
+- **Token siempre obligatorio** (`Authorization: Bearer`), salvo /api/salud.
+  Si no hay `AEAT_HUB_API_TOKEN`, se genera uno y se guarda en
+  `<data-dir>/api-token` (0600). Un navegador no puede añadir esa cabecera
+  a una petición de otro origen sin preflight, y no hay CORS: sin CSRF.
+- **Host permitido** (`AEAT_HUB_API_HOSTS`): frena el DNS rebinding.
+- **Sin cabecera Origin**: la web llama servidor a servidor; cualquier
+  petición que traiga Origin viene de un navegador y se rechaza.
 """
 
 from __future__ import annotations
@@ -25,7 +30,26 @@ from aeat_hub.db import make_engine, session_factory, session_scope
 from aeat_hub.paths import DataLayout, resolve_layout
 
 ENV_TOKEN = "AEAT_HUB_API_TOKEN"
-LOCALES = {"127.0.0.1", "::1", "localhost", "testclient"}
+ENV_HOSTS = "AEAT_HUB_API_HOSTS"
+HOSTS_POR_DEFECTO = ("127.0.0.1", "localhost", "::1", "[::1]", "api", "testserver")
+FICHERO_TOKEN = "api-token"
+
+
+def token_local(layout: DataLayout) -> str:
+    """Token del data-dir; se crea con permisos 0600 si no existe."""
+    import secrets
+
+    ruta = layout.root / FICHERO_TOKEN
+    if ruta.is_file():
+        guardado = ruta.read_text(encoding="utf-8").strip()
+        if guardado:
+            return guardado
+    nuevo = secrets.token_urlsafe(32)
+    layout.root.mkdir(parents=True, exist_ok=True)
+    ruta.touch(mode=0o600, exist_ok=True)
+    ruta.chmod(0o600)
+    ruta.write_text(nuevo + "\n", encoding="utf-8")
+    return nuevo
 Modelo = Literal["303", "130", "111", "115", "349", "347", "390"]
 
 
@@ -64,7 +88,12 @@ class PatchPerfil(BaseModel):
 
 def create_app(layout: DataLayout | None = None, *, token: str | None = None) -> FastAPI:
     layout = layout or resolve_layout()
-    token = token if token is not None else os.environ.get(ENV_TOKEN, "").strip()
+    token = (token if token is not None else os.environ.get(ENV_TOKEN, "")).strip() or token_local(layout)
+    hosts = {
+        h.strip().lower()
+        for h in (os.environ.get(ENV_HOSTS) or ",".join(HOSTS_POR_DEFECTO)).split(",")
+        if h.strip()
+    }
     engine = make_engine(layout)
     factory = session_factory(engine)
 
@@ -77,17 +106,18 @@ def create_app(layout: DataLayout | None = None, *, token: str | None = None) ->
 
     @app.middleware("http")
     async def autenticacion(request: Request, call_next):
+        host = (request.headers.get("host") or "").lower()
+        nombre_host = host.rsplit(":", 1)[0] if not host.startswith("[") else host.split("]")[0] + "]"
+        if nombre_host not in hosts:
+            return JSONResponse({"detail": "Host no permitido"}, status_code=403)
+        if request.headers.get("origin"):
+            return JSONResponse({"detail": "La API no atiende a navegadores"}, status_code=403)
         if request.url.path == "/api/salud":
             return await call_next(request)
-        if token:
-            cabecera = request.headers.get("authorization", "")
-            recibido = cabecera.removeprefix("Bearer ").strip()
-            if not hmac.compare_digest(recibido.encode(), token.encode()):
-                return JSONResponse({"detail": "No autorizado"}, status_code=401)
-        elif (request.client.host if request.client else "") not in LOCALES:
-            return JSONResponse(
-                {"detail": f"Sin {ENV_TOKEN} la API solo responde en local."}, status_code=401
-            )
+        cabecera = request.headers.get("authorization", "")
+        recibido = cabecera.removeprefix("Bearer ").strip()
+        if not hmac.compare_digest(recibido.encode(), token.encode()):
+            return JSONResponse({"detail": "No autorizado"}, status_code=401)
         return await call_next(request)
 
     def sesion():

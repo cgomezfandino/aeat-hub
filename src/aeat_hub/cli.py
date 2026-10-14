@@ -825,6 +825,12 @@ def api_cmd(
         raise typer.Exit(1)
     import uvicorn
 
+    from aeat_hub.api.app import FICHERO_TOKEN
+
+    if not os.environ.get(ENV_TOKEN):
+        console.print(
+            f"Token en {layout.root / FICHERO_TOKEN}: la web lo lee con AEAT_HUB_API_TOKEN_FILE."
+        )
     uvicorn.run(create_app(layout), host=host, port=port)
 
 

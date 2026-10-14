@@ -29,22 +29,41 @@ def datos(session):
     return [f.id for f in filas]
 
 
+TOKEN = "secreto-de-prueba"
+
+
 @pytest.fixture
 def cliente(layout, datos):
-    return TestClient(create_app(layout, token=""))
+    return TestClient(create_app(layout, token=TOKEN), headers={"Authorization": f"Bearer {TOKEN}"})
 
 
-def test_token_obligatorio_si_se_configura(layout, datos):
-    api = TestClient(create_app(layout, token="secreto"))
+def test_token_obligatorio(layout, datos):
+    api = TestClient(create_app(layout, token=TOKEN))
     assert api.get("/api/salud").status_code == 200
     assert api.get("/api/actividades").status_code == 401
     assert api.get("/api/actividades", headers={"Authorization": "Bearer otro"}).status_code == 401
-    assert api.get("/api/actividades", headers={"Authorization": "Bearer secreto"}).status_code == 200
+    assert api.get("/api/actividades", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
 
 
-def test_sin_token_rechaza_clientes_remotos(layout, datos):
-    api = TestClient(create_app(layout, token=""), client=("203.0.113.9", 5000))
+def test_sin_token_configurado_se_genera_uno_privado(layout, datos):
+    """Local sin configurar nada: también exige token (sin CSRF desde el navegador)."""
+    import stat
+
+    api = TestClient(create_app(layout, token=""))
     assert api.get("/api/actividades").status_code == 401
+    ruta = layout.root / "api-token"
+    assert stat.S_IMODE(ruta.stat().st_mode) == 0o600
+    generado = ruta.read_text().strip()
+    assert api.get("/api/actividades", headers={"Authorization": f"Bearer {generado}"}).status_code == 200
+
+
+def test_dns_rebinding_y_peticiones_de_navegador(cliente):
+    assert cliente.get("/api/actividades", headers={"Host": "evil.example"}).status_code == 403
+    assert cliente.get("/api/actividades", headers={"Host": "127.0.0.1:8000"}).status_code == 200
+    # una web ajena que intenta subir un fichero desde el navegador
+    r = cliente.post("/api/actividades/CI-VA-001/documentos", headers={"Origin": "https://evil.example"},
+                     files=[("ficheros", ("a.pdf", b"%PDF", "application/pdf"))])
+    assert r.status_code == 403
 
 
 def test_resumen_con_importes_exactos_en_cadena(cliente):
