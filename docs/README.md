@@ -14,6 +14,9 @@
 | [Referencia de código](referencia-codigo.md) | Módulos Python y esquema SQLite |
 | [Desarrollo](desarrollo.md) | Tests, convenciones, ramas (`develop` / `main`) |
 | [Hoja de ruta](hoja-de-ruta.md) | Qué hay, qué no, cortes año/trimestre y siguiente bloque |
+| [Web y API](web.md) | Next.js + FastAPI: arranque, seguridad y pantallas |
+| [**Handoff fiscal y plataforma (14 oct)**](handoff-fiscal-y-plataforma-2026-10-14.md) | Auditoría fiscal, modelo del autónomo, API y web: estado de las PR #5-#9, pendientes y tareas del titular |
+| [Handoff UI v2 (13 oct)](handoff-ui-v2-2026-10-13.md) | UI v2 tras `?ui=v2` y calibración de Gemini |
 | [Handoff modelo OCR (04 oct)](handoff-ocr-modelo-2026-10-04.md) | Decisión: se queda Gemini 2.5 Flash; Flash Lite no |
 | [Handoff Split View y Splink (02 oct)](handoff-split-view-y-splink-2026-10-02.md) | Split View en ficha, deduplicación Splink por SKU y OCR Gemini |
 | [Handoff dashboard UI (26 sep)](handoff-dashboard-ui-2026-09-26.md) | Pulido de hojas modales, tablas smart, ficha y KPIs |

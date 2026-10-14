@@ -32,6 +32,7 @@ from aeat_hub.fiscal.money import q2
 from aeat_hub.models import Actividad, Asiento, Cambio, Cuenta, Titular
 from aeat_hub.paths import DataLayout
 from aeat_hub.services import patch_expediente
+from aeat_hub.subidas import nombre_seguro as _safe_upload_name
 
 
 def _regenerar_libro(session, layout: DataLayout, actividad: Actividad, year: int, body: dict) -> None:
@@ -50,7 +51,31 @@ class HubHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         return
 
+    def _host_permitido(self) -> bool:
+        """Solo nombres locales: una web ajena que resuelva a 127.0.0.1 (DNS rebinding) no entra."""
+        host = (self.headers.get("Host") or "").lower()
+        nombre = host.split("]")[0] + "]" if host.startswith("[") else host.rsplit(":", 1)[0]
+        if nombre in HOSTS_LOCALES:
+            return True
+        self.send_error(403, "Host no permitido")
+        return False
+
+    def _post_permitido(self) -> bool:
+        """Contra CSRF: mismo origen y JSON (fuerza preflight en peticiones ajenas)."""
+        origen = self.headers.get("Origin")
+        if origen and origen.rstrip("/").lower() != f"http://{(self.headers.get('Host') or '').lower()}":
+            self.send_error(403, "Origen no permitido")
+            return False
+        if self.path.startswith("/api/") and not (self.headers.get("Content-Type") or "").lower().startswith(
+            "application/json"
+        ):
+            self.send_error(415, "Se espera application/json")
+            return False
+        return True
+
     def do_GET(self) -> None:  # noqa: N802
+        if not self._host_permitido():
+            return
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         if path in {"/", "/index.html"} and self.dashboard_name:
@@ -78,6 +103,8 @@ class HubHandler(BaseHTTPRequestHandler):
         self._send_export(path, parsed.query)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._host_permitido() or not self._post_permitido():
+            return
         parsed = urlparse(self.path)
         match = _API_ASIENTO.fullmatch(parsed.path)
         if match:
@@ -468,6 +495,7 @@ def _dec(value: object) -> str:
     return "" if value is None else f"{value:.2f}"
 
 
+HOSTS_LOCALES = {"127.0.0.1", "localhost", "[::1]"}
 _DOC_PATH = re.compile(r"^/doc/(\d+)$")
 _ASIENTO_PAGE = re.compile(r"^/asiento/(\d+)$")
 _API_ASIENTO = re.compile(r"^/api/asientos/(\d+)$")
@@ -487,21 +515,6 @@ _DASHBOARD_NAME = re.compile(r"^dashboard_(.+)_(\d{4})\.html$")
 
 def _quiere_ui2(query: str) -> bool:
     return any(key == "ui" and value == "v2" for key, value in parse_qsl(query or ""))
-
-
-def _safe_upload_name(raw: str) -> str | None:
-    """Nombre de fichero subido sin rutas ni extensiones fuera del ingest.
-
-    El cliente manda el nombre; nunca debe decidir dónde se escribe.
-    """
-    from aeat_hub.ingest import INGEST_SUFFIXES
-
-    name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
-    if not name or name in {".", ".."} or name.startswith("."):
-        return None
-    if Path(name).suffix.lower() not in INGEST_SUFFIXES:
-        return None
-    return name
 
 
 def _parse_dashboard_name(name: str) -> tuple[str, int]:

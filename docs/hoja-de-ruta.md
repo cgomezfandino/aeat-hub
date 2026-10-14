@@ -25,9 +25,9 @@ capital inmobiliario). Los rubros se leen y se escriben por **nombre corto**
 - Presentación telemática (modelos 100, 130, 303, 390, 347).
 - Unlimited-OCR como motor por defecto.
 - APIs cloud de facturas (Azure Document Intelligence, FacturaHub, etc.).
-- Cálculo automático de amortización del inmueble y de mejoras.
+- ~~Cálculo automático de amortización del inmueble y de mejoras.~~ Hecho (14 oct): 3 % sin suelo más mejoras, en el borrador de la Renta.
 - CLI de proyectos de mejora (la tabla `proyectos_mejora` existe vacía de flujo).
-- Libro IVA completo y liquidación 303 (tipos 21/10/4/0/exento por casilla AEAT).
+- ~~Libro IVA completo y liquidación 303.~~ Hecho como **borrador** (14 oct): libros registro y 303/130/111/115/347/349 con trazabilidad. La presentación telemática sigue fuera.
 - Inbox recursivo (subcarpetas).
 - Watcher automático (hay que lanzar `ingest` a mano).
 - Edición del Excel como maestro bidireccional.
@@ -53,6 +53,30 @@ El mismo titular puede tener varios expedientes. El ingest siempre lleva
 2. Cada aplicación web — `aeat-hub actividad alta --nombre "…" --regimen actividad_economica` (el catálogo AE es stub; el 303 no está).
 
 No mezclar gastos del piso con ads, dominio o Stripe de una web.
+
+## Dónde quedó el 14 oct 2026
+
+Detalle completo en `docs/handoff-fiscal-y-plataforma-2026-10-14.md`. Cinco PR apiladas: #5 → #6 → #7 → #8 → #9.
+
+- **Integridad fiscal:**
+  - deduplicación que ya no pierde facturas;
+  - importes exactos (Alembic + `Fixed`);
+  - sin IVA inventado;
+  - campos legales;
+  - regla única de cómputo: solo lo validado.
+- **Modelo del autónomo:**
+  - perfil fiscal y normativa por ejercicio;
+  - deducibilidad citada;
+  - libros registro;
+  - borradores 303/130/111/115/347/349/390;
+  - art. 23 completo.
+- **Plataforma:**
+  - API FastAPI y web Next.js 16 (panel, bandeja, ficha, incidencias) con la paleta nueva;
+  - seguridad revisada (CSRF, DNS rebinding, open redirect, límite de login).
+- **Siguiente:**
+  - fase 4: libros, impuestos y ajustes en la web, gráficos, modo oscuro;
+  - rutas de documentos relativas y `Storage`.
+- **Titular:** NIF real, datos del inmueble, validar las 12 pendientes y set de oro.
 
 ## Dónde quedó el 13 oct 2026
 
@@ -130,6 +154,8 @@ arrancar) y los trimestres T1–T4 llegan al filtro de fecha del Libro y al
 Excel (hoja `Trimestres`).
 
 ## Siguiente bloque natural
+
+> Actualizado el 14 oct: la lista vigente está en `docs/handoff-fiscal-y-plataforma-2026-10-14.md` (secciones «Lo que tiene que hacer el titular» y «Pendiente técnico»). Lo de abajo es la lista anterior.
 
 1. Ingerir el resto del alquiler (luz, agua, internet, comunidad, seguros,
    rentas) y ajustar palabras clave. No mezclar con gastos de las webs.

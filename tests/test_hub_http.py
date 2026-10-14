@@ -184,3 +184,33 @@ def test_quiere_ui2_detecta_bandera():
     assert not _quiere_ui2("ui=v1")
     assert not _quiere_ui2("uiv2")
 
+
+
+def test_servidor_local_rechaza_csrf_y_dns_rebinding(session, layout):
+    actividad = session.scalar(select(Actividad).where(Actividad.codigo == "CI-VA-001"))
+    row = _asiento(session, actividad)
+    factory = session_factory(make_engine(layout))
+    httpd, port = bind_server(layout, factory, "dashboard_CI-VA-001_2026.html", port=18771)
+    thread = Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+
+    def enviar(headers: dict, data=b'{"confirmado": true, "total": "1"}') -> int:
+        req = request.Request(
+            f"http://127.0.0.1:{port}/api/asientos/{row.id}", data=data, headers=headers, method="POST"
+        )
+        try:
+            with request.urlopen(req) as resp:
+                return resp.status
+        except error.HTTPError as err:
+            return err.code
+
+    try:
+        # formulario o fetch "simple" desde otra web: text/plain sin preflight
+        assert enviar({"Content-Type": "text/plain", "Origin": "https://evil.example"}) == 403
+        assert enviar({"Content-Type": "text/plain"}) == 415
+        # DNS rebinding: el navegador manda el Host del dominio atacante
+        assert enviar({"Content-Type": "application/json", "Host": "evil.example"}) == 403
+        # la propia página (mismo origen) sigue funcionando
+        assert enviar({"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}"}) == 200
+    finally:
+        httpd.shutdown()

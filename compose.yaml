@@ -1,0 +1,26 @@
+# Pila local: motor (API) + web. Los puertos se publican solo en 127.0.0.1.
+#   AEAT_HUB_API_TOKEN=$(openssl rand -hex 32) docker compose up --build
+# Los datos fiscales viven fuera del repo (AEAT_HUB_DATA_DIR del host).
+services:
+  api:
+    build: { context: ., dockerfile: Dockerfile.api }
+    environment:
+      AEAT_HUB_API_TOKEN: ${AEAT_HUB_API_TOKEN:?Define AEAT_HUB_API_TOKEN}
+      AEAT_HUB_API_HOSTS: api,127.0.0.1,localhost
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - ${AEAT_HUB_DATA_DIR:?Define AEAT_HUB_DATA_DIR}:/data
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  web:
+    build: { context: ./web }
+    depends_on:
+      api: { condition: service_healthy }
+    environment:
+      AEAT_HUB_API_URL: http://api:8000
+      AEAT_HUB_API_TOKEN: ${AEAT_HUB_API_TOKEN}
+      AEAT_HUB_WEB_PASSWORD: ${AEAT_HUB_WEB_PASSWORD:-}
+      AEAT_HUB_WEB_SECRET: ${AEAT_HUB_WEB_SECRET:-}
+    ports:
+      - "127.0.0.1:3000:3000"

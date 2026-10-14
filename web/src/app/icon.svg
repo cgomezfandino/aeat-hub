@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AEAT Hub">
+  <rect width="64" height="64" rx="14" fill="#0A2342"/>
+  <path d="M14 44a18 18 0 0 1 36 0z" fill="#2CA58D"/>
+  <circle cx="44" cy="22" r="8" fill="#F46197"/>
+  <path d="M14 14h18L14 32z" fill="#84BC9C"/>
+</svg>

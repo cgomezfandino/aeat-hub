@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+/*
+ * Paleta AEAT Hub (contraste WCAG verificado; texto siempre ≥ 4,5:1):
+ *   navy  #0A2342  tinta y navegación
+ *   teal  #2CA58D  marca / correcto / ingresos (texto encima: navy)
+ *   sage  #84BC9C  selección y superficies suaves
+ *   crema #FFFDF7  fondo
+ *   rosa  #F46197  solo lo que pide acción (texto encima: navy)
+ * Las variantes «-tinta» son para texto sobre crema/blanco.
+ */
+@theme {
+  --color-navy: #0a2342;
+  --color-navy-800: #12305a;
+  --color-navy-700: #1c3d6e;
+  --color-teal: #2ca58d;
+  --color-teal-tinta: #1e7a68;
+  --color-teal-suave: color-mix(in oklab, #2ca58d 14%, #fffdf7);
+  --color-sage: #84bc9c;
+  --color-sage-suave: color-mix(in oklab, #84bc9c 22%, #fffdf7);
+  --color-crema: #fffdf7;
+  --color-papel: #ffffff;
+  --color-rosa: #f46197;
+  --color-rosa-tinta: #b8336a;
+  --color-rosa-suave: color-mix(in oklab, #f46197 14%, #fffdf7);
+  --color-tinta: #0a2342;
+  --color-tenue: #5b6b82;
+  --color-borde: color-mix(in oklab, #0a2342 12%, transparent);
+  --color-borde-fuerte: color-mix(in oklab, #0a2342 24%, transparent);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-space-grotesk), var(--font-inter), ui-sans-serif, sans-serif;
+
+  --radius-tarjeta: 14px;
+  --shadow-tarjeta: 0 1px 0 color-mix(in oklab, #0a2342 6%, transparent),
+    0 8px 24px -16px color-mix(in oklab, #0a2342 30%, transparent);
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  body {
+    background: var(--color-crema);
+    color: var(--color-tinta);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 3px solid var(--color-teal);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility importe {
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: "tnum", "zero";
+  white-space: nowrap;
+}
